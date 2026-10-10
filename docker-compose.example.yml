@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-skeleton_db}
+      POSTGRES_USER: ${DATABASE_USER:-skeleton_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-skeleton_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-skeleton_user} -d ${DATABASE_NAME:-skeleton_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-change-me}
+      DEBUG: ${DEBUG:-True}
+      DATABASE_NAME: ${DATABASE_NAME:-skeleton_db}
+      DATABASE_USER: ${DATABASE_USER:-skeleton_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-skeleton_password}
+      DATABASE_HOST: ${DATABASE_HOST:-db}
+      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
+      PORT: 8000
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: npm run dev
+
+volumes:
+  frontend_node_modules:
+  postgres_data:
