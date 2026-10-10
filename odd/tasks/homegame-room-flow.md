@@ -20,6 +20,7 @@ This establishes the shared session experience before implementing any actual bo
 - Show the selected game marker next to the player's name in the room lobby; assign seat/turn order separately on the server.
 - Support explicit join/leave and live roster/presence updates through Django Channels WebSockets.
 - Keep the room hostless: backend owns room creation, membership, and readiness state; no participant gets admin privileges.
+- Treat an unexpected WebSocket disconnect as temporary reconnecting presence for 60 seconds. After that, the other connected players may vote unanimously to expel the disconnected participant; the target does not vote. An explicit leave remains immediate. In this placeholder-game slice, inactivity means connection loss; turn-timeout inactivity belongs to future game rules.
 - Preserve the earlier room lifecycle: one room per game, remove it when empty/end is signaled, then return clients to the catalog. Do not implement board-game rules or a next-game vote.
 - Keep development access bound to `localhost:36130`; do not publish for Wi-Fi devices in this slice, per the user's current instruction.
 - Do not modify `docker-compose.example.yml` or `.env.example`; keep the per-instance `docker-compose.yml` and `.env` convention.
@@ -49,26 +50,32 @@ This establishes the shared session experience before implementing any actual bo
   - Route: same delegated direct writer, sequentially after HG-RF-01A. Trigger evidence: API, serialization, permissions, and tests span multiple paths.
   - Acceptance: no room code/account; guest name/piece are session-scoped; no game logic is added.
 
-- [ ] **HG-RF-02 — Build catalog, identity, and lobby UI**
+- [x] **HG-RF-02 — Build catalog, identity, and lobby UI**
   - Replace the starter counter with fictional game cards, create/join flow, a one-time missing name/piece prompt, and a room roster showing names, pieces, and readiness.
   - Route: same delegated direct writer, sequentially after HG-RF-01B. Trigger evidence: frontend UI, session identity handling, and room API integration span multiple files.
   - Acceptance: guests can browse without identity; identity is requested only when creating/joining; returning participants see their session name prefilled; game piece is the in-room visual marker; no room code or generic avatar step.
 
-- [ ] **HG-RF-03 — Add WebSocket roster updates**
-  - Add Django Channels/Daphne ASGI routing, room-group membership events, reconnect snapshot, leave/disconnect handling, and Vite WebSocket proxying.
+- [ ] **HG-RF-03 — Add WebSocket presence and 60-second reconnect grace**
+  - Add Django Channels/Daphne ASGI routing, room-group membership events, reconnect snapshots, leave/disconnect handling, 60-second reconnect grace, and Vite WebSocket proxying.
+  - On an unexpected disconnect, retain the participant for 60 seconds as reconnecting; a reconnect in that window restores the same session. Explicit leave is immediate.
   - Route: same delegated direct writer. Build/restart only through the explicit local Docker socket; use an empty Docker credential config and limit downloads to Docker Hub, Debian package mirrors, and PyPI, as authorized by the user.
-  - Acceptance: join/leave and readiness changes appear in other open clients without manual refresh; backend validates membership and all-ready state; actual game logic remains out of scope.
+  - Acceptance: join/leave/readiness and reconnecting state appear in other clients without refresh; actual game rules remain out of scope.
 
-- [ ] **HG-RF-04 — Verify the vertical slice**
+- [ ] **HG-RF-04 — Add unanimous disconnected-player expulsion voting**
+  - After the 60-second grace expires, allow the other connected active players to vote on removing the disconnected player. The target does not vote; remove the participant and update the room only after every eligible player approves. Explicit leave remains immediate.
+  - Route: same delegated direct writer after HG-RF-03. Trigger evidence: vote persistence/API and lobby controls span backend/frontend files.
+  - Acceptance: any rejection prevents removal; only unanimous approval removes the disconnected participant; connection-loss handling does not pretend to detect inactivity during future game turns.
+
+- [ ] **HG-RF-05 — Verify the vertical slice**
   - Run backend tests inside the backend container and frontend build/lint inside the frontend container; the user performs manual checks using two browser sessions on `localhost:36130`.
   - Route: fresh per-action worker for test/build/operational checks.
-  - Acceptance: a first client creates the room, a second discovers and joins it, both see roster changes and explicit leave; all checks and any environment/network blockers are reported honestly.
+  - Acceptance: two clients create/join, observe live roster/readiness, test reconnect within grace, and exercise the expulsion vote; report all checks and blockers honestly.
 
 ## Verification
 
 - Backend: run `python manage.py test` inside the backend container after required dependencies are installed.
 - Frontend: run `npm run build` and `npm run lint` inside the frontend container.
-- Manual: the user opens two separate browser sessions at `http://localhost:36130`; creates/joins a room and observes WebSocket updates, readiness, and leave.
+- Manual: the user opens two separate browser sessions at `http://localhost:36130`; creates/joins a room, observes WebSocket updates, and checks the reconnect grace/expulsion flow.
 - Run any dependency installation/build through the local Docker daemon with credentials disabled; do not install packages on the host or access unrelated remote sources.
 
 ## Progress
@@ -80,9 +87,14 @@ This establishes the shared session experience before implementing any actual bo
 - HG-RF-01A completed: the room model permits only active rows; ending the game deletes the room and cascades participant memberships. Five backend-container tests passed, and `makemigrations --check --dry-run` found no drift.
 - Work-unit commit `fb5ebdff46ff51ed5d97614f8d3e333fa1fd1de1` (`feat: add HomeGame room persistence`) assessed medium with `review_due: false` and `review_due_reason: under_budget`; keep the slice pending.
 - HG-RF-01B completed: fictional catalog and room REST APIs are in place; 16 backend-container tests passed, including strict UUID-string token validation.
-- HG-RF-01B, HG-RF-02, HG-RF-03, and HG-RF-04 remain pending.
+- Work-unit commit `72882cd7069a50df550d5c15beff57ca751a7b90` assessed medium with `review_due: true` and `review_due_reason: slice_budget_reached`. Native review start returned a typed unavailable result before mutation; no review receipt or approval exists. The off-path risk assessment is medium; the writer and parent backend-container tests passed.
+- The user explicitly chose to continue with the catalog/WebSocket work despite the unavailable native review. Preserve the unavailable result; do not represent this slice as natively reviewed or approved.
+- HG-RF-02 completed: catalog, session identity/marker form, active-room view, roster, ready toggle, and leave action are implemented. Parent readback found and corrected saved-identity room creation; frontend build/lint pass inside the frontend container.
+- The user confirmed a 60-second reconnect grace followed by a unanimous expulsion vote among other connected players; explicit leave remains immediate. In this slice, inactivity means connection loss, not a missed game turn.
+- HG-RF-03 is in progress; no WebSocket source edits have started.
+- HG-RF-04 and HG-RF-05 remain pending.
 - Runtime remains on localhost; no guest Wi-Fi bind changes are in scope.
 
 ## Next Step
 
-Implement HG-RF-02 next: build the catalog, session identity prompt, and live lobby UI against the REST APIs.
+Implement HG-RF-03 and HG-RF-04 sequentially on `develop`; keep checks inside Docker and preserve the unavailable native-review result without reporting approval.
