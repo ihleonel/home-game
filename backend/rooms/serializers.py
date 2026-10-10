@@ -5,7 +5,8 @@ from rest_framework import serializers
 
 from .catalog import GAMES_BY_ID
 from .constants import RECONNECT_GRACE_SECONDS
-from .models import Participant, Room
+from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from .voting import expulsion_vote_snapshot
 
 
 class SessionIDField(serializers.UUIDField):
@@ -46,13 +47,25 @@ class ReadyStateSerializer(serializers.Serializer):
     is_ready = serializers.BooleanField()
 
 
+class StartExpulsionVoteSerializer(serializers.Serializer):
+    session_id = SessionIDField()
+    target_ref = serializers.UUIDField()
+
+
+class CastExpulsionBallotSerializer(serializers.Serializer):
+    session_id = SessionIDField()
+    choice = serializers.ChoiceField(choices=ExpulsionBallot.Choice.choices)
+
+
 class ParticipantRosterSerializer(serializers.ModelSerializer):
     presence = serializers.SerializerMethodField()
+    participant_ref = serializers.UUIDField(source='public_id', read_only=True)
 
     class Meta:
         model = Participant
         fields = (
             'display_name',
+            'participant_ref',
             'game_marker',
             'is_ready',
             'presence',
@@ -73,13 +86,32 @@ class ParticipantRosterSerializer(serializers.ModelSerializer):
 
 class RoomSerializer(serializers.ModelSerializer):
     participants = serializers.SerializerMethodField()
+    expulsion_vote = serializers.SerializerMethodField()
 
     class Meta:
         model = Room
-        fields = ('game_id', 'status', 'created_at', 'updated_at', 'participants')
+        fields = (
+            'game_id',
+            'status',
+            'created_at',
+            'updated_at',
+            'participants',
+            'expulsion_vote',
+        )
 
     def get_participants(self, room):
         participants = room.participants.filter(left_at__isnull=True).order_by(
             'joined_at', 'pk'
         )
         return ParticipantRosterSerializer(participants, many=True).data
+
+    def get_expulsion_vote(self, room):
+        vote = (
+            ExpulsionVote.objects.filter(
+                room=room,
+                status=ExpulsionVote.Status.PENDING,
+            )
+            .select_related('target', 'initiated_by')
+            .first()
+        )
+        return expulsion_vote_snapshot(vote) if vote is not None else None

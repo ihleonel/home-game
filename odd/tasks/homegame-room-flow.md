@@ -61,7 +61,7 @@ This establishes the shared session experience before implementing any actual bo
   - Route: same delegated direct writer. Build/restart only through the explicit local Docker socket; use an empty Docker credential config and limit downloads to Docker Hub, Debian package mirrors, and PyPI, as authorized by the user.
   - Acceptance: join/leave/readiness and reconnecting state appear in other clients without refresh; actual game rules remain out of scope.
 
-- [ ] **HG-RF-04 — Add unanimous disconnected-player expulsion voting**
+- [x] **HG-RF-04 — Add unanimous disconnected-player expulsion voting**
   - After the 60-second grace expires, allow the other connected active players to vote on removing the disconnected player. The target does not vote; remove the participant and update the room only after every eligible player approves. Explicit leave remains immediate.
   - Route: same delegated direct writer after HG-RF-03. Trigger evidence: vote persistence/API and lobby controls span backend/frontend files.
   - Acceptance: any rejection prevents removal; only unanimous approval removes the disconnected participant; connection-loss handling does not pretend to detect inactivity during future game turns.
@@ -93,10 +93,14 @@ This establishes the shared session experience before implementing any actual bo
 - Work-unit commit `ea7ccbea3745031109d13d780f4236d517e39bbb` (`feat: add HomeGame catalog and lobby UI`) assessed medium with `review_due: true` and `review_due_reason: slice_budget_reached`. Native review remains unavailable; container build/lint and the parent build spot-check passed.
 - The user confirmed a 60-second reconnect grace followed by a unanimous expulsion vote among other connected players; explicit leave remains immediate. In this slice, inactivity means connection loss, not a missed game turn.
 - HG-RF-03 completed: Channels/Daphne presence events, 60-second reconnect grace, Vite WebSocket proxy, and container integration are implemented. Twenty-one backend tests and frontend build/lint pass inside containers.
+- Work-unit commit `5dc6c1038ad11409876472cb8c610a8361b24d0a` (`feat: add HomeGame WebSocket presence`) assessed medium with `review_due: true` and `review_due_reason: slice_budget_reached`. Native review remains unavailable; the off-path assessment and container tests passed, but no native review receipt exists.
 - During the backend restart, Compose reported the database container recreated and healthy; no volumes were removed and database contents were not inspected.
-- HG-RF-04 is in progress: implement the unanimous expulsion vote after the reconnect grace. HG-RF-05 remains pending.
+- HG-RF-04 completed across the vote/model/migration/API/WebSocket/UI/test paths: fixed ballots preserve unanimity, rejection prevents removal, and a target reconnect or eligible voter's disconnect/leave cancels the vote rather than shrinking the electorate. No vote timeout was added because none was specified.
+- Applied `rooms.0003_expulsion_voting` to the existing backend DB (`showmigrations` reports `[X]`); restarted only the backend. The database remained running and was not restarted or volume-touched.
+- Verification passed: all 29 backend tests (`python manage.py test`; parent spot-check also passed), plus frontend `npm run build` and `npm run lint` inside the frontend container. HG-RF-05's automated checks passed; its two-browser manual check at `http://localhost:36130` remains pending.
+- Native review remains unavailable (`immutable_review_transport_unsupported`); the user chose to continue. No native review receipt or approval exists.
 - Runtime remains on localhost; no guest Wi-Fi bind changes are in scope.
 
 ## Next Step
 
-Implement HG-RF-04's unanimous expulsion vote on `develop`, then perform final container-only verification; preserve the unavailable native-review result without reporting approval.
+Perform the HG-RF-05 manual two-browser verification at `http://localhost:36130`: create/join with two clients, observe live roster/readiness, check reconnect within grace and the expulsion vote, then report results. Keep HG-RF-05 unchecked until complete.

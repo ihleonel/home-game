@@ -57,6 +57,11 @@
   background: var(--error-bg);
 }
 
+.message-info {
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+
 .loading-message,
 .quiet-copy {
   color: var(--muted);
@@ -441,6 +446,66 @@
   border-top: 1px solid var(--line);
 }
 
+.vote-panel {
+  margin: 0.5rem 0 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.9rem;
+  background: var(--accent-soft);
+}
+
+.vote-heading,
+.vote-ballots li,
+.vote-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.vote-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.vote-count {
+  color: var(--accent-dark);
+  font-size: 0.85rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.vote-ballots {
+  margin: 0.85rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vote-ballots li {
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--accent-border);
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.vote-ballots strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+  text-transform: capitalize;
+}
+
+.vote-actions {
+  justify-content: flex-start;
+  margin-top: 0.9rem;
+}
+
+.vote-start-button {
+  min-height: 2.3rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.75rem;
+}
+
 .site-footer {
   margin-top: auto;
   padding-top: 1rem;
@@ -466,6 +531,7 @@
 
   .form-heading,
   .room-heading,
+  .vote-heading,
   .your-room-actions,
   .join-actions {
     align-items: flex-start;
@@ -483,13 +549,15 @@
   }
 
   .action-buttons,
-  .form-actions {
+  .form-actions,
+  .vote-actions {
     width: 100%;
     flex-wrap: wrap;
   }
 
   .action-buttons .button,
-  .form-actions .button {
+  .form-actions .button,
+  .vote-actions .button {
     flex: 1 1 auto;
   }
 

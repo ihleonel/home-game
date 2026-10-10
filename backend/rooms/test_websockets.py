@@ -217,6 +217,7 @@ class RoomWebSocketTests(TransactionTestCase):
                 },
                 format='json',
             )
+            rejoined_event = await observer_socket.receive_json_from()
 
             second_socket = WebsocketCommunicator(
                 application,
@@ -237,6 +238,7 @@ class RoomWebSocketTests(TransactionTestCase):
                 reconnected,
                 fresh_snapshot,
                 online_event,
+                rejoined_event,
                 observer_online_event,
             )
 
@@ -248,6 +250,7 @@ class RoomWebSocketTests(TransactionTestCase):
             reconnected,
             fresh_snapshot,
             online_event,
+            rejoined_event,
             observer_online_event,
         ) = async_to_sync(reconnect_flow)()
 
@@ -261,6 +264,7 @@ class RoomWebSocketTests(TransactionTestCase):
         self.assertEqual(fresh_snapshot['type'], 'room.snapshot')
         self.assertEqual(fresh_snapshot['room']['game_id'], room.game_id)
         self.assertEqual(online_event['type'], 'participant_online')
+        self.assertEqual(rejoined_event['type'], 'player_joined')
         self.assertEqual(observer_online_event['type'], 'participant_online')
         self.assertEqual(returning_guest.presence, Participant.Presence.RECONNECTING)
         self.assertIsNone(returning_guest.left_at)

@@ -10,6 +10,7 @@ type Game = {
   markers: Marker[]
 }
 type Participant = {
+  participant_ref: string
   display_name: string
   game_marker: string
   is_ready: boolean
@@ -17,24 +18,49 @@ type Participant = {
   disconnected_at: string | null
   joined_at: string
 }
+type ExpulsionBallot = {
+  participant_ref: string
+  display_name: string
+  choice: 'yes' | 'no' | null
+}
+type ExpulsionVote = {
+  vote_ref: string
+  target_ref: string
+  target_display_name: string
+  started_by_ref: string
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled'
+  resolution_reason: string
+  started_at: string
+  resolved_at: string | null
+  eligible_count: number
+  yes_count: number
+  no_count: number
+  ballots: ExpulsionBallot[]
+}
 type Room = {
   game_id: string
   status: string
   created_at: string
   updated_at: string
   participants: Participant[]
+  expulsion_vote: ExpulsionVote | null
 }
 type RoomEnvelope = { room: Room }
-type MembershipResponse = RoomEnvelope & { session_id: string }
+type MembershipResponse = RoomEnvelope & {
+  session_id: string
+  participant_ref: string
+}
+type VoteResponse = RoomEnvelope & { vote: ExpulsionVote }
 type RoomIntent = 'create' | 'join'
 type GuestIdentity = { displayName: string; gameMarker: string }
 type RoomSession = GuestIdentity & {
   gameId: string
   sessionId: string
+  participantRef: string
   isReady: boolean
 }
 type StoredRoomSession = Pick<RoomSession, 'gameId' | 'sessionId' | 'isReady'>
-type PendingAction = RoomIntent | 'ready' | 'leave' | null
+type PendingAction = RoomIntent | 'ready' | 'leave' | 'vote' | null
 
 const DISPLAY_NAME_KEY = 'homegame:display-name'
 const ROOM_SESSION_KEY = 'homegame:room-session'
@@ -153,6 +179,27 @@ function markerLabel(game: Game | undefined, markerId: string): string {
   return game?.markers.find((marker) => marker.id === markerId)?.label ?? markerId
 }
 
+function expulsionVoteMessage(vote: ExpulsionVote): string {
+  if (vote.status === 'pending') {
+    return `Removal vote: ${vote.yes_count} of ${vote.eligible_count} players voted yes.`
+  }
+  if (vote.status === 'approved') return 'The unanimous removal vote passed.'
+  if (vote.status === 'rejected') return 'The removal vote was rejected. The player remains in the room.'
+  if (vote.resolution_reason === 'target_reconnected') {
+    return 'The vote was cancelled because the player reconnected.'
+  }
+  if (vote.resolution_reason === 'target_left') {
+    return 'The vote was cancelled because the target left the room.'
+  }
+  if (vote.resolution_reason === 'target_disconnected') {
+    return 'The vote was cancelled because the target connection changed.'
+  }
+  if (vote.resolution_reason === 'eligible_voter_left') {
+    return 'The vote was cancelled because an eligible voter left the room.'
+  }
+  return 'The removal vote was cancelled because an eligible voter became unavailable.'
+}
+
 type IdentityFormProps = {
   game: Game
   intent: RoomIntent
@@ -245,6 +292,7 @@ function App() {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
+  const [voteNotice, setVoteNotice] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -252,6 +300,13 @@ function App() {
   const activeGame = games.find((game) => game.id === room?.game_id)
   const selectedGame = games.find((game) => game.id === selectedGameId)
   const isJoined = roomSession?.gameId === room?.game_id
+  const currentParticipant = room?.participants.find(
+    (participant) => participant.participant_ref === roomSession?.participantRef,
+  )
+  const activeExpulsionVote = room?.expulsion_vote ?? null
+  const currentBallot = activeExpulsionVote?.ballots.find(
+    (ballot) => ballot.participant_ref === roomSession?.participantRef,
+  )
   const allReady = Boolean(room?.participants.length) &&
     room?.participants.every((participant) => participant.is_ready)
 
@@ -363,6 +418,7 @@ function App() {
       const nextSession: RoomSession = {
         gameId: game.id,
         sessionId: response.session_id,
+        participantRef: response.participant_ref,
         displayName,
         gameMarker: guestIdentity.gameMarker,
         isReady: reusedSession ? savedSession.isReady : false,
@@ -373,6 +429,7 @@ function App() {
       setRoom(response.room)
       setRoomSession(nextSession)
       setConnectionError(null)
+      setVoteNotice(null)
       setIntent(null)
       setSelectedGameId(null)
     } catch (error) {
@@ -447,6 +504,57 @@ function App() {
     }
   }
 
+  async function startExpulsionVote(targetRef: string): Promise<void> {
+    if (!roomSession) return
+    setPendingAction('vote')
+    setActionError(null)
+    try {
+      const response = await requestJson<VoteResponse>('/api/rooms/expulsion-votes/', {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: roomSession.sessionId,
+          target_ref: targetRef,
+        }),
+      })
+      setRoom(response.room)
+      setVoteNotice(expulsionVoteMessage(response.vote))
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'The vote could not be started.')
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+        void refreshActiveRoom()
+      }
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function castExpulsionBallot(
+    voteRef: string,
+    choice: 'yes' | 'no',
+  ): Promise<void> {
+    if (!roomSession) return
+    setPendingAction('vote')
+    setActionError(null)
+    try {
+      const response = await requestJson<VoteResponse>(
+        `/api/rooms/expulsion-votes/${encodeURIComponent(voteRef)}/ballots/`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ session_id: roomSession.sessionId, choice }),
+        },
+      )
+      setRoom(response.room)
+      setVoteNotice(expulsionVoteMessage(response.vote))
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'The ballot could not be recorded.')
+      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+        void refreshActiveRoom()
+      }
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
   const sessionGameId = roomSession?.gameId ?? null
   const sessionId = roomSession?.sessionId ?? null
   const sessionDisplayName = roomSession?.displayName ?? null
@@ -498,6 +606,7 @@ function App() {
           const nextSession: RoomSession = {
             gameId,
             sessionId: response.session_id,
+            participantRef: response.participant_ref,
             displayName,
             gameMarker,
             isReady:
@@ -505,6 +614,11 @@ function App() {
           }
           saveGuestSession(nextSession)
           setRoom(response.room)
+          setVoteNotice(
+            response.room.expulsion_vote
+              ? expulsionVoteMessage(response.room.expulsion_vote)
+              : null,
+          )
           if (response.session_id !== guestSessionId) {
             setRoomSession((current) =>
               current?.sessionId === guestSessionId ? nextSession : current,
@@ -548,6 +662,7 @@ function App() {
           try {
             const message = JSON.parse(String(messageEvent.data)) as RoomEnvelope & {
               type?: string
+              vote?: ExpulsionVote
             }
             if (
               message.room.game_id === gameId &&
@@ -555,6 +670,7 @@ function App() {
             ) {
               setRoom(message.room)
             }
+            if (message.vote) setVoteNotice(expulsionVoteMessage(message.vote))
           } catch {
             setConnectionError('A live room update could not be read.')
           }
@@ -610,6 +726,7 @@ function App() {
 
       {actionError && <p className="message message-error" role="alert">{actionError}</p>}
       {connectionError && <p className="message message-error" role="status">{connectionError}</p>}
+      {voteNotice && <p className="message message-info" role="status">{voteNotice}</p>}
 
       {isLoading ? (
         <p className="loading-message" role="status">Loading games and room…</p>
@@ -663,6 +780,21 @@ function App() {
                     <span className={`presence-badge presence-${participant.presence}`}>
                       {participant.presence}
                     </span>
+                    {!activeExpulsionVote &&
+                      isJoined &&
+                      roomSession &&
+                      currentParticipant?.presence === 'online' &&
+                      participant.presence === 'inactive' &&
+                      participant.participant_ref !== roomSession.participantRef && (
+                        <button
+                          className="button button-quiet vote-start-button"
+                          disabled={busy}
+                          onClick={() => void startExpulsionVote(participant.participant_ref)}
+                          type="button"
+                        >
+                          Start removal vote
+                        </button>
+                      )}
                   </li>
                 ))}
               </ul>
@@ -670,6 +802,54 @@ function App() {
               <p className="quiet-copy">The room is waiting for its first guest.</p>
             )}
           </section>
+
+          {activeExpulsionVote && (
+            <section className="vote-panel" aria-labelledby="vote-title">
+              <div className="vote-heading">
+                <div>
+                  <p className="eyebrow">Unanimous removal vote</p>
+                  <h3 id="vote-title">{activeExpulsionVote.target_display_name}</h3>
+                </div>
+                <span className="vote-count">
+                  {activeExpulsionVote.yes_count} / {activeExpulsionVote.eligible_count} yes
+                </span>
+              </div>
+              <ul className="vote-ballots">
+                {activeExpulsionVote.ballots.map((ballot) => (
+                  <li key={ballot.participant_ref}>
+                    <span>{ballot.display_name}</span>
+                    <strong>{ballot.choice ? `Voted ${ballot.choice}` : 'Awaiting vote'}</strong>
+                  </li>
+                ))}
+              </ul>
+              {roomSession?.participantRef === activeExpulsionVote.target_ref ? (
+                <p className="quiet-copy">You are the target of this vote and cannot vote.</p>
+              ) : currentBallot?.choice ? (
+                <p className="quiet-copy">You voted {currentBallot.choice}.</p>
+              ) : currentBallot && currentParticipant?.presence === 'online' ? (
+                <div className="vote-actions">
+                  <button
+                    className="button button-primary"
+                    disabled={busy}
+                    onClick={() => void castExpulsionBallot(activeExpulsionVote.vote_ref, 'yes')}
+                    type="button"
+                  >
+                    Vote yes
+                  </button>
+                  <button
+                    className="button button-quiet"
+                    disabled={busy}
+                    onClick={() => void castExpulsionBallot(activeExpulsionVote.vote_ref, 'no')}
+                    type="button"
+                  >
+                    Vote no
+                  </button>
+                </div>
+              ) : (
+                <p className="quiet-copy">Only participants connected when the vote started may vote.</p>
+              )}
+            </section>
+          )}
 
           {isJoined && roomSession ? (
             <section className="your-room-actions" aria-labelledby="your-status-title">

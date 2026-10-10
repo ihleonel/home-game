@@ -1,0 +1,373 @@
+from datetime import timedelta
+
+from asgiref.sync import async_to_sync
+from channels.db import database_sync_to_async
+from channels.testing import WebsocketCommunicator
+from django.test import TransactionTestCase
+from django.utils import timezone
+from rest_framework import status as http_status
+from rest_framework.test import APIClient, APITestCase
+
+from config.asgi import application
+from .connections import register_connection, unregister_connection
+from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
+
+
+class ExpulsionVoteApiTests(APITestCase):
+    def setUp(self):
+        self.room = Room.objects.create(game_id='starlight-garden')
+        self.initiator = self.create_participant('Guest One', Participant.Presence.ONLINE)
+        self.other_voter = self.create_participant('Guest Two', Participant.Presence.ONLINE)
+        self.target = self.create_participant(
+            'Guest Three',
+            Participant.Presence.INACTIVE,
+            disconnected_at=timezone.now() - timedelta(seconds=61),
+        )
+        self.registered_connections = []
+        self.register_participant_connection(self.initiator)
+        self.register_participant_connection(self.other_voter)
+
+    def tearDown(self):
+        for room_id, session_id, channel_name in self.registered_connections:
+            unregister_connection(room_id, session_id, channel_name)
+        super().tearDown()
+
+    def register_participant_connection(self, participant):
+        channel_name = f'test-voter-{participant.public_id}'
+        session_id = str(participant.session_id)
+        register_connection(self.room.pk, session_id, channel_name)
+        self.registered_connections.append((self.room.pk, session_id, channel_name))
+
+    def create_participant(self, name, presence, disconnected_at=None):
+        return Participant.objects.create(
+            room=self.room,
+            display_name=name,
+            game_marker='silver-leaf',
+            presence=presence,
+            disconnected_at=disconnected_at,
+        )
+
+    def start_vote(self, caller=None):
+        return self.client.post(
+            '/api/rooms/expulsion-votes/',
+            {
+                'session_id': str((caller or self.initiator).session_id),
+                'target_ref': str(self.target.public_id),
+            },
+            format='json',
+        )
+
+    def cast_ballot(self, vote, voter, choice):
+        return self.client.post(
+            f"/api/rooms/expulsion-votes/{vote['vote_ref']}/ballots/",
+            {'session_id': str(voter.session_id), 'choice': choice},
+            format='json',
+        )
+
+    def test_vote_persists_fixed_voters_using_non_bearer_public_refs(self):
+        response = self.start_vote()
+
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        vote = ExpulsionVote.objects.get()
+        self.assertEqual(vote.status, ExpulsionVote.Status.PENDING)
+        self.assertEqual(
+            set(vote.ballots.values_list('voter_id', flat=True)),
+            {self.initiator.pk, self.other_voter.pk},
+        )
+        self.assertNotIn(self.target.pk, vote.ballots.values_list('voter_id', flat=True))
+        self.assertEqual(response.data['vote']['eligible_count'], 2)
+        self.assertEqual(len(response.data['vote']['ballots']), 2)
+        for participant in response.data['room']['participants']:
+            self.assertIn('participant_ref', participant)
+            self.assertNotIn('session_id', participant)
+            self.assertNotIn('id', participant)
+        self.assertNotIn('session_id', response.data['vote'])
+        self.assertTrue(
+            all('session_id' not in ballot for ballot in response.data['vote']['ballots'])
+        )
+        target_ballot = self.cast_ballot(response.data['vote'], self.target, 'yes')
+        self.assertEqual(target_ballot.status_code, http_status.HTTP_403_FORBIDDEN)
+
+    def test_joiner_after_vote_start_cannot_vote(self):
+        response = self.start_vote()
+        late_voter = self.create_participant('Late Guest', Participant.Presence.ONLINE)
+        self.register_participant_connection(late_voter)
+
+        ballot_response = self.cast_ballot(response.data['vote'], late_voter, 'yes')
+
+        self.assertEqual(ballot_response.status_code, http_status.HTTP_403_FORBIDDEN)
+        self.assertEqual(ExpulsionVote.objects.get().ballots.count(), 2)
+
+    def test_no_ballot_rejects_vote_without_expelling_target(self):
+        response = self.start_vote()
+
+        rejected = self.cast_ballot(response.data['vote'], self.other_voter, 'no')
+
+        self.target.refresh_from_db()
+        self.assertEqual(rejected.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(rejected.data['vote']['status'], ExpulsionVote.Status.REJECTED)
+        self.assertIsNone(self.target.left_at)
+        self.assertEqual(self.target.presence, Participant.Presence.INACTIVE)
+        self.assertTrue(
+            any(
+                item['participant_ref'] == str(self.target.public_id)
+                for item in rejected.data['room']['participants']
+            )
+        )
+
+    def test_unanimous_yes_expel_target_and_block_same_session_rejoin(self):
+        response = self.start_vote()
+        first_vote = self.cast_ballot(response.data['vote'], self.initiator, 'yes')
+        self.assertEqual(first_vote.data['vote']['status'], ExpulsionVote.Status.PENDING)
+        duplicate_ballot = self.cast_ballot(response.data['vote'], self.initiator, 'no')
+        self.assertEqual(duplicate_ballot.status_code, http_status.HTTP_409_CONFLICT)
+
+        approved = self.cast_ballot(response.data['vote'], self.other_voter, 'yes')
+
+        self.target.refresh_from_db()
+        self.assertEqual(approved.data['vote']['status'], ExpulsionVote.Status.APPROVED)
+        self.assertIsNotNone(self.target.left_at)
+        self.assertEqual(self.target.presence, Participant.Presence.OFFLINE)
+        self.assertFalse(
+            any(
+                item['participant_ref'] == str(self.target.public_id)
+                for item in approved.data['room']['participants']
+            )
+        )
+        rejoin = self.client.post(
+            '/api/rooms/join/',
+            {
+                'game_id': self.room.game_id,
+                'session_id': str(self.target.session_id),
+            },
+            format='json',
+        )
+        self.assertEqual(rejoin.status_code, http_status.HTTP_400_BAD_REQUEST)
+
+    def test_target_reconnect_cancels_pending_vote(self):
+        started = self.start_vote()
+
+        rejoin = self.client.post(
+            '/api/rooms/join/',
+            {
+                'game_id': self.room.game_id,
+                'session_id': str(self.target.session_id),
+            },
+            format='json',
+        )
+
+        self.target.refresh_from_db()
+        vote = ExpulsionVote.objects.get()
+        self.assertEqual(rejoin.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(vote.status, ExpulsionVote.Status.CANCELLED)
+        self.assertEqual(vote.resolution_reason, 'target_reconnected')
+        self.assertIsNone(self.target.left_at)
+        self.assertEqual(self.target.presence, Participant.Presence.OFFLINE)
+        self.assertIsNone(rejoin.data['room']['expulsion_vote'])
+        self.assertEqual(started.status_code, http_status.HTTP_201_CREATED)
+
+    def test_vote_requires_inactive_target_and_connected_initiator(self):
+        self.target.presence = Participant.Presence.RECONNECTING
+        self.target.disconnected_at = timezone.now() - timedelta(seconds=30)
+        self.target.save(update_fields=('presence', 'disconnected_at'))
+        self.assertEqual(self.start_vote().status_code, http_status.HTTP_409_CONFLICT)
+
+        self.target.presence = Participant.Presence.INACTIVE
+        self.target.disconnected_at = timezone.now() - timedelta(seconds=61)
+        self.target.save(update_fields=('presence', 'disconnected_at'))
+        self.initiator.presence = Participant.Presence.OFFLINE
+        self.initiator.save(update_fields=('presence',))
+        self.assertEqual(self.start_vote().status_code, http_status.HTTP_403_FORBIDDEN)
+
+
+class ExpulsionVoteWebSocketTests(TransactionTestCase):
+    def setUp(self):
+        self.room = Room.objects.create(game_id='starlight-garden')
+        self.first_voter = Participant.objects.create(
+            room=self.room,
+            display_name='Guest One',
+            game_marker='silver-leaf',
+            presence=Participant.Presence.ONLINE,
+        )
+        self.disconnecting_voter = Participant.objects.create(
+            room=self.room,
+            display_name='Guest Two',
+            game_marker='moonstone',
+            presence=Participant.Presence.ONLINE,
+        )
+        self.target = Participant.objects.create(
+            room=self.room,
+            display_name='Guest Three',
+            game_marker='night-bloom',
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=timezone.now() - timedelta(seconds=61),
+        )
+
+    def websocket_path(self, session_id):
+        return f'/ws/rooms/active/?session_id={session_id}'
+
+    def test_eligible_voter_disconnect_cancels_vote_without_shrinking_voter_set(self):
+        client = APIClient()
+
+        async def run_vote_disconnect():
+            first_socket = WebsocketCommunicator(
+                application,
+                self.websocket_path(self.first_voter.session_id),
+            )
+            disconnecting_socket = WebsocketCommunicator(
+                application,
+                self.websocket_path(self.disconnecting_voter.session_id),
+            )
+            first_connected, _ = await first_socket.connect()
+            disconnecting_connected, _ = await disconnecting_socket.connect()
+            await first_socket.receive_json_from()
+            await disconnecting_socket.receive_json_from()
+
+            start_response = await database_sync_to_async(client.post)(
+                '/api/rooms/expulsion-votes/',
+                {
+                    'session_id': str(self.first_voter.session_id),
+                    'target_ref': str(self.target.public_id),
+                },
+                format='json',
+            )
+            first_start_event = await first_socket.receive_json_from()
+            disconnecting_start_event = await disconnecting_socket.receive_json_from()
+
+            await disconnecting_socket.disconnect()
+            reconnecting_event = await first_socket.receive_json_from()
+            cancelled_event = await first_socket.receive_json_from()
+            await first_socket.disconnect()
+            return (
+                first_connected,
+                disconnecting_connected,
+                start_response,
+                first_start_event,
+                disconnecting_start_event,
+                reconnecting_event,
+                cancelled_event,
+            )
+
+        (
+            first_connected,
+            disconnecting_connected,
+            start_response,
+            first_start_event,
+            disconnecting_start_event,
+            reconnecting_event,
+            cancelled_event,
+        ) = async_to_sync(run_vote_disconnect)()
+
+        vote = ExpulsionVote.objects.get()
+        self.disconnecting_voter.refresh_from_db()
+        self.assertTrue(first_connected)
+        self.assertTrue(disconnecting_connected)
+        self.assertEqual(start_response.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(first_start_event['type'], 'expulsion_vote_started')
+        self.assertEqual(disconnecting_start_event['type'], 'expulsion_vote_started')
+        self.assertEqual(reconnecting_event['type'], 'participant_reconnecting')
+        self.assertEqual(cancelled_event['type'], 'expulsion_vote_cancelled')
+        self.assertEqual(cancelled_event['vote']['resolution_reason'], 'eligible_voter_disconnected')
+        self.assertEqual(vote.status, ExpulsionVote.Status.CANCELLED)
+        self.assertEqual(vote.ballots.count(), 2)
+        self.assertTrue(all(ballot.choice is None for ballot in vote.ballots.all()))
+        self.assertIsNone(self.disconnecting_voter.left_at)
+
+    def test_vote_start_rejection_update_and_approval_are_broadcast(self):
+        client = APIClient()
+
+        async def api_post(path, data):
+            return await database_sync_to_async(client.post)(
+                path,
+                data,
+                format='json',
+            )
+
+        async def vote_lifecycle():
+            first_socket = WebsocketCommunicator(
+                application,
+                self.websocket_path(self.first_voter.session_id),
+            )
+            second_socket = WebsocketCommunicator(
+                application,
+                self.websocket_path(self.disconnecting_voter.session_id),
+            )
+            await first_socket.connect()
+            await second_socket.connect()
+            await first_socket.receive_json_from()
+            await second_socket.receive_json_from()
+
+            start_one = await api_post(
+                '/api/rooms/expulsion-votes/',
+                {
+                    'session_id': str(self.first_voter.session_id),
+                    'target_ref': str(self.target.public_id),
+                },
+            )
+            started_one = await first_socket.receive_json_from()
+            await second_socket.receive_json_from()
+
+            reject = await api_post(
+                f"/api/rooms/expulsion-votes/{start_one.json()['vote']['vote_ref']}/ballots/",
+                {'session_id': str(self.disconnecting_voter.session_id), 'choice': 'no'},
+            )
+            rejected = await first_socket.receive_json_from()
+            await second_socket.receive_json_from()
+
+            start_two = await api_post(
+                '/api/rooms/expulsion-votes/',
+                {
+                    'session_id': str(self.first_voter.session_id),
+                    'target_ref': str(self.target.public_id),
+                },
+            )
+            started_two = await first_socket.receive_json_from()
+            await second_socket.receive_json_from()
+
+            first_yes = await api_post(
+                f"/api/rooms/expulsion-votes/{start_two.json()['vote']['vote_ref']}/ballots/",
+                {'session_id': str(self.first_voter.session_id), 'choice': 'yes'},
+            )
+            updated = await first_socket.receive_json_from()
+            await second_socket.receive_json_from()
+
+            final_yes = await api_post(
+                f"/api/rooms/expulsion-votes/{start_two.json()['vote']['vote_ref']}/ballots/",
+                {'session_id': str(self.disconnecting_voter.session_id), 'choice': 'yes'},
+            )
+            approved = await first_socket.receive_json_from()
+            await second_socket.receive_json_from()
+
+            await first_socket.disconnect()
+            await second_socket.disconnect()
+            return start_one, started_one, reject, rejected, start_two, started_two, first_yes, updated, final_yes, approved
+
+        (
+            start_one,
+            started_one,
+            reject,
+            rejected,
+            start_two,
+            started_two,
+            first_yes,
+            updated,
+            final_yes,
+            approved,
+        ) = async_to_sync(vote_lifecycle)()
+
+        self.target.refresh_from_db()
+        self.assertEqual(start_one.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(started_one['type'], 'expulsion_vote_started')
+        self.assertNotIn('session_id', started_one['vote'])
+        self.assertEqual(reject.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(rejected['type'], 'expulsion_vote_rejected')
+        self.assertEqual(start_two.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(started_two['type'], 'expulsion_vote_started')
+        self.assertEqual(first_yes.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(updated['type'], 'expulsion_vote_updated')
+        self.assertEqual(updated['vote']['yes_count'], 1)
+        self.assertEqual(final_yes.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(approved['type'], 'expulsion_vote_approved')
+        self.assertEqual(approved['vote']['status'], ExpulsionVote.Status.APPROVED)
+        self.assertIsNotNone(self.target.left_at)
+        self.assertEqual(self.target.presence, Participant.Presence.OFFLINE)

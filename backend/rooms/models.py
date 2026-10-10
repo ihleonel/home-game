@@ -45,6 +45,7 @@ class Participant(models.Model):
         on_delete=models.CASCADE,
         related_name='participants',
     )
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     session_id = models.UUIDField(default=uuid.uuid4)
     display_name = models.CharField(max_length=80)
     game_marker = models.CharField(max_length=64)
@@ -69,3 +70,77 @@ class Participant(models.Model):
 
     def __str__(self):
         return self.display_name
+
+
+class ExpulsionVote(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    room = models.ForeignKey(
+        Room,
+        on_delete=models.CASCADE,
+        related_name='expulsion_votes',
+    )
+    target = models.ForeignKey(
+        Participant,
+        on_delete=models.CASCADE,
+        related_name='expulsion_votes_as_target',
+    )
+    initiated_by = models.ForeignKey(
+        Participant,
+        on_delete=models.CASCADE,
+        related_name='expulsion_votes_started',
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    resolution_reason = models.CharField(max_length=32, blank=True, default='')
+    started_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=('room',),
+                condition=models.Q(status='pending'),
+                name='one_pending_room_vote',
+            ),
+        ]
+
+
+class ExpulsionBallot(models.Model):
+    class Choice(models.TextChoices):
+        YES = 'yes', 'Yes'
+        NO = 'no', 'No'
+
+    vote = models.ForeignKey(
+        ExpulsionVote,
+        on_delete=models.CASCADE,
+        related_name='ballots',
+    )
+    voter = models.ForeignKey(
+        Participant,
+        on_delete=models.CASCADE,
+        related_name='expulsion_ballots',
+    )
+    choice = models.CharField(
+        max_length=3,
+        choices=Choice.choices,
+        null=True,
+        blank=True,
+    )
+    cast_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=('vote', 'voter'),
+                name='one_ballot_per_voter',
+            ),
+        ]

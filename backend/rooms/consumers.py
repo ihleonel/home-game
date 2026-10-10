@@ -10,27 +10,18 @@ from django.utils import timezone
 
 from .events import room_event_message, room_group_name, room_snapshot
 from .constants import RECONNECT_GRACE_SECONDS
+from .connections import (
+    has_room_connection,
+    register_connection,
+    unregister_connection,
+)
 from .models import Participant, Room
+from .voting import (
+    cancel_pending_vote_for_participant,
+    cancel_pending_vote_for_target,
+)
 
-_CONNECTIONS = {}
 _GRACE_TASKS = {}
-
-
-def _register_connection(room_id, session_id, channel_name):
-    key = (room_id, session_id)
-    _CONNECTIONS.setdefault(key, set()).add(channel_name)
-
-
-def _unregister_connection(room_id, session_id, channel_name):
-    key = (room_id, session_id)
-    channels = _CONNECTIONS.get(key)
-    if channels is None:
-        return True
-    channels.discard(channel_name)
-    if channels:
-        return False
-    _CONNECTIONS.pop(key, None)
-    return True
 
 
 def _cancel_grace_task(room_id, session_id):
@@ -92,7 +83,12 @@ def _mark_online(room_id, session_id):
             participant.save(
                 update_fields=('presence', 'disconnected_at', 'updated_at')
             )
-        return room_snapshot(room), changed
+        cancelled_vote = cancel_pending_vote_for_target(
+            room,
+            participant,
+            'target_reconnected',
+        )
+        return room_snapshot(room), changed, cancelled_vote
 
 
 @database_sync_to_async
@@ -118,7 +114,13 @@ def _mark_reconnecting(room_id, session_id):
         participant.save(
             update_fields=('presence', 'disconnected_at', 'updated_at')
         )
-        return room_snapshot(room), disconnected_at
+        cancelled_vote = cancel_pending_vote_for_participant(
+            room,
+            participant,
+            target_reason='target_disconnected',
+            voter_reason='eligible_voter_disconnected',
+        )
+        return room_snapshot(room), disconnected_at, cancelled_vote
 
 
 @database_sync_to_async
@@ -150,10 +152,10 @@ def _mark_inactive(room_id, session_id, disconnected_at):
 async def _publish_inactive_after_grace(room_id, session_id, disconnected_at, layer):
     try:
         await asyncio.sleep(RECONNECT_GRACE_SECONDS)
-        if _CONNECTIONS.get((room_id, session_id)):
+        if has_room_connection(room_id, session_id):
             return
         snapshot = await _mark_inactive(room_id, session_id, disconnected_at)
-        if snapshot is not None and not _CONNECTIONS.get((room_id, session_id)):
+        if snapshot is not None and not has_room_connection(room_id, session_id):
             await layer.group_send(
                 room_group_name(room_id),
                 room_event_message('participant_inactive', snapshot),
@@ -185,7 +187,7 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         self.room_id, self.session_id = membership
         self.room_group = room_group_name(self.room_id)
         await self.channel_layer.group_add(self.room_group, self.channel_name)
-        _register_connection(self.room_id, self.session_id, self.channel_name)
+        register_connection(self.room_id, self.session_id, self.channel_name)
         self.connection_registered = True
         _cancel_grace_task(self.room_id, self.session_id)
 
@@ -193,7 +195,7 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         if online is None:
             await self.close(code=4401)
             return
-        snapshot, changed = online
+        snapshot, changed, cancelled_vote = online
 
         await self.accept()
         await self.send_json({'type': 'room.snapshot', 'room': snapshot})
@@ -202,14 +204,26 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
                 self.room_group,
                 room_event_message('participant_online', snapshot),
             )
+        if cancelled_vote is not None:
+            await self.channel_layer.group_send(
+                self.room_group,
+                room_event_message(
+                    'expulsion_vote_cancelled',
+                    snapshot,
+                    vote=cancelled_vote,
+                ),
+            )
 
     async def room_event(self, event):
+        client_event = {'type': event['event'], 'room': event['room']}
+        if 'vote' in event:
+            client_event['vote'] = event['vote']
         if event.get('departed_session_id') == self.session_id:
             _cancel_grace_task(self.room_id, self.session_id)
-            await self.send_json({'type': event['event'], 'room': event['room']})
+            await self.send_json(client_event)
             await self.close(code=4001)
             return
-        await self.send_json({'type': event['event'], 'room': event['room']})
+        await self.send_json(client_event)
 
     async def disconnect(self, close_code):
         if self.room_group is not None:
@@ -218,17 +232,26 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         if not self.connection_registered:
             return
         self.connection_registered = False
-        if not _unregister_connection(self.room_id, self.session_id, self.channel_name):
+        if not unregister_connection(self.room_id, self.session_id, self.channel_name):
             return
 
         reconnecting = await _mark_reconnecting(self.room_id, self.session_id)
         if reconnecting is None:
             return
-        snapshot, disconnected_at = reconnecting
+        snapshot, disconnected_at, cancelled_vote = reconnecting
         await self.channel_layer.group_send(
             self.room_group,
             room_event_message('participant_reconnecting', snapshot),
         )
+        if cancelled_vote is not None:
+            await self.channel_layer.group_send(
+                self.room_group,
+                room_event_message(
+                    'expulsion_vote_cancelled',
+                    snapshot,
+                    vote=cancelled_vote,
+                ),
+            )
 
         key = (self.room_id, self.session_id)
         _cancel_grace_task(self.room_id, self.session_id)
