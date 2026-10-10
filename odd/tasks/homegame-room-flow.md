@@ -43,7 +43,7 @@ This establishes the shared session experience before implementing any actual bo
   - Route: delegated direct writer. Trigger evidence: creating models, migrations, app registration, and tests spans multiple non-trivial files.
   - Acceptance: uniqueness and participant membership constraints are tested using the backend container; ending/deleting a room removes it and its memberships; no host/admin role or game rules are added.
 
-- [ ] **HG-RF-01B — Add catalog and room REST APIs**
+- [x] **HG-RF-01B — Add catalog and room REST APIs**
   - Add stable fictional catalog data and endpoints for listing games, reading the active room, creating/joining/leaving, and updating readiness.
   - Use a server-issued guest token and server-side atomic room creation; a later request discovers/joins the existing room instead of creating another.
   - Route: same delegated direct writer, sequentially after HG-RF-01A. Trigger evidence: API, serialization, permissions, and tests span multiple paths.
@@ -73,14 +73,16 @@ This establishes the shared session experience before implementing any actual bo
 
 ## Progress
 
-- Read-only code mapping completed; HG-RF-01A source changes are implemented and pending the work-unit commit.
+- Read-only code mapping completed; HG-RF-01A source changes are committed.
 - Standard verification mode was explicitly selected by the user.
 - User authorized public Docker Hub, Debian package mirror, and PyPI downloads for the local backend image rebuild, without stored credentials.
 - The initial broad backend writer launch aborted before returning a result; `git status` confirmed no source changes. Work continued as smaller sequential writer tasks.
 - HG-RF-01A completed: the room model permits only active rows; ending the game deletes the room and cascades participant memberships. Five backend-container tests passed, and `makemigrations --check --dry-run` found no drift.
+- Work-unit commit `fb5ebdff46ff51ed5d97614f8d3e333fa1fd1de1` (`feat: add HomeGame room persistence`) assessed medium with `review_due: false` and `review_due_reason: under_budget`; keep the slice pending.
+- HG-RF-01B completed: fictional catalog and room REST APIs are in place; 16 backend-container tests passed, including strict UUID-string token validation.
 - HG-RF-01B, HG-RF-02, HG-RF-03, and HG-RF-04 remain pending.
 - Runtime remains on localhost; no guest Wi-Fi bind changes are in scope.
 
 ## Next Step
 
-Implement HG-RF-01B next: add the fictional catalog and guest room REST APIs on `develop`.
+Implement HG-RF-02 next: build the catalog, session identity prompt, and live lobby UI against the REST APIs.
