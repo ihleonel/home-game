@@ -6,7 +6,7 @@ Start the basic HomeGame development services with per-instance configuration an
 
 ## Problem
 
-The current checkout has `docker-compose.example.yml` and `.env.example` templates, while `.gitignore` already excludes per-instance `docker-compose.yml` and `.env` files. A prior setup attempt edited the templates instead of creating local instance files. The existing `.atl/` runtime metadata is untracked and is not yet ignored.
+The checkout has `docker-compose.example.yml` and `.env.example` templates, while `.gitignore` excludes per-instance `docker-compose.yml` and `.env` files. The local runtime metadata in `.atl/` also needed to be ignored without changing its contents.
 
 ## Why
 
@@ -14,57 +14,57 @@ The user wants to proceed incrementally, keep example templates reusable, create
 
 ## Scope
 
-- Restore `docker-compose.example.yml` and `.env.example` to their repository baseline.
+- Keep `docker-compose.example.yml` and `.env.example` at their repository baseline.
 - Create instance-specific, ignored `docker-compose.yml` and `.env` files.
 - Publish only the frontend at `127.0.0.1:36130`; keep backend and database ports internal.
-- Add `.atl/` to `.gitignore` without changing the contents of `.atl/`.
+- Ignore `.atl/` without changing its contents.
 - Do not add game functionality, WebSockets, production deployment, or guest Wi-Fi access in this task.
 - Use the canonical `docker-compose.yml` filename. The user typed `docker-compos.yml`; the existing ignore rule and Compose convention indicate the canonical spelling.
-- Do not access remote image registries or package indexes, use stored credentials, or start a build until the user explicitly authorizes the destination and access method.
+- Do not access remote image registries or package indexes, or use stored credentials, without explicit authorization.
 
 ## Constraints and Current Evidence
 
 - Repository: current `home-game` working tree; implementation branch: `feature/homegame-docker-bootstrap`.
-- Before implementation, `git status` showed only tracked edits from the prior setup attempt and the pre-existing untracked `.atl/` directory. Preserve all `.atl/` contents.
-- Docker and Compose are installed. The local daemon was addressed explicitly through `unix:///var/run/docker.sock`; port 36130 is free.
-- Compose configuration and `git diff --check` passed for the prior attempt, but that attempt edited the wrong files and its template changes must be reverted.
-- `python:3.12-slim` is absent locally. Dockerfiles invoke apt, pip, and npm package installation. No image build or service startup has been authorized over the network.
-- Receipt-driven development is on by default. Native review previously requested a schema-bound selection for pre-existing `.atl/` files; after adding the ignore rule, rerun the canonical status/assessment and do not fabricate a selection.
-- No project/session TDD setting or applicable application test runner was found. This is configuration-only work: use Compose validation and local runtime checks; do not claim an application TDD mode. If scope expands to application behavior, resolve TDD before proceeding.
-- Delivery strategy: `ask-on-risk`; no remote delivery is in scope. Estimated authored changes are under 400 lines (planning heuristic only).
+- Docker and Compose are installed. The local daemon was addressed explicitly through `unix:///var/run/docker.sock`; port 36130 was free before startup.
+- Both example templates match the local Git baseline. The instance-specific Compose and environment files are ignored; no secret values are recorded here.
+- Compose configuration and `git diff --check` pass. The frontend is bound to loopback; backend/database ports are not host-published.
+- At planning time `python:3.12-slim` was absent locally. The user subsequently started the services; the assistant did not build images, pull, or access remote package sources.
+- Receipt-driven development is on by default. Work-unit commit `488f859142d634d8a155529c472a51c26d71e838` assessed `medium`, `review_due: false`, `review_due_reason: under_budget`; the slice remains pending until a later assessment says review is due.
+- No project/session TDD setting or applicable application test runner was found. This was configuration-only work, validated with Compose configuration and a local HTTP/service-state check.
+- Delivery strategy: `ask-on-risk`; no remote delivery is in scope. Estimated authored changes were under 400 lines (planning heuristic only).
 
 ## Tasks
 
 - [x] **HG-01 — Separate instance configuration from templates**
-  - Restore both example templates to their repository baseline.
-  - Create `docker-compose.yml` and `.env` with values specific to this instance; keep both local and ignored.
-  - Route: delegated direct writer. Trigger evidence: reading prepares edits across Compose, environment, Dockerfiles, and ignore conventions; the implementation changes multiple non-trivial configuration files.
-  - Acceptance: the example templates are unchanged from the repository baseline; the local Compose stack exposes only `127.0.0.1:36130`; local database credentials and Django secret stay in ignored `.env`; the backend/database are not host-published.
+  - Kept both example templates at their repository baseline.
+  - Created `docker-compose.yml` and `.env` with instance-specific values; both remain local and ignored.
+  - Route: delegated direct writer. Trigger evidence: reading prepared edits across Compose, environment, and Dockerfiles; the implementation changed multiple non-trivial configuration files.
+  - Acceptance: templates unchanged; frontend bound only to `127.0.0.1:36130`; local credentials remain in ignored `.env`; backend/database not host-published.
 
 - [x] **HG-02 — Ignore local runtime metadata**
-  - Add `.atl/` to `.gitignore` and preserve the directory contents.
+  - Added `.atl/` to `.gitignore` and preserved the directory contents.
   - Route: direct inline mechanical edit. Trigger evidence: one already-understood pattern in the inspected `.gitignore`.
   - Acceptance: `.atl/` is ignored and existing `.env`/`docker-compose.yml` ignore rules remain intact.
 
-- [ ] **HG-03 — Validate and start the local stack**
-  - Validate the per-instance Compose file and check the diff; start and smoke-test only after required remote dependency access is explicitly authorized and the native review gate is resolved.
-  - Route: fresh per-action worker for build/start verification. Trigger evidence: build/start is a bounded operational action and must not inherit writer context.
-  - Acceptance: Compose parses successfully; once authorized, the services become healthy and `http://localhost:36130` serves the frontend. If remote access remains unauthorized, record startup as blocked without attempting downloads.
+- [x] **HG-03 — Validate the local stack**
+  - Validated the per-instance Compose file and checked the diff. Verified the local HTTP endpoint and service health without starting or rebuilding containers.
+  - Route: parent direct, read-only local spot check. Trigger evidence: the user reported that services were already running; the parent verified the endpoint and Compose status.
+  - Acceptance: HTTP on `127.0.0.1:36130` succeeds; frontend and backend are running; database is healthy.
 
 ## Verification
 
-- `docker compose -f docker-compose.yml config --quiet`
-- `git diff --check`
-- After explicit download authorization: `docker compose -f docker-compose.yml up --build -d`
-- After startup: a local HTTP smoke check of `http://127.0.0.1:36130/` and Compose service status.
+- `docker --host unix:///var/run/docker.sock compose -f docker-compose.yml config --quiet` — passed.
+- `git diff --check` — passed.
+- `curl --noproxy '*' -sS -I --max-time 5 http://127.0.0.1:36130/` — `HTTP/1.1 200 OK`.
+- `docker --host unix:///var/run/docker.sock compose -f docker-compose.yml ps` — frontend/backend running; database healthy; frontend published at `127.0.0.1:36130`.
 
 ## Progress
 
-- HG-01 completed: both example templates match the repository baseline; ignored per-instance `docker-compose.yml` and `.env` exist; Compose validation passes.
-- HG-02 completed: `.atl/` was added to `.gitignore`; `git check-ignore` confirms both existing `.atl` files are ignored. Their contents were not changed.
-- HG-03 is blocked pending explicit authorization for public image/package downloads and completion of native review preflight.
-- No containers have been built or started.
+- HG-01 and HG-02 completed; both example templates remain unchanged.
+- Work-unit commit: `488f859142d634d8a155529c472a51c26d71e838` (`chore: configure HomeGame local Docker bootstrap`); assessment is `medium/under_budget`, so native review is not currently due.
+- HG-03 completed after the user's report that services were up; local HTTP and Compose status checks confirmed it.
+- The assistant did not build, pull, or start containers.
 
 ## Next Step
 
-Resolve the native review preflight, then request explicit download authorization before building or starting containers. Keep the `.env` contents private.
+The local development stack is ready. Continue with the next HomeGame product slice when the user chooses it; keep `.env` contents private.
