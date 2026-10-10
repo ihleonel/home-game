@@ -55,7 +55,7 @@ This establishes the shared session experience before implementing any actual bo
   - Route: same delegated direct writer, sequentially after HG-RF-01B. Trigger evidence: frontend UI, session identity handling, and room API integration span multiple files.
   - Acceptance: guests can browse without identity; identity is requested only when creating/joining; returning participants see their session name prefilled; game piece is the in-room visual marker; no room code or generic avatar step.
 
-- [ ] **HG-RF-03 — Add WebSocket presence and 60-second reconnect grace**
+- [x] **HG-RF-03 — Add WebSocket presence and 60-second reconnect grace**
   - Add Django Channels/Daphne ASGI routing, room-group membership events, reconnect snapshots, leave/disconnect handling, 60-second reconnect grace, and Vite WebSocket proxying.
   - On an unexpected disconnect, retain the participant for 60 seconds as reconnecting; a reconnect in that window restores the same session. Explicit leave is immediate.
   - Route: same delegated direct writer. Build/restart only through the explicit local Docker socket; use an empty Docker credential config and limit downloads to Docker Hub, Debian package mirrors, and PyPI, as authorized by the user.
@@ -90,11 +90,13 @@ This establishes the shared session experience before implementing any actual bo
 - Work-unit commit `72882cd7069a50df550d5c15beff57ca751a7b90` assessed medium with `review_due: true` and `review_due_reason: slice_budget_reached`. Native review start returned a typed unavailable result before mutation; no review receipt or approval exists. The off-path risk assessment is medium; the writer and parent backend-container tests passed.
 - The user explicitly chose to continue with the catalog/WebSocket work despite the unavailable native review. Preserve the unavailable result; do not represent this slice as natively reviewed or approved.
 - HG-RF-02 completed: catalog, session identity/marker form, active-room view, roster, ready toggle, and leave action are implemented. Parent readback found and corrected saved-identity room creation; frontend build/lint pass inside the frontend container.
+- Work-unit commit `ea7ccbea3745031109d13d780f4236d517e39bbb` (`feat: add HomeGame catalog and lobby UI`) assessed medium with `review_due: true` and `review_due_reason: slice_budget_reached`. Native review remains unavailable; container build/lint and the parent build spot-check passed.
 - The user confirmed a 60-second reconnect grace followed by a unanimous expulsion vote among other connected players; explicit leave remains immediate. In this slice, inactivity means connection loss, not a missed game turn.
-- HG-RF-03 is in progress; no WebSocket source edits have started.
-- HG-RF-04 and HG-RF-05 remain pending.
+- HG-RF-03 completed: Channels/Daphne presence events, 60-second reconnect grace, Vite WebSocket proxy, and container integration are implemented. Twenty-one backend tests and frontend build/lint pass inside containers.
+- During the backend restart, Compose reported the database container recreated and healthy; no volumes were removed and database contents were not inspected.
+- HG-RF-04 is in progress: implement the unanimous expulsion vote after the reconnect grace. HG-RF-05 remains pending.
 - Runtime remains on localhost; no guest Wi-Fi bind changes are in scope.
 
 ## Next Step
 
-Implement HG-RF-03 and HG-RF-04 sequentially on `develop`; keep checks inside Docker and preserve the unavailable native-review result without reporting approval.
+Implement HG-RF-04's unanimous expulsion vote on `develop`, then perform final container-only verification; preserve the unavailable native-review result without reporting approval.

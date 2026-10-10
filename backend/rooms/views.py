@@ -6,6 +6,7 @@ from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.response import Response
 
 from .catalog import GAMES
+from .events import room_snapshot, schedule_room_event
 from .models import Participant, Room
 from .serializers import (
     LeaveRoomSerializer,
@@ -37,18 +38,25 @@ def _membership_for(room, data):
         ).first()
 
     if participant is not None:
+        was_left = participant.left_at is not None
+        identity_updated = False
         update_fields = []
         for field in ('display_name', 'game_marker'):
             if field in data and getattr(participant, field) != data[field]:
                 setattr(participant, field, data[field])
                 update_fields.append(field)
+                identity_updated = True
         if participant.left_at is not None:
             participant.left_at = None
             update_fields.append('left_at')
         if update_fields:
             update_fields.append('updated_at')
             participant.save(update_fields=tuple(update_fields))
-        return participant
+        if was_left:
+            return participant, 'player_joined'
+        if identity_updated:
+            return participant, 'player_updated'
+        return participant, None
 
     missing_fields = {
         field: 'This field is required for a new room participant.'
@@ -58,11 +66,12 @@ def _membership_for(room, data):
     if missing_fields:
         raise ValidationError(missing_fields)
 
-    return Participant.objects.create(
+    participant = Participant.objects.create(
         room=room,
         display_name=data['display_name'],
         game_marker=data['game_marker'],
     )
+    return participant, 'player_joined'
 
 
 def _create_or_discover_room(data):
@@ -80,8 +89,8 @@ def _create_or_discover_room(data):
     if room.game_id != data['game_id']:
         raise ActiveRoomGameConflict()
 
-    participant = _membership_for(room, data)
-    return room, participant, created
+    participant, event_name = _membership_for(room, data)
+    return room, participant, created, event_name
 
 
 def _room_membership_response(room, participant):
@@ -108,8 +117,10 @@ def active_room(request):
 def create_room(request):
     data = _request_data(RoomRequestSerializer, request)
     with transaction.atomic():
-        room, participant, created = _create_or_discover_room(data)
+        room, participant, created, event_name = _create_or_discover_room(data)
         response_data = _room_membership_response(room, participant)
+        if event_name is not None:
+            schedule_room_event(room.pk, event_name, room_snapshot(room))
     response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return Response(response_data, status=response_status)
 
@@ -125,8 +136,10 @@ def join_room(request):
             raise NotFound('There is no active room to join.')
         if room.game_id != data['game_id']:
             raise ActiveRoomGameConflict()
-        participant = _membership_for(room, data)
+        participant, event_name = _membership_for(room, data)
         response_data = _room_membership_response(room, participant)
+        if event_name is not None:
+            schedule_room_event(room.pk, event_name, room_snapshot(room))
     return Response(response_data)
 
 
@@ -148,9 +161,26 @@ def leave_room(request):
             raise NotFound('The session is not an active room participant.')
 
         participant.left_at = timezone.now()
-        participant.save(update_fields=('left_at', 'updated_at'))
+        participant.presence = Participant.Presence.OFFLINE
+        participant.disconnected_at = None
+        participant.save(
+            update_fields=(
+                'left_at',
+                'presence',
+                'disconnected_at',
+                'updated_at',
+            )
+        )
+        room_id = room.pk
+        snapshot = room_snapshot(room)
         if not room.participants.filter(left_at__isnull=True).exists():
             room.delete()
+        schedule_room_event(
+            room_id,
+            'player_left',
+            snapshot,
+            departed_session_id=participant.session_id,
+        )
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -174,4 +204,9 @@ def update_ready_state(request):
         participant.is_ready = data['is_ready']
         participant.save(update_fields=('is_ready', 'updated_at'))
         response_data = {'room': RoomSerializer(room).data}
+        schedule_room_event(
+            room.pk,
+            'ready_changed',
+            room_snapshot(room),
+        )
     return Response(response_data)

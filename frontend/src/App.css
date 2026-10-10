@@ -307,6 +307,33 @@
   font-weight: 750;
 }
 
+.presence-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-raised);
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.presence-online {
+  color: var(--success-ink);
+  background: var(--success-bg);
+}
+
+.presence-reconnecting {
+  color: #81570a;
+  background: #fff1cd;
+}
+
+.presence-inactive {
+  color: var(--muted);
+  background: var(--surface-raised);
+}
+
 .room-status::before {
   width: 0.45rem;
   height: 0.45rem;

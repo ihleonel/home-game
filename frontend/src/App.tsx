@@ -13,6 +13,8 @@ type Participant = {
   display_name: string
   game_marker: string
   is_ready: boolean
+  presence: 'offline' | 'online' | 'reconnecting' | 'inactive'
+  disconnected_at: string | null
   joined_at: string
 }
 type Room = {
@@ -230,6 +232,7 @@ function IdentityForm({
 
 function App() {
   const membershipRequestPending = useRef(false)
+  const leavingRef = useRef(false)
   const [games, setGames] = useState<Game[]>([])
   const [room, setRoom] = useState<Room | null>(null)
   const [roomSession, setRoomSession] = useState<RoomSession | null>(null)
@@ -241,6 +244,7 @@ function App() {
   })
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -365,8 +369,10 @@ function App() {
       }
 
       saveGuestSession(nextSession)
+      leavingRef.current = false
       setRoom(response.room)
       setRoomSession(nextSession)
+      setConnectionError(null)
       setIntent(null)
       setSelectedGameId(null)
     } catch (error) {
@@ -419,6 +425,7 @@ function App() {
 
   async function leaveRoom(): Promise<void> {
     if (!roomSession) return
+    leavingRef.current = true
     setPendingAction('leave')
     setActionError(null)
     try {
@@ -429,6 +436,7 @@ function App() {
       setRoomSession(null)
       await refreshActiveRoom()
     } catch (error) {
+      leavingRef.current = false
       setActionError(error instanceof Error ? error.message : 'The room could not be left.')
       if (error instanceof ApiError && error.status === 404) {
         setRoomSession(null)
@@ -438,6 +446,155 @@ function App() {
       setPendingAction(null)
     }
   }
+
+  const sessionGameId = roomSession?.gameId ?? null
+  const sessionId = roomSession?.sessionId ?? null
+  const sessionDisplayName = roomSession?.displayName ?? null
+  const sessionGameMarker = roomSession?.gameMarker ?? null
+
+  useEffect(() => {
+    if (!sessionGameId || !sessionId || !sessionDisplayName || !sessionGameMarker) return
+    const gameId = sessionGameId
+    const guestSessionId = sessionId
+    const displayName = sessionDisplayName
+    const gameMarker = sessionGameMarker
+    leavingRef.current = false
+
+    let cancelled = false
+    let currentSocket: WebSocket | null = null
+    let reconnectTimer: number | null = null
+    let stableTimer: number | null = null
+    let reconnectAttempts = 0
+    const maxReconnectAttempts = 5
+
+    function scheduleReconnect(): void {
+      if (cancelled || leavingRef.current) return
+      if (reconnectAttempts >= maxReconnectAttempts) {
+        setConnectionError('Live updates could not reconnect. Leave and rejoin to try again.')
+        return
+      }
+      const delay = Math.min(1000 * 2 ** reconnectAttempts, 8000)
+      reconnectAttempts += 1
+      reconnectTimer = window.setTimeout(() => void connect(true), delay)
+    }
+
+    async function connect(reconnecting: boolean): Promise<void> {
+      if (cancelled || leavingRef.current) return
+
+      if (reconnecting) {
+        try {
+          const response = await requestJson<MembershipResponse>('/api/rooms/join/', {
+            method: 'POST',
+            body: JSON.stringify({
+              game_id: gameId,
+              session_id: guestSessionId,
+              display_name: displayName,
+              game_marker: gameMarker,
+            }),
+          })
+          if (cancelled || leavingRef.current) return
+
+          const savedSession = readStoredRoomSession(gameId)
+          const nextSession: RoomSession = {
+            gameId,
+            sessionId: response.session_id,
+            displayName,
+            gameMarker,
+            isReady:
+              response.session_id === guestSessionId ? (savedSession?.isReady ?? false) : false,
+          }
+          saveGuestSession(nextSession)
+          setRoom(response.room)
+          if (response.session_id !== guestSessionId) {
+            setRoomSession((current) =>
+              current?.sessionId === guestSessionId ? nextSession : current,
+            )
+            return
+          }
+          setRoomSession((current) =>
+            current?.sessionId === guestSessionId ? nextSession : current,
+          )
+        } catch (error) {
+          if (cancelled || leavingRef.current) return
+          if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
+            setRoomSession((current) =>
+              current?.sessionId === guestSessionId ? null : current,
+            )
+            setConnectionError(error.message)
+            void fetchActiveRoom().then(setRoom).catch(() => undefined)
+            return
+          }
+          scheduleReconnect()
+          return
+        }
+      }
+
+      if (cancelled || leavingRef.current) return
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const socketUrl = `${protocol}//${window.location.host}/ws/rooms/active/?session_id=${encodeURIComponent(guestSessionId)}`
+
+      try {
+        const socket = new WebSocket(socketUrl)
+        currentSocket = socket
+
+        socket.onopen = () => {
+          setConnectionError(null)
+          stableTimer = window.setTimeout(() => {
+            reconnectAttempts = 0
+          }, 10000)
+        }
+
+        socket.onmessage = (messageEvent) => {
+          try {
+            const message = JSON.parse(String(messageEvent.data)) as RoomEnvelope & {
+              type?: string
+            }
+            if (
+              message.room.game_id === gameId &&
+              Array.isArray(message.room.participants)
+            ) {
+              setRoom(message.room)
+            }
+          } catch {
+            setConnectionError('A live room update could not be read.')
+          }
+        }
+
+        socket.onerror = () => socket.close()
+        socket.onclose = (closeEvent) => {
+          if (currentSocket === socket) currentSocket = null
+          if (stableTimer !== null) {
+            window.clearTimeout(stableTimer)
+            stableTimer = null
+          }
+          if (cancelled || leavingRef.current) return
+          if (closeEvent.code === 4001) {
+            setRoomSession((current) =>
+              current?.sessionId === guestSessionId ? null : current,
+            )
+            return
+          }
+          scheduleReconnect()
+        }
+      } catch {
+        scheduleReconnect()
+      }
+    }
+
+    void connect(false)
+    return () => {
+      cancelled = true
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
+      if (stableTimer !== null) window.clearTimeout(stableTimer)
+      if (currentSocket !== null) {
+        currentSocket.onopen = null
+        currentSocket.onmessage = null
+        currentSocket.onerror = null
+        currentSocket.onclose = null
+        currentSocket.close(1000, 'Room session ended')
+      }
+    }
+  }, [sessionDisplayName, sessionGameId, sessionGameMarker, sessionId])
 
   const busy = pendingAction !== null
 
@@ -452,6 +609,7 @@ function App() {
       </header>
 
       {actionError && <p className="message message-error" role="alert">{actionError}</p>}
+      {connectionError && <p className="message message-error" role="status">{connectionError}</p>}
 
       {isLoading ? (
         <p className="loading-message" role="status">Loading games and room…</p>
@@ -501,6 +659,9 @@ function App() {
                     <span className="player-name">{participant.display_name}</span>
                     <span className={participant.is_ready ? 'ready-badge is-ready' : 'ready-badge'}>
                       {participant.is_ready ? 'Ready' : 'Not ready'}
+                    </span>
+                    <span className={`presence-badge presence-${participant.presence}`}>
+                      {participant.presence}
                     </span>
                   </li>
                 ))}

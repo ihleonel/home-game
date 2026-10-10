@@ -1,6 +1,10 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import serializers
 
 from .catalog import GAMES_BY_ID
+from .constants import RECONNECT_GRACE_SECONDS
 from .models import Participant, Room
 
 
@@ -43,9 +47,28 @@ class ReadyStateSerializer(serializers.Serializer):
 
 
 class ParticipantRosterSerializer(serializers.ModelSerializer):
+    presence = serializers.SerializerMethodField()
+
     class Meta:
         model = Participant
-        fields = ('display_name', 'game_marker', 'is_ready', 'joined_at')
+        fields = (
+            'display_name',
+            'game_marker',
+            'is_ready',
+            'presence',
+            'disconnected_at',
+            'joined_at',
+        )
+
+    def get_presence(self, participant):
+        if (
+            participant.presence == Participant.Presence.RECONNECTING
+            and participant.disconnected_at is not None
+            and timezone.now()
+            >= participant.disconnected_at + timedelta(seconds=RECONNECT_GRACE_SECONDS)
+        ):
+            return Participant.Presence.INACTIVE
+        return participant.presence
 
 
 class RoomSerializer(serializers.ModelSerializer):

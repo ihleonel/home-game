@@ -34,6 +34,12 @@ class Room(models.Model):
 
 
 class Participant(models.Model):
+    class Presence(models.TextChoices):
+        OFFLINE = 'offline', 'Offline'
+        ONLINE = 'online', 'Online'
+        RECONNECTING = 'reconnecting', 'Reconnecting'
+        INACTIVE = 'inactive', 'Inactive'
+
     room = models.ForeignKey(
         Room,
         on_delete=models.CASCADE,
@@ -43,9 +49,15 @@ class Participant(models.Model):
     display_name = models.CharField(max_length=80)
     game_marker = models.CharField(max_length=64)
     is_ready = models.BooleanField(default=False)
+    presence = models.CharField(
+        max_length=16,
+        choices=Presence.choices,
+        default=Presence.OFFLINE,
+    )
     joined_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     left_at = models.DateTimeField(null=True, blank=True)
+    disconnected_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
