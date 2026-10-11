@@ -21,7 +21,9 @@ from .features.membership.application.use_cases import (
     leave_room as leave_room_use_case,
 )
 from .features.membership.domain.errors import (
+    ActiveParticipantNotFound as MembershipParticipantNotFound,
     ActiveRoomGameConflict as ActiveRoomGameConflictError,
+    ActiveRoomNotFound as MembershipRoomNotFound,
     MissingParticipantIdentity,
     RemovedSession,
 )
@@ -77,10 +79,11 @@ def game_catalog(request):
 
 @api_view(['GET'])
 def active_room(request):
-    room = get_active_room(DjangoRoomMembershipGateway())
-    if room is None:
+    try:
+        room = get_active_room(DjangoRoomMembershipGateway())
+    except MembershipRoomNotFound:
         raise NotFound('There is no active room.')
-    return Response({'room': RoomSerializer(room).data})
+    return Response({'room': room})
 
 
 @api_view(['POST'])
@@ -119,11 +122,11 @@ def join_room(request):
 @api_view(['POST'])
 def leave_room(request):
     data = _request_data(LeaveRoomSerializer, request)
-    result = leave_room_use_case(DjangoRoomMembershipGateway(), data)
-    if result is None:
+    try:
+        leave_room_use_case(DjangoRoomMembershipGateway(), data)
+    except MembershipRoomNotFound:
         raise NotFound('There is no active room.')
-    _, participant = result
-    if participant is None:
+    except MembershipParticipantNotFound:
         raise NotFound('The session is not an active room participant.')
     return Response(status=status.HTTP_204_NO_CONTENT)
 

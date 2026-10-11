@@ -3,7 +3,10 @@ from django.test import SimpleTestCase
 from modules.rooms.catalog import GAMES, GAMES_BY_ID
 from modules.rooms.features.catalog.application.use_cases import list_games
 from modules.rooms.features.catalog.domain.catalog import contains_game, contains_marker
-from modules.rooms.features.membership.domain.rules import membership_change
+from modules.rooms.features.membership.domain.rules import (
+    is_disconnected_presence,
+    membership_change,
+)
 from modules.rooms.features.readiness.domain.rules import readiness_change
 
 
@@ -32,8 +35,13 @@ class MembershipDomainTests(SimpleTestCase):
 
         self.assertEqual(change.event_name, 'player_joined')
         self.assertEqual(
-            change.update_fields,
-            ('display_name', 'left_at', 'presence', 'disconnected_at'),
+            dict(change.updates),
+            {
+                'display_name': 'Guest Updated',
+                'left_at': None,
+                'presence': 'offline',
+                'disconnected_at': None,
+            },
         )
 
     def test_unchanged_active_membership_does_not_emit_an_event(self):
@@ -45,8 +53,13 @@ class MembershipDomainTests(SimpleTestCase):
             data={'display_name': 'Guest', 'game_marker': 'silver-leaf'},
         )
 
-        self.assertEqual(change.update_fields, ())
+        self.assertEqual(change.updates, ())
         self.assertIsNone(change.event_name)
+
+    def test_only_reconnecting_and_inactive_presence_counts_as_disconnected(self):
+        self.assertTrue(is_disconnected_presence('reconnecting'))
+        self.assertTrue(is_disconnected_presence('inactive'))
+        self.assertFalse(is_disconnected_presence('offline'))
 
 
 class ReadinessDomainTests(SimpleTestCase):

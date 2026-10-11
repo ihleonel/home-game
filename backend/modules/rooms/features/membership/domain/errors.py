@@ -2,6 +2,14 @@ class ActiveRoomGameConflict(Exception):
     pass
 
 
+class ActiveRoomNotFound(Exception):
+    pass
+
+
+class ActiveParticipantNotFound(Exception):
+    pass
+
+
 class RemovedSession(Exception):
     pass
 

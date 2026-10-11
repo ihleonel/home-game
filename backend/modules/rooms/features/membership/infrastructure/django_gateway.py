@@ -1,184 +1,142 @@
+from contextlib import contextmanager
+
 from django.db import transaction
 from django.utils import timezone
 
 from ....events import room_snapshot, schedule_room_event
 from ....models import ExpulsionVote, Participant, Room
-from ....voting import cancel_pending_vote_for_target, cancel_pending_vote_for_participant
-from ..domain.errors import (
-    ActiveRoomGameConflict,
-    MissingParticipantIdentity,
-    RemovedSession,
+from ....voting import (
+    cancel_pending_vote_for_participant,
+    cancel_pending_vote_for_target,
 )
-from ..domain.rules import membership_change
+from ...membership.domain.entities import ActiveRoom, ParticipantMembership
 
 
 class DjangoRoomMembershipGateway:
-    def get_active_room(self):
-        return Room.objects.filter(status=Room.Status.ACTIVE).first()
-
-    def create_or_discover(self, data):
+    @contextmanager
+    def atomic(self):
         with transaction.atomic():
-            room = Room.objects.select_for_update().filter(
-                status=Room.Status.ACTIVE
-            ).first()
-            created = False
-            if room is None:
-                room, created = Room.objects.get_or_create(
-                    status=Room.Status.ACTIVE,
-                    defaults={'game_id': data['game_id']},
-                )
-                room = Room.objects.select_for_update().get(pk=room.pk)
+            yield self
 
-            if room.game_id != data['game_id']:
-                raise ActiveRoomGameConflict()
+    def get_active_room_snapshot(self):
+        room = Room.objects.filter(status=Room.Status.ACTIVE).first()
+        return room_snapshot(room) if room is not None else None
 
-            participant, event_name = self._membership_for(room, data)
-            cancelled_vote = cancel_pending_vote_for_target(
-                room, participant, 'target_reconnected'
+    def active_room_for_update(self):
+        room = Room.objects.select_for_update().filter(
+            status=Room.Status.ACTIVE
+        ).first()
+        return self._room_state(room) if room is not None else None
+
+    def create_or_lock_active_room(self, game_id):
+        room = Room.objects.select_for_update().filter(
+            status=Room.Status.ACTIVE
+        ).first()
+        created = False
+        if room is None:
+            room, created = Room.objects.get_or_create(
+                status=Room.Status.ACTIVE,
+                defaults={'game_id': game_id},
             )
-            response = (self._membership_response(room, participant), created)
-            if event_name is not None:
-                schedule_room_event(room.pk, event_name, room_snapshot(room))
-            if cancelled_vote is not None:
-                schedule_room_event(
-                    room.pk,
-                    'expulsion_vote_cancelled',
-                    room_snapshot(room),
-                    vote=cancelled_vote,
-                )
-        return response
+            room = Room.objects.select_for_update().get(pk=room.pk)
+        return self._room_state(room), created
 
-    def join(self, data):
-        with transaction.atomic():
-            room = Room.objects.select_for_update().filter(
-                status=Room.Status.ACTIVE
-            ).first()
-            if room is None:
-                return None
-            if room.game_id != data['game_id']:
-                raise ActiveRoomGameConflict()
-            participant, event_name = self._membership_for(room, data)
-            cancelled_vote = cancel_pending_vote_for_target(
-                room, participant, 'target_reconnected'
-            )
-            response = self._membership_response(room, participant)
-            if event_name is not None:
-                schedule_room_event(room.pk, event_name, room_snapshot(room))
-            if cancelled_vote is not None:
-                schedule_room_event(
-                    room.pk,
-                    'expulsion_vote_cancelled',
-                    room_snapshot(room),
-                    vote=cancelled_vote,
-                )
-        return response
+    def participant_for_session_for_update(self, room_id, session_id):
+        participant = Participant.objects.select_for_update().filter(
+            room_id=room_id,
+            session_id=session_id,
+        ).first()
+        return self._participant_state(participant) if participant else None
 
-    def leave(self, data):
-        with transaction.atomic():
-            room = Room.objects.select_for_update().filter(
-                status=Room.Status.ACTIVE
-            ).first()
-            if room is None:
-                return None
-            participant = Participant.objects.select_for_update().filter(
-                room=room,
-                session_id=data['session_id'],
-                left_at__isnull=True,
-            ).first()
-            if participant is None:
-                return room, None
+    def active_participant_for_session_for_update(self, room_id, session_id):
+        participant = Participant.objects.select_for_update().filter(
+            room_id=room_id,
+            session_id=session_id,
+            left_at__isnull=True,
+        ).first()
+        return self._participant_state(participant) if participant else None
 
-            participant.left_at = timezone.now()
-            participant.presence = Participant.Presence.OFFLINE
-            participant.disconnected_at = None
-            participant.save(
-                update_fields=(
-                    'left_at', 'presence', 'disconnected_at', 'updated_at'
-                )
-            )
-            cancelled_vote = cancel_pending_vote_for_participant(
-                room,
-                participant,
-                target_reason='target_left',
-                voter_reason='eligible_voter_left',
-            )
-            room_id = room.pk
-            snapshot = room_snapshot(room)
-            if not room.participants.filter(left_at__isnull=True).exists():
-                room.delete()
-            schedule_room_event(
-                room_id,
-                'player_left',
-                snapshot,
-                departed_session_id=participant.session_id,
-            )
-            if cancelled_vote is not None:
-                schedule_room_event(
-                    room_id,
-                    'expulsion_vote_cancelled',
-                    snapshot,
-                    vote=cancelled_vote,
-                )
-        return room, participant
+    def session_was_removed(self, room_id, participant_id):
+        return ExpulsionVote.objects.filter(
+            room_id=room_id,
+            target_id=participant_id,
+            status=ExpulsionVote.Status.APPROVED,
+        ).exists()
 
-    def _membership_for(self, room, data):
-        session_id = data.get('session_id')
-        participant = None
-        if session_id is not None:
-            participant = Participant.objects.select_for_update().filter(
-                room=room, session_id=session_id
-            ).first()
-
-        if participant is not None:
-            if ExpulsionVote.objects.filter(
-                room=room,
-                target=participant,
-                status=ExpulsionVote.Status.APPROVED,
-            ).exists():
-                raise RemovedSession()
-
-            was_left = participant.left_at is not None
-            was_disconnected = participant.presence in (
-                Participant.Presence.RECONNECTING,
-                Participant.Presence.INACTIVE,
-            )
-            change = membership_change(
-                was_left=was_left,
-                was_disconnected=was_disconnected,
-                current_display_name=participant.display_name,
-                current_game_marker=participant.game_marker,
-                data=data,
-            )
-            for field in ('display_name', 'game_marker'):
-                if field in change.update_fields:
-                    setattr(participant, field, data[field])
-            if was_left:
-                participant.left_at = None
-            if was_left or was_disconnected:
-                participant.presence = Participant.Presence.OFFLINE
-                participant.disconnected_at = None
-            if change.update_fields:
-                participant.save(update_fields=(*change.update_fields, 'updated_at'))
-            return participant, change.event_name
-
-        missing_fields = {
-            field: 'This field is required for a new room participant.'
-            for field in ('display_name', 'game_marker')
-            if field not in data
-        }
-        if missing_fields:
-            raise MissingParticipantIdentity(missing_fields)
+    def create_participant(self, room_id, display_name, game_marker):
         participant = Participant.objects.create(
-            room=room,
-            display_name=data['display_name'],
-            game_marker=data['game_marker'],
+            room_id=room_id,
+            display_name=display_name,
+            game_marker=game_marker,
         )
-        return participant, 'player_joined'
+        return self._participant_state(participant)
+
+    def save_membership_changes(self, participant_id, changes):
+        participant = Participant.objects.select_for_update().get(pk=participant_id)
+        for field, value in changes.items():
+            setattr(participant, field, value)
+        participant.save(update_fields=(*changes, 'updated_at'))
+        return self._participant_state(participant)
+
+    def room_snapshot(self, room_id):
+        room = Room.objects.get(pk=room_id)
+        return room_snapshot(room)
+
+    def has_active_participants(self, room_id):
+        return Participant.objects.filter(
+            room_id=room_id,
+            left_at__isnull=True,
+        ).exists()
+
+    def delete_room(self, room_id):
+        Room.objects.filter(pk=room_id).delete()
+
+    def cancel_vote_for_target(self, room_id, participant_id, reason):
+        room = Room.objects.get(pk=room_id)
+        participant = Participant.objects.get(pk=participant_id)
+        return cancel_pending_vote_for_target(room, participant, reason)
+
+    def cancel_vote_for_participant(
+        self, room_id, participant_id, target_reason, voter_reason
+    ):
+        room = Room.objects.get(pk=room_id)
+        participant = Participant.objects.get(pk=participant_id)
+        return cancel_pending_vote_for_participant(
+            room, participant, target_reason, voter_reason
+        )
+
+    def schedule_room_event(
+        self,
+        room_id,
+        event_name,
+        snapshot,
+        *,
+        departed_session_id=None,
+        vote=None,
+    ):
+        schedule_room_event(
+            room_id,
+            event_name,
+            snapshot,
+            departed_session_id=departed_session_id,
+            vote=vote,
+        )
+
+    def now(self):
+        return timezone.now()
 
     @staticmethod
-    def _membership_response(room, participant):
-        return {
-            'room': room_snapshot(room),
-            'session_id': str(participant.session_id),
-            'participant_ref': str(participant.public_id),
-        }
+    def _room_state(room):
+        return ActiveRoom(id=room.pk, game_id=room.game_id)
+
+    @staticmethod
+    def _participant_state(participant):
+        return ParticipantMembership(
+            id=participant.pk,
+            session_id=participant.session_id,
+            public_id=participant.public_id,
+            display_name=participant.display_name,
+            game_marker=participant.game_marker,
+            presence=participant.presence,
+            was_left=participant.left_at is not None,
+        )

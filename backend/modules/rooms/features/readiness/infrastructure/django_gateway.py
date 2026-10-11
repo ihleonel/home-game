@@ -1,33 +1,41 @@
+from contextlib import contextmanager
+
 from django.db import transaction
 
 from ....events import room_snapshot, schedule_room_event
 from ....models import Participant, Room
-from ..domain.errors import ActiveParticipantNotFound, ActiveRoomNotFound
-from ..domain.rules import readiness_change
+from ..domain.entities import ReadinessParticipant
 
 
 class DjangoReadinessGateway:
-    def set_ready(self, data):
+    @contextmanager
+    def atomic(self):
         with transaction.atomic():
-            room = Room.objects.select_for_update().filter(
-                status=Room.Status.ACTIVE
-            ).first()
-            if room is None:
-                raise ActiveRoomNotFound()
-            participant = Participant.objects.select_for_update().filter(
-                room=room,
-                session_id=data['session_id'],
-                left_at__isnull=True,
-            ).first()
-            if participant is None:
-                raise ActiveParticipantNotFound()
+            yield self
 
-            change = readiness_change(participant.is_ready, data['is_ready'])
-            participant.is_ready = (
-                change.value if change.changed else participant.is_ready
-            )
-            # Preserve the established write and timestamp behavior even for no-op PATCHes.
-            participant.save(update_fields=('is_ready', 'updated_at'))
-            response = {'room': room_snapshot(room)}
-            schedule_room_event(room.pk, 'ready_changed', room_snapshot(room))
-        return response
+    def active_room_for_update(self):
+        room = Room.objects.select_for_update().filter(
+            status=Room.Status.ACTIVE
+        ).first()
+        return room.pk if room else None
+
+    def active_participant_for_session_for_update(self, room_id, session_id):
+        participant = Participant.objects.select_for_update().filter(
+            room_id=room_id,
+            session_id=session_id,
+            left_at__isnull=True,
+        ).first()
+        if participant is None:
+            return None
+        return ReadinessParticipant(id=participant.pk, is_ready=participant.is_ready)
+
+    def save_readiness(self, participant_id, is_ready):
+        participant = Participant.objects.select_for_update().get(pk=participant_id)
+        participant.is_ready = is_ready
+        participant.save(update_fields=('is_ready', 'updated_at'))
+
+    def room_snapshot(self, room_id):
+        return room_snapshot(Room.objects.get(pk=room_id))
+
+    def schedule_room_event(self, room_id, event_name, snapshot):
+        schedule_room_event(room_id, event_name, snapshot)
