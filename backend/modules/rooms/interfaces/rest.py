@@ -45,13 +45,13 @@ from .composition import compose_room_dependencies
 
 class ActiveRoomGameConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
-    default_detail = 'The active room belongs to a different game.'
+    default_detail = 'La sala activa pertenece a otro juego.'
     default_code = 'active_room_game_conflict'
 
 
 class ExpulsionVoteConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
-    default_detail = 'The expulsion vote can no longer be changed.'
+    default_detail = 'La votación de expulsión ya no se puede modificar.'
     default_code = 'expulsion_vote_conflict'
 
 
@@ -83,7 +83,7 @@ def active_room(request):
     try:
         room = get_active_room(dependencies.membership)
     except MembershipRoomNotFound:
-        raise NotFound('There is no active room.')
+        raise NotFound('No hay ninguna sala activa.')
     return Response({'room': room})
 
 
@@ -100,7 +100,7 @@ def create_room(request):
     except ActiveRoomGameConflictError:
         raise ActiveRoomGameConflict()
     except RemovedSession:
-        raise ValidationError({'session_id': 'This session was removed from the room.'})
+        raise ValidationError({'session_id': 'Esta sesión ya no forma parte de la sala.'})
     except MissingParticipantIdentity as error:
         raise ValidationError(error.fields)
     response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
@@ -120,11 +120,11 @@ def join_room(request):
     except ActiveRoomGameConflictError:
         raise ActiveRoomGameConflict()
     except RemovedSession:
-        raise ValidationError({'session_id': 'This session was removed from the room.'})
+        raise ValidationError({'session_id': 'Esta sesión ya no forma parte de la sala.'})
     except MissingParticipantIdentity as error:
         raise ValidationError(error.fields)
     if result is None:
-        raise NotFound('There is no active room to join.')
+        raise NotFound('No hay ninguna sala activa a la que unirse.')
     return Response(result)
 
 
@@ -139,9 +139,9 @@ def leave_room(request):
             dependencies.vote_cancellation,
         )
     except MembershipRoomNotFound:
-        raise NotFound('There is no active room.')
+        raise NotFound('No hay ninguna sala activa.')
     except MembershipParticipantNotFound:
-        raise NotFound('The session is not an active room participant.')
+        raise NotFound('La sesión no pertenece a ningún participante activo de la sala.')
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -152,9 +152,9 @@ def update_ready_state(request):
     try:
         response_data = set_ready_state(dependencies.readiness, data)
     except ActiveRoomNotFound:
-        raise NotFound('There is no active room.')
+        raise NotFound('No hay ninguna sala activa.')
     except ActiveParticipantNotFound:
-        raise NotFound('The session is not an active room participant.')
+        raise NotFound('La sesión no pertenece a ningún participante activo de la sala.')
     return Response(response_data)
 
 

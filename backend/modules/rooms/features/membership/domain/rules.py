@@ -41,7 +41,7 @@ def membership_change(
 
 def missing_identity_fields(data):
     return {
-        field: 'This field is required for a new room participant.'
+        field: 'Este campo es obligatorio para participar en una sala nueva.'
         for field in ('display_name', 'game_marker')
         if field not in data
     }

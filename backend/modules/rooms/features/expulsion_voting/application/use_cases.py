@@ -20,36 +20,36 @@ def start_vote(ports: ExpulsionVotingPorts, data):
     with ports.atomic():
         room_id = ports.active_room_for_update()
         if room_id is None:
-            raise VotingNotFound('There is no active room.')
+            raise VotingNotFound('No hay ninguna sala activa.')
 
         caller = ports.participant_for_session_for_update(
             room_id, data['session_id']
         )
         if caller is None:
-            raise VotingNotFound('The session is not an active room participant.')
+            raise VotingNotFound('La sesión no pertenece a ningún participante activo de la sala.')
         if not is_connected_voter(
             caller.presence,
             lambda: ports.has_connection(room_id, str(caller.session_id)),
         ):
-            raise VotingPermissionDenied('Only connected room participants can vote.')
+            raise VotingPermissionDenied('Solo los participantes conectados de la sala pueden votar.')
 
         target = ports.participant_for_public_ref_for_update(
             room_id, data['target_ref']
         )
         if target is None:
-            raise VotingNotFound('The target is not an active room participant.')
+            raise VotingNotFound('La persona propuesta no es un participante activo de la sala.')
         if is_self_target(caller.id, target.id):
             raise VotingPermissionDenied(
-                'A participant cannot start a vote against themselves.'
+                'No puedes iniciar una votación contra ti mismo.'
             )
 
         now = ports.now()
         if not is_inactive_target(target, now):
             raise VotingConflict(
-                'The target has not completed the reconnect grace period.'
+                'La persona propuesta aún está dentro del plazo de reconexión.'
             )
         if ports.pending_vote_for_update(room_id) is not None:
-            raise VotingConflict('A vote is already in progress for this room.')
+            raise VotingConflict('Ya hay una votación en curso en esta sala.')
 
         if grace_has_expired(target, now):
             ports.mark_target_inactive(target.id)
@@ -69,9 +69,9 @@ def start_vote(ports: ExpulsionVotingPorts, data):
             caller.id, target.id, online_participants, connected_sessions
         )
         if not electorate.caller_is_eligible:
-            raise VotingPermissionDenied('The caller is not eligible to vote.')
+            raise VotingPermissionDenied('No tienes permiso para votar.')
         if not electorate.participant_ids:
-            raise VotingConflict('No connected voters are available.')
+            raise VotingConflict('No hay votantes conectados disponibles.')
 
         vote = ports.create_vote(room_id, target.id, caller.id)
         ports.create_ballots(vote.id, electorate.participant_ids)
@@ -90,34 +90,34 @@ def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
     with ports.atomic():
         room_id = ports.active_room_for_update()
         if room_id is None:
-            raise VotingNotFound('There is no active room.')
+            raise VotingNotFound('No hay ninguna sala activa.')
 
         vote = ports.vote_for_public_ref_for_update(room_id, vote_ref)
         if vote is None:
-            raise VotingNotFound('The expulsion vote does not exist.')
+            raise VotingNotFound('La votación de expulsión no existe.')
         if vote.status != 'pending':
-            raise VotingConflict('The expulsion vote is already resolved.')
+            raise VotingConflict('La votación de expulsión ya se ha resuelto.')
 
         caller = ports.participant_for_session_for_update(
             room_id, data['session_id']
         )
         if caller is None:
-            raise VotingNotFound('The session is not an active room participant.')
+            raise VotingNotFound('La sesión no pertenece a ningún participante activo de la sala.')
         if not is_connected_voter(
             caller.presence,
             lambda: ports.has_connection(room_id, str(caller.session_id)),
         ):
-            raise VotingPermissionDenied('Only connected room participants can vote.')
+            raise VotingPermissionDenied('Solo los participantes conectados de la sala pueden votar.')
         if is_self_target(caller.id, vote.target_id):
-            raise VotingPermissionDenied('The target cannot vote on their own removal.')
+            raise VotingPermissionDenied('La persona propuesta no puede votar sobre su propia expulsión.')
 
         ballot = ports.ballot_for_voter_for_update(vote.id, caller.id)
         if ballot is None:
             raise VotingPermissionDenied(
-                'The caller was not eligible when the vote started.'
+                'No tenías derecho a votar cuando comenzó la votación.'
             )
         if not ballot_is_unanswered(ballot.choice):
-            raise VotingConflict('Each eligible participant may cast one ballot.')
+            raise VotingConflict('Cada participante con derecho a voto solo puede votar una vez.')
 
         target = ports.participant_by_id_for_update(vote.target_id)
         inactivity_checked_at = ports.now()

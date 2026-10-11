@@ -1,32 +1,32 @@
 GAMES = (
     {
         'id': 'starlight-garden',
-        'label': 'Starlight Garden',
-        'description': 'Tend a quiet garden beneath a glowing night sky.',
+        'label': 'Jardín estrellado',
+        'description': 'Cuida un jardín tranquilo bajo un cielo nocturno lleno de estrellas.',
         'markers': (
-            {'id': 'silver-leaf', 'label': 'Silver Leaf'},
-            {'id': 'moonstone', 'label': 'Moonstone'},
-            {'id': 'night-bloom', 'label': 'Night Bloom'},
+            {'id': 'silver-leaf', 'label': 'Hoja plateada'},
+            {'id': 'moonstone', 'label': 'Piedra lunar'},
+            {'id': 'night-bloom', 'label': 'Flor nocturna'},
         ),
     },
     {
         'id': 'cloud-couriers',
-        'label': 'Cloud Couriers',
-        'description': 'Carry tiny parcels across a sky of drifting clouds.',
+        'label': 'Mensajeros de las nubes',
+        'description': 'Lleva pequeños paquetes por un cielo de nubes viajeras.',
         'markers': (
-            {'id': 'wind-kite', 'label': 'Wind Kite'},
-            {'id': 'cloud-bell', 'label': 'Cloud Bell'},
-            {'id': 'sunbeam', 'label': 'Sunbeam'},
+            {'id': 'wind-kite', 'label': 'Cometa de viento'},
+            {'id': 'cloud-bell', 'label': 'Campana de nube'},
+            {'id': 'sunbeam', 'label': 'Rayo de sol'},
         ),
     },
     {
         'id': 'amber-islands',
-        'label': 'Amber Islands',
-        'description': 'Explore a chain of warm, faraway islands.',
+        'label': 'Islas de ámbar',
+        'description': 'Explora un archipiélago de islas cálidas y lejanas.',
         'markers': (
-            {'id': 'amber-shell', 'label': 'Amber Shell'},
-            {'id': 'coral-star', 'label': 'Coral Star'},
-            {'id': 'tide-glass', 'label': 'Tide Glass'},
+            {'id': 'amber-shell', 'label': 'Concha de ámbar'},
+            {'id': 'coral-star', 'label': 'Estrella de coral'},
+            {'id': 'tide-glass', 'label': 'Cristal de marea'},
         ),
     },
 )

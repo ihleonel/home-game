@@ -75,7 +75,7 @@ class ApiError extends Error {
   }
 }
 
-function getErrorMessage(payload: unknown, statusCode: number): string {
+function getErrorMessage(payload: unknown): string {
   if (typeof payload === 'object' && payload !== null) {
     const values = payload as Record<string, unknown>
     if (typeof values.detail === 'string') return values.detail
@@ -87,7 +87,7 @@ function getErrorMessage(payload: unknown, statusCode: number): string {
       }
     }
   }
-  return `The request failed (${statusCode}). Please try again.`
+  return 'No se ha podido completar la solicitud. Inténtalo de nuevo.'
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -99,7 +99,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     response.status === 204 ? null : await response.json().catch(() => null)
 
   if (!response.ok) {
-    throw new ApiError(response.status, getErrorMessage(payload, response.status))
+    throw new ApiError(response.status, getErrorMessage(payload))
   }
   return payload as T
 }
@@ -176,28 +176,42 @@ function saveGuestSession(session: RoomSession): void {
 }
 
 function markerLabel(game: Game | undefined, markerId: string): string {
-  return game?.markers.find((marker) => marker.id === markerId)?.label ?? markerId
+  return game?.markers.find((marker) => marker.id === markerId)?.label ?? 'Ficha'
+}
+
+function presenceLabel(presence: Participant['presence']): string {
+  const labels: Record<Participant['presence'], string> = {
+    offline: 'Sin conexión',
+    online: 'En línea',
+    reconnecting: 'Reconectando…',
+    inactive: 'Inactivo',
+  }
+  return labels[presence]
+}
+
+function voteChoiceLabel(choice: NonNullable<ExpulsionBallot['choice']>): string {
+  return choice === 'yes' ? 'Sí' : 'No'
 }
 
 function expulsionVoteMessage(vote: ExpulsionVote): string {
   if (vote.status === 'pending') {
-    return `Removal vote: ${vote.yes_count} of ${vote.eligible_count} players voted yes.`
+    return `Votación de expulsión: ${vote.yes_count} de ${vote.eligible_count} votos emitidos son favorables.`
   }
-  if (vote.status === 'approved') return 'The unanimous removal vote passed.'
-  if (vote.status === 'rejected') return 'The removal vote was rejected. The player remains in the room.'
+  if (vote.status === 'approved') return 'La votación de expulsión ha sido aprobada por unanimidad.'
+  if (vote.status === 'rejected') return 'La votación de expulsión ha sido rechazada. El jugador permanece en la sala.'
   if (vote.resolution_reason === 'target_reconnected') {
-    return 'The vote was cancelled because the player reconnected.'
+    return 'La votación se ha cancelado porque el jugador se ha vuelto a conectar.'
   }
   if (vote.resolution_reason === 'target_left') {
-    return 'The vote was cancelled because the target left the room.'
+    return 'La votación se ha cancelado porque el jugador propuesto ha salido de la sala.'
   }
   if (vote.resolution_reason === 'target_disconnected') {
-    return 'The vote was cancelled because the target connection changed.'
+    return 'La votación se ha cancelado porque ha cambiado la conexión del jugador propuesto.'
   }
   if (vote.resolution_reason === 'eligible_voter_left') {
-    return 'The vote was cancelled because an eligible voter left the room.'
+    return 'La votación se ha cancelado porque un participante con derecho a voto ha salido de la sala.'
   }
-  return 'The removal vote was cancelled because an eligible voter became unavailable.'
+  return 'La votación de expulsión se ha cancelado porque un participante con derecho a voto ya no está disponible.'
 }
 
 type IdentityFormProps = {
@@ -225,14 +239,14 @@ function IdentityForm({
     <form className="identity-form" onSubmit={onSubmit}>
       <div className="form-heading">
         <div>
-          <p className="eyebrow">{intent === 'create' ? 'New room' : 'Join room'}</p>
+          <p className="eyebrow">{intent === 'create' ? 'Nueva sala' : 'Unirse a la sala'}</p>
           <h3>{game.label}</h3>
         </div>
-        <p className="form-note">Your game marker is your visual identity in this room.</p>
+        <p className="form-note">Tu ficha te identifica visualmente en esta sala.</p>
       </div>
       <div className="form-fields">
         <label className="form-field" htmlFor={`${prefix}-display-name`}>
-          <span>Display name</span>
+          <span>Nombre visible</span>
           <input
             id={`${prefix}-display-name`}
             autoComplete="nickname"
@@ -245,7 +259,7 @@ function IdentityForm({
           />
         </label>
         <label className="form-field" htmlFor={`${prefix}-game-marker`}>
-          <span>Game marker</span>
+          <span>Ficha del juego</span>
           <select
             id={`${prefix}-game-marker`}
             required
@@ -255,7 +269,7 @@ function IdentityForm({
             }
           >
             <option value="" disabled>
-              Choose a marker
+              Elige una ficha
             </option>
             {game.markers.map((marker) => (
               <option key={marker.id} value={marker.id}>
@@ -267,10 +281,10 @@ function IdentityForm({
       </div>
       <div className="form-actions">
         <button className="button button-primary" disabled={busy} type="submit">
-          {busy ? 'Connecting…' : intent === 'create' ? 'Create room' : 'Join room'}
+          {busy ? 'Conectando…' : intent === 'create' ? 'Crear sala' : 'Unirse a la sala'}
         </button>
         <button className="button button-quiet" disabled={busy} onClick={onCancel} type="button">
-          Cancel
+          Cancelar
         </button>
       </div>
     </form>
@@ -330,7 +344,7 @@ function App() {
       } catch (error) {
         if (isCurrent) {
           setLoadError(
-            error instanceof Error ? error.message : 'HomeGame could not be loaded.',
+            error instanceof Error ? error.message : 'No se ha podido cargar HomeGame.',
           )
         }
       } finally {
@@ -354,7 +368,7 @@ function App() {
       setIntent(null)
       setSelectedGameId(null)
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'The room could not be refreshed.')
+      setActionError(error instanceof Error ? error.message : 'No se ha podido actualizar la sala.')
     }
   }
 
@@ -393,7 +407,7 @@ function App() {
     if (membershipRequestPending.current) return
     const displayName = guestIdentity.displayName.trim()
     if (!displayName || !guestIdentity.gameMarker) {
-      setActionError('Enter a display name and choose a game marker to continue.')
+      setActionError('Escribe un nombre y elige una ficha para continuar.')
       return
     }
 
@@ -433,7 +447,7 @@ function App() {
       setIntent(null)
       setSelectedGameId(null)
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'The room request failed.')
+      setActionError(error instanceof Error ? error.message : 'No se ha podido procesar la solicitud de sala.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         void refreshActiveRoom()
       }
@@ -470,7 +484,7 @@ function App() {
       setRoom(response.room)
       setRoomSession(nextSession)
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Readiness could not be updated.')
+      setActionError(error instanceof Error ? error.message : 'No se ha podido actualizar tu estado de preparación.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         setRoomSession(null)
         void refreshActiveRoom()
@@ -494,7 +508,7 @@ function App() {
       await refreshActiveRoom()
     } catch (error) {
       leavingRef.current = false
-      setActionError(error instanceof Error ? error.message : 'The room could not be left.')
+      setActionError(error instanceof Error ? error.message : 'No se ha podido salir de la sala.')
       if (error instanceof ApiError && error.status === 404) {
         setRoomSession(null)
         void refreshActiveRoom()
@@ -519,7 +533,7 @@ function App() {
       setRoom(response.room)
       setVoteNotice(expulsionVoteMessage(response.vote))
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'The vote could not be started.')
+      setActionError(error instanceof Error ? error.message : 'No se ha podido iniciar la votación.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         void refreshActiveRoom()
       }
@@ -546,7 +560,7 @@ function App() {
       setRoom(response.room)
       setVoteNotice(expulsionVoteMessage(response.vote))
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'The ballot could not be recorded.')
+      setActionError(error instanceof Error ? error.message : 'No se ha podido registrar tu voto.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         void refreshActiveRoom()
       }
@@ -578,7 +592,7 @@ function App() {
     function scheduleReconnect(): void {
       if (cancelled || leavingRef.current) return
       if (reconnectAttempts >= maxReconnectAttempts) {
-        setConnectionError('Live updates could not reconnect. Leave and rejoin to try again.')
+        setConnectionError('No se ha podido restablecer la conexión. Sal de la sala y vuelve a entrar para intentarlo de nuevo.')
         return
       }
       const delay = Math.min(1000 * 2 ** reconnectAttempts, 8000)
@@ -672,7 +686,7 @@ function App() {
             }
             if (message.vote) setVoteNotice(expulsionVoteMessage(message.vote))
           } catch {
-            setConnectionError('A live room update could not be read.')
+            setConnectionError('No se ha podido leer una actualización de la sala.')
           }
         }
 
@@ -720,7 +734,7 @@ function App() {
         <div className="brand-mark" aria-hidden="true">HG</div>
         <div>
           <p className="eyebrow">HomeGame</p>
-          <h1>Pick a game. Play together.</h1>
+          <h1>Elige un juego para disfrutar en compañía.</h1>
         </div>
       </header>
 
@@ -729,41 +743,41 @@ function App() {
       {voteNotice && <p className="message message-info" role="status">{voteNotice}</p>}
 
       {isLoading ? (
-        <p className="loading-message" role="status">Loading games and room…</p>
+        <p className="loading-message" role="status">Cargando juegos y sala…</p>
       ) : loadError ? (
         <section className="empty-state">
-          <h2>HomeGame is unavailable</h2>
+          <h2>HomeGame no está disponible</h2>
           <p>{loadError}</p>
           <button
             className="button button-primary"
             onClick={() => setLoadAttempt((attempt) => attempt + 1)}
             type="button"
           >
-            Try again
+            Volver a intentarlo
           </button>
         </section>
       ) : room ? (
         <section className="room-panel" aria-labelledby="active-room-title">
           <div className="room-heading">
             <div>
-              <p className="eyebrow">Active room</p>
-              <h2 id="active-room-title">{activeGame?.label ?? room.game_id}</h2>
+              <p className="eyebrow">Sala activa</p>
+              <h2 id="active-room-title">{activeGame?.label ?? 'Sala de juego'}</h2>
               <p className="room-description">
-                {activeGame?.description ?? 'Guests are together in the current game room.'}
+                {activeGame?.description ?? 'Los jugadores están en la sala de la partida actual.'}
               </p>
             </div>
-            <span className="room-status">Room open</span>
+            <span className="room-status">Sala abierta</span>
           </div>
 
           <div className={allReady ? 'ready-summary is-all-ready' : 'ready-summary'} role="status">
             {allReady
-              ? 'Everyone in the room is ready.'
-              : `${room.participants.length} ${room.participants.length === 1 ? 'guest' : 'guests'} in the room`}
+              ? 'Todos los jugadores de la sala están listos.'
+              : `${room.participants.length} ${room.participants.length === 1 ? 'jugador' : 'jugadores'} en la sala`}
           </div>
 
           <section className="roster-section" aria-labelledby="roster-title">
             <div className="section-heading">
-              <h3 id="roster-title">Players</h3>
+              <h3 id="roster-title">Jugadores</h3>
               <span>{room.participants.length}</span>
             </div>
             {room.participants.length > 0 ? (
@@ -775,10 +789,10 @@ function App() {
                     </span>
                     <span className="player-name">{participant.display_name}</span>
                     <span className={participant.is_ready ? 'ready-badge is-ready' : 'ready-badge'}>
-                      {participant.is_ready ? 'Ready' : 'Not ready'}
+                      {participant.is_ready ? 'Listo' : 'No está listo'}
                     </span>
                     <span className={`presence-badge presence-${participant.presence}`}>
-                      {participant.presence}
+                      {presenceLabel(participant.presence)}
                     </span>
                     {!activeExpulsionVote &&
                       isJoined &&
@@ -792,14 +806,14 @@ function App() {
                           onClick={() => void startExpulsionVote(participant.participant_ref)}
                           type="button"
                         >
-                          Start removal vote
+                          Iniciar votación de expulsión
                         </button>
                       )}
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="quiet-copy">The room is waiting for its first guest.</p>
+              <p className="quiet-copy">La sala espera a su primer jugador.</p>
             )}
           </section>
 
@@ -807,25 +821,25 @@ function App() {
             <section className="vote-panel" aria-labelledby="vote-title">
               <div className="vote-heading">
                 <div>
-                  <p className="eyebrow">Unanimous removal vote</p>
+                  <p className="eyebrow">Votación unánime de expulsión</p>
                   <h3 id="vote-title">{activeExpulsionVote.target_display_name}</h3>
                 </div>
                 <span className="vote-count">
-                  {activeExpulsionVote.yes_count} / {activeExpulsionVote.eligible_count} yes
+                  {activeExpulsionVote.yes_count} / {activeExpulsionVote.eligible_count} a favor
                 </span>
               </div>
               <ul className="vote-ballots">
                 {activeExpulsionVote.ballots.map((ballot) => (
                   <li key={ballot.participant_ref}>
                     <span>{ballot.display_name}</span>
-                    <strong>{ballot.choice ? `Voted ${ballot.choice}` : 'Awaiting vote'}</strong>
+                    <strong>{ballot.choice ? `Voto: ${voteChoiceLabel(ballot.choice)}` : 'Pendiente de voto'}</strong>
                   </li>
                 ))}
               </ul>
               {roomSession?.participantRef === activeExpulsionVote.target_ref ? (
-                <p className="quiet-copy">You are the target of this vote and cannot vote.</p>
+                <p className="quiet-copy">Eres la persona propuesta para la expulsión y no puedes votar.</p>
               ) : currentBallot?.choice ? (
-                <p className="quiet-copy">You voted {currentBallot.choice}.</p>
+                <p className="quiet-copy">Has votado: {voteChoiceLabel(currentBallot.choice)}.</p>
               ) : currentBallot && currentParticipant?.presence === 'online' ? (
                 <div className="vote-actions">
                   <button
@@ -834,7 +848,7 @@ function App() {
                     onClick={() => void castExpulsionBallot(activeExpulsionVote.vote_ref, 'yes')}
                     type="button"
                   >
-                    Vote yes
+                    Votar a favor
                   </button>
                   <button
                     className="button button-quiet"
@@ -842,11 +856,11 @@ function App() {
                     onClick={() => void castExpulsionBallot(activeExpulsionVote.vote_ref, 'no')}
                     type="button"
                   >
-                    Vote no
+                    Votar en contra
                   </button>
                 </div>
               ) : (
-                <p className="quiet-copy">Only participants connected when the vote started may vote.</p>
+                <p className="quiet-copy">Solo pueden votar los participantes que estaban conectados cuando comenzó la votación.</p>
               )}
             </section>
           )}
@@ -854,7 +868,7 @@ function App() {
           {isJoined && roomSession ? (
             <section className="your-room-actions" aria-labelledby="your-status-title">
               <div className="your-identity">
-                <p className="eyebrow" id="your-status-title">Your room status</p>
+                <p className="eyebrow" id="your-status-title">Tu estado en la sala</p>
                 <p>
                   {roomSession.displayName}
                   <span className="marker-chip your-marker">
@@ -871,10 +885,10 @@ function App() {
                   type="button"
                 >
                   {pendingAction === 'ready'
-                    ? 'Updating…'
+                    ? 'Actualizando…'
                     : roomSession.isReady
-                      ? 'Ready · mark not ready'
-                      : 'Mark ready'}
+                      ? 'Marcar como no listo'
+                      : 'Marcar como listo'}
                 </button>
                 <button
                   className="button button-quiet"
@@ -882,7 +896,7 @@ function App() {
                   onClick={() => void leaveRoom()}
                   type="button"
                 >
-                  {pendingAction === 'leave' ? 'Leaving…' : 'Leave room'}
+                  {pendingAction === 'leave' ? 'Saliendo…' : 'Salir de la sala'}
                 </button>
               </div>
             </section>
@@ -898,14 +912,14 @@ function App() {
             />
           ) : (
             <div className="join-actions">
-              <p className="quiet-copy">Join the current room to take part in the lobby.</p>
+              <p className="quiet-copy">Únete a la sala actual para participar.</p>
               <button
                 className="button button-primary"
                 disabled={busy || !activeGame}
                 onClick={startJoining}
                 type="button"
               >
-                Join {activeGame?.label ?? 'this room'}
+                Entrar en la sala
               </button>
             </div>
           )}
@@ -913,9 +927,9 @@ function App() {
       ) : (
         <section className="catalog-section" aria-labelledby="catalog-title">
           <div className="section-intro">
-            <p className="eyebrow">Game catalog</p>
-            <h2 id="catalog-title">Choose what to play</h2>
-            <p>A guest room opens when the first player chooses a game.</p>
+            <p className="eyebrow">Catálogo de juegos</p>
+            <h2 id="catalog-title">Elige a qué jugar</h2>
+            <p>La sala se abre cuando el primer jugador elige un juego.</p>
           </div>
 
           {games.length > 0 ? (
@@ -927,7 +941,7 @@ function App() {
                   </div>
                   <h3>{game.label}</h3>
                   <p>{game.description}</p>
-                  <div className="marker-options" aria-label={`${game.label} markers`}>
+                  <div className="marker-options" aria-label={`Fichas de ${game.label}`}>
                     {game.markers.map((marker) => (
                       <span className="marker-chip" key={marker.id}>{marker.label}</span>
                     ))}
@@ -938,13 +952,13 @@ function App() {
                     onClick={() => selectGame(game)}
                     type="button"
                   >
-                    Choose game
+                    Elegir juego
                   </button>
                 </article>
               ))}
             </div>
           ) : (
-            <p className="quiet-copy">No games are available right now.</p>
+            <p className="quiet-copy">No hay juegos disponibles en este momento.</p>
           )}
 
           {intent === 'create' && selectedGame && (
@@ -961,7 +975,7 @@ function App() {
         </section>
       )}
 
-      <footer className="site-footer">A small room for a good game night.</footer>
+      <footer className="site-footer">Un espacio acogedor para disfrutar de una buena noche de juegos.</footer>
     </main>
   )
 }

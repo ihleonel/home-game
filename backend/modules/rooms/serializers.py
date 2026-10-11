@@ -24,14 +24,14 @@ class RoomRequestSerializer(serializers.Serializer):
 
     def validate_game_id(self, value):
         if not contains_game(value):
-            raise serializers.ValidationError('Choose a game from the catalog.')
+            raise serializers.ValidationError('Elige un juego del catálogo.')
         return value
 
     def validate(self, attrs):
         marker = attrs.get('game_marker')
         if marker is not None and not contains_marker(attrs['game_id'], marker):
             raise serializers.ValidationError(
-                {'game_marker': 'Choose a marker for the selected game.'}
+                {'game_marker': 'Elige una ficha para el juego seleccionado.'}
             )
         return attrs
 

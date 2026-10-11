@@ -1,4 +1,5 @@
 from django.test import SimpleTestCase, TestCase
+from django.utils import translation
 
 from modules.rooms.catalog import GAMES, GAMES_BY_ID
 from modules.rooms.events import room_snapshot
@@ -10,7 +11,7 @@ from modules.rooms.features.membership.domain.rules import (
 )
 from modules.rooms.features.readiness.domain.rules import readiness_change
 from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
-from modules.rooms.serializers import RoomSerializer
+from modules.rooms.serializers import RoomRequestSerializer, RoomSerializer
 
 
 class CatalogSliceTests(SimpleTestCase):
@@ -24,6 +25,35 @@ class CatalogSliceTests(SimpleTestCase):
         catalog = _CatalogStub()
 
         self.assertEqual(list_games(catalog), catalog.games)
+
+    def test_display_copy_is_spanish_without_changing_catalog_identifiers(self):
+        self.assertEqual(
+            [game['id'] for game in GAMES],
+            ['starlight-garden', 'cloud-couriers', 'amber-islands'],
+        )
+        self.assertEqual(
+            [game['label'] for game in GAMES],
+            ['Jardín estrellado', 'Mensajeros de las nubes', 'Islas de ámbar'],
+        )
+        self.assertEqual(
+            [marker['id'] for marker in GAMES[0]['markers']],
+            ['silver-leaf', 'moonstone', 'night-bloom'],
+        )
+        self.assertEqual(
+            [marker['label'] for marker in GAMES[0]['markers']],
+            ['Hoja plateada', 'Piedra lunar', 'Flor nocturna'],
+        )
+
+    def test_framework_validation_messages_use_spanish(self):
+        with translation.override('es-es'):
+            serializer = RoomRequestSerializer(data={})
+
+            self.assertFalse(serializer.is_valid())
+
+        self.assertEqual(
+            str(serializer.errors['game_id'][0]),
+            'Este campo es obligatorio.',
+        )
 
 
 class MembershipDomainTests(SimpleTestCase):
