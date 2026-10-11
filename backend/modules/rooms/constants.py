@@ -1,1 +1,1 @@
-RECONNECT_GRACE_SECONDS = 60
+from .features.expulsion_voting.domain.rules import RECONNECT_GRACE_SECONDS

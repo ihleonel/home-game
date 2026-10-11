@@ -1,0 +1,203 @@
+from collections import deque
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
+from uuid import uuid4
+
+from django.test import SimpleTestCase
+
+from modules.rooms.features.expulsion_voting.application.use_cases import (
+    cast_ballot,
+    start_vote,
+)
+from modules.rooms.features.expulsion_voting.domain.entities import (
+    BallotRecord,
+    VoteParticipant,
+    VoteRecord,
+)
+from modules.rooms.features.expulsion_voting.domain.rules import (
+    resolve_ballot,
+    resolve_electorate,
+)
+
+
+class ExpulsionVotingDomainTests(SimpleTestCase):
+    def test_resolution_requires_unanimous_yes_and_rejection_is_terminal(self):
+        self.assertEqual(
+            resolve_ballot('yes', 1, 0, 2).event_name,
+            'expulsion_vote_updated',
+        )
+        rejected = resolve_ballot('no', 0, 0, 2)
+        self.assertEqual((rejected.status, rejected.reason), ('rejected', 'voter_rejected'))
+        approved = resolve_ballot('yes', 2, 0, 2)
+        self.assertTrue(approved.remove_target)
+        self.assertEqual(approved.event_name, 'expulsion_vote_approved')
+
+    def test_electorate_excludes_target_and_late_unconnected_players(self):
+        caller, target, voter, late = (
+            _participant(1),
+            _participant(2),
+            _participant(3),
+            _participant(4),
+        )
+
+        electorate = resolve_electorate(
+            caller.id,
+            target.id,
+            [caller, target, voter, late],
+            {str(caller.session_id), str(target.session_id), str(voter.session_id)},
+        )
+
+        self.assertEqual(electorate.participant_ids, (caller.id, voter.id))
+        self.assertTrue(electorate.caller_is_eligible)
+
+
+class ExpulsionVotingUseCaseTests(SimpleTestCase):
+    def test_start_vote_fixes_connected_electorate_and_publishes_after_persistence(self):
+        caller, other = _participant(1), _participant(2)
+        target = _participant(
+            3,
+            presence='reconnecting',
+            disconnected_at=_now() - timedelta(seconds=61),
+        )
+        vote = VoteRecord(41, uuid4(), 'pending', target.id, caller.id)
+        ports = _ports(
+            active_room_for_update=12,
+            participant_for_session_for_update=caller,
+            participant_for_public_ref_for_update=target,
+            has_connection=deque((True, True, True)),
+            pending_vote_for_update=None,
+            now=_now(),
+            mark_target_inactive=None,
+            room_snapshot=deque(({'revision': 'inactive'}, {'revision': 'response'}, {'revision': 'event'})),
+            online_active_participants_for_update=[caller, other],
+            create_vote=vote,
+            create_ballots=None,
+            vote_snapshot={'eligible_count': 2},
+            schedule_room_event=None,
+        )
+
+        response = start_vote(
+            ports,
+            {'session_id': caller.session_id, 'target_ref': target.public_id},
+        )
+
+        self.assertEqual(response, {'room': {'revision': 'response'}, 'vote': {'eligible_count': 2}})
+        ports.create_ballots.assert_called_once_with(vote.id, (caller.id, other.id))
+        self.assertEqual(
+            [call.args[1] for call in ports.schedule_room_event.call_args_list],
+            ['participant_inactive', 'expulsion_vote_started'],
+        )
+        self.assertEqual(ports.timeline[-1], 'commit')
+
+    def test_unanimous_yes_removes_target_and_publishes_departure(self):
+        caller, target = _participant(2), _participant(3, presence='inactive')
+        vote = VoteRecord(41, uuid4(), 'pending', target.id, 1)
+        ballot = BallotRecord(51, None)
+        now = _now()
+        ports = _ports(
+            active_room_for_update=12,
+            vote_for_public_ref_for_update=vote,
+            participant_for_session_for_update=caller,
+            has_connection=True,
+            ballot_for_voter_for_update=ballot,
+            participant_by_id_for_update=target,
+            now=deque((now, now, now, now)),
+            save_ballot=None,
+            ballot_counts=(2, 0, 2),
+            remove_target=None,
+            save_vote_resolution=None,
+            vote_snapshot={'status': 'approved'},
+            room_snapshot={'room': 'without-target'},
+            schedule_room_event=None,
+        )
+
+        response = cast_ballot(
+            ports,
+            vote.public_id,
+            {'session_id': caller.session_id, 'choice': 'yes'},
+        )
+
+        self.assertEqual(response['vote']['status'], 'approved')
+        ports.remove_target.assert_called_once_with(target.id, now)
+        ports.schedule_room_event.assert_called_once_with(
+            12,
+            'expulsion_vote_approved',
+            {'room': 'without-target'},
+            departed_session_id=target.session_id,
+            vote={'status': 'approved'},
+        )
+
+    def test_reconnected_target_cancels_pending_vote_without_casting_ballot(self):
+        caller, target = _participant(2), _participant(3, presence='online')
+        vote = VoteRecord(41, uuid4(), 'pending', target.id, 1)
+        ports = _ports(
+            active_room_for_update=12,
+            vote_for_public_ref_for_update=vote,
+            participant_for_session_for_update=caller,
+            has_connection=True,
+            ballot_for_voter_for_update=BallotRecord(51, None),
+            participant_by_id_for_update=target,
+            now=_now(),
+            cancel_vote_for_target={'resolution_reason': 'target_reconnected'},
+            room_snapshot={'room': 'reconnected'},
+            schedule_room_event=None,
+        )
+
+        response = cast_ballot(
+            ports,
+            vote.public_id,
+            {'session_id': caller.session_id, 'choice': 'yes'},
+        )
+
+        self.assertEqual(response['vote']['resolution_reason'], 'target_reconnected')
+        ports.save_ballot.assert_not_called()
+        ports.schedule_room_event.assert_called_once_with(
+            12,
+            'expulsion_vote_cancelled',
+            {'room': 'reconnected'},
+            vote={'resolution_reason': 'target_reconnected'},
+        )
+
+
+def _ports(**results):
+    ports = Mock()
+    ports.timeline = []
+
+    @contextmanager
+    def atomic():
+        ports.timeline.append('begin')
+        try:
+            yield
+        except Exception:
+            ports.timeline.append('rollback')
+            raise
+        else:
+            ports.timeline.append('commit')
+
+    ports.atomic.side_effect = atomic
+    for name, result in results.items():
+        def operation(*args, _name=name, _result=result, **kwargs):
+            ports.timeline.append(_name)
+            if isinstance(_result, deque):
+                return _result.popleft()
+            return _result
+
+        getattr(ports, name).side_effect = operation
+    return ports
+
+
+def _participant(participant_id, presence='online', disconnected_at=None):
+    return VoteParticipant(
+        id=participant_id,
+        public_id=uuid4(),
+        session_id=uuid4(),
+        display_name=f'Guest {participant_id}',
+        presence=presence,
+        was_left=False,
+        disconnected_at=disconnected_at,
+    )
+
+
+def _now():
+    return datetime(2026, 10, 10, 12, tzinfo=timezone.utc)

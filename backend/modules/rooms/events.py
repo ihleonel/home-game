@@ -4,17 +4,13 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 
-from .serializers import RoomSerializer
+from .features.presence.infrastructure.room_snapshot import room_snapshot
 
 logger = logging.getLogger(__name__)
 
 
 def room_group_name(room_id):
     return f'room_{room_id}'
-
-
-def room_snapshot(room):
-    return dict(RoomSerializer(room).data)
 
 
 def room_event_message(event_name, snapshot, departed_session_id=None, vote=None):

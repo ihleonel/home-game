@@ -1,6 +1,7 @@
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
 from modules.rooms.catalog import GAMES, GAMES_BY_ID
+from modules.rooms.events import room_snapshot
 from modules.rooms.features.catalog.application.use_cases import list_games
 from modules.rooms.features.catalog.domain.catalog import contains_game, contains_marker
 from modules.rooms.features.membership.domain.rules import (
@@ -8,6 +9,8 @@ from modules.rooms.features.membership.domain.rules import (
     membership_change,
 )
 from modules.rooms.features.readiness.domain.rules import readiness_change
+from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from modules.rooms.serializers import RoomSerializer
 
 
 class CatalogSliceTests(SimpleTestCase):
@@ -67,6 +70,31 @@ class ReadinessDomainTests(SimpleTestCase):
         self.assertEqual(readiness_change(False, True).value, True)
         self.assertTrue(readiness_change(False, True).changed)
         self.assertFalse(readiness_change(True, True).changed)
+
+
+class EventSnapshotContractTests(TestCase):
+    def test_event_snapshot_matches_rest_room_contract_without_using_its_serializer(self):
+        room = Room.objects.create(game_id='starlight-garden')
+        caller = Participant.objects.create(
+            room=room,
+            display_name='Guest One',
+            game_marker='silver-leaf',
+            presence=Participant.Presence.ONLINE,
+        )
+        target = Participant.objects.create(
+            room=room,
+            display_name='Guest Two',
+            game_marker='moonstone',
+            presence=Participant.Presence.INACTIVE,
+        )
+        vote = ExpulsionVote.objects.create(
+            room=room,
+            target=target,
+            initiated_by=caller,
+        )
+        ExpulsionBallot.objects.create(vote=vote, voter=caller)
+
+        self.assertEqual(room_snapshot(room), dict(RoomSerializer(room).data))
 
 
 class _CatalogStub:
