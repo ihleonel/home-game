@@ -220,6 +220,27 @@
   background: var(--surface-raised);
 }
 
+.identity-dialog {
+  width: min(42rem, calc(100% - 2rem));
+  max-height: min(90dvh, 48rem);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-raised);
+  box-shadow: 0 1.5rem 4rem rgb(37 35 52 / 22%);
+}
+
+.identity-dialog::backdrop {
+  background: rgb(27 25 38 / 55%);
+}
+
+.identity-dialog .identity-form {
+  width: 100%;
+  margin: 0;
+  border: 0;
+}
+
 .form-heading,
 .section-heading,
 .room-heading,

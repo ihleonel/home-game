@@ -52,7 +52,7 @@ class CatalogSliceTests(SimpleTestCase):
 
         self.assertEqual(
             str(serializer.errors['game_id'][0]),
-            'Este campo es obligatorio.',
+            'Este campo es requerido.',
         )
 
 

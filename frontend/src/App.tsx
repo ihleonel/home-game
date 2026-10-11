@@ -240,7 +240,7 @@ function IdentityForm({
       <div className="form-heading">
         <div>
           <p className="eyebrow">{intent === 'create' ? 'Nueva sala' : 'Unirse a la sala'}</p>
-          <h3>{game.label}</h3>
+          <h3 id={`identity-form-title-${prefix}`}>{game.label}</h3>
         </div>
         <p className="form-note">Tu ficha te identifica visualmente en esta sala.</p>
       </div>
@@ -294,6 +294,7 @@ function IdentityForm({
 function App() {
   const membershipRequestPending = useRef(false)
   const leavingRef = useRef(false)
+  const identityDialogRef = useRef<HTMLDialogElement>(null)
   const [games, setGames] = useState<Game[]>([])
   const [room, setRoom] = useState<Room | null>(null)
   const [roomSession, setRoomSession] = useState<RoomSession | null>(null)
@@ -323,6 +324,13 @@ function App() {
   )
   const allReady = Boolean(room?.participants.length) &&
     room?.participants.every((participant) => participant.is_ready)
+
+  useEffect(() => {
+    const dialog = identityDialogRef.current
+    if (intent === 'create' && selectedGame && dialog && !dialog.open) {
+      dialog.showModal()
+    }
+  }, [intent, selectedGame])
 
   useEffect(() => {
     let isCurrent = true
@@ -961,18 +969,33 @@ function App() {
             <p className="quiet-copy">No hay juegos disponibles en este momento.</p>
           )}
 
-          {intent === 'create' && selectedGame && (
-            <IdentityForm
-              busy={busy}
-              game={selectedGame}
-              identity={identity}
-              intent="create"
-              onCancel={cancelIdentity}
-              onChange={setIdentity}
-              onSubmit={submitIdentity}
-            />
-          )}
         </section>
+      )}
+
+      {intent === 'create' && selectedGame && (
+        <dialog
+          aria-labelledby="identity-form-title-create"
+          className="identity-dialog"
+          onCancel={(event) => {
+            event.preventDefault()
+            identityDialogRef.current?.close()
+            cancelIdentity()
+          }}
+          ref={identityDialogRef}
+        >
+          <IdentityForm
+            busy={busy}
+            game={selectedGame}
+            identity={identity}
+            intent="create"
+            onCancel={() => {
+              identityDialogRef.current?.close()
+              cancelIdentity()
+            }}
+            onChange={setIdentity}
+            onSubmit={submitIdentity}
+          />
+        </dialog>
       )}
 
       <footer className="site-footer">Un espacio acogedor para disfrutar de una buena noche de juegos.</footer>
