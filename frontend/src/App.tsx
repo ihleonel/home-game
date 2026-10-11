@@ -517,13 +517,17 @@ function App() {
         body: JSON.stringify({ session_id: roomSession.sessionId }),
       })
       setRoomSession(null)
-      await refreshActiveRoom(roomSession.gameId)
+      setRoom(null)
+      setConnectionError(null)
+      setVoteNotice(null)
     } catch (error) {
       leavingRef.current = false
       setActionError(error instanceof Error ? error.message : 'No se ha podido salir de la sala.')
       if (error instanceof ApiError && error.status === 404) {
         setRoomSession(null)
-        void refreshActiveRoom(roomSession.gameId)
+        setRoom(null)
+        setConnectionError(null)
+        setVoteNotice(null)
       }
     } finally {
       setPendingAction(null)
@@ -685,6 +689,7 @@ function App() {
         }
 
         socket.onmessage = (messageEvent) => {
+          if (leavingRef.current) return
           try {
             const message = JSON.parse(String(messageEvent.data)) as RoomEnvelope & {
               type?: string
