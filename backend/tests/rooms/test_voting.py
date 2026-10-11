@@ -9,8 +9,8 @@ from rest_framework import status as http_status
 from rest_framework.test import APIClient, APITestCase
 
 from config.asgi import application
-from .connections import register_connection, unregister_connection
-from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from modules.rooms.connections import register_connection, unregister_connection
+from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
 
 
 class ExpulsionVoteApiTests(APITestCase):

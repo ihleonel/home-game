@@ -6,8 +6,8 @@ from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.test import APITestCase
 
-from .catalog import GAMES
-from .models import Participant, Room
+from modules.rooms.catalog import GAMES
+from modules.rooms.models import Participant, Room
 
 
 class RoomModelTests(TestCase):

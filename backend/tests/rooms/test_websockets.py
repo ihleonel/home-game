@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from unittest.mock import patch
 
 from config.asgi import application
-from .models import Participant, Room
+from modules.rooms.models import Participant, Room
 
 
 class RoomWebSocketTests(TransactionTestCase):
@@ -298,7 +298,7 @@ class RoomWebSocketTests(TransactionTestCase):
             await observer_socket.disconnect()
             return reconnecting_event, inactive_event
 
-        with patch('rooms.consumers.RECONNECT_GRACE_SECONDS', 0):
+        with patch('modules.rooms.consumers.RECONNECT_GRACE_SECONDS', 0):
             reconnecting_event, inactive_event = async_to_sync(expire_grace)()
 
         disconnected_guest.refresh_from_db()

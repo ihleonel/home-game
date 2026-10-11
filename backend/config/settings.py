@@ -42,7 +42,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'channels',
     'corsheaders',
-    'rooms.apps.RoomsConfig',
+    'modules.rooms.apps.RoomsConfig',
 ]
 
 MIDDLEWARE = [

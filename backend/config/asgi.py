@@ -17,7 +17,7 @@ from django.core.asgi import get_asgi_application
 
 django_asgi_application = get_asgi_application()
 
-from rooms.routing import websocket_urlpatterns
+from modules.rooms.routing import websocket_urlpatterns
 
 application = ProtocolTypeRouter(
     {
