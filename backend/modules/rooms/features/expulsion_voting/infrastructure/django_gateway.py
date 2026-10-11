@@ -3,10 +3,9 @@ from contextlib import contextmanager
 from django.db import transaction
 from django.utils import timezone
 
-from ....connections import has_room_connection
-from ....events import room_snapshot, schedule_room_event
+from ....infrastructure.connections import has_room_connection
+from ....infrastructure.events import room_snapshot, schedule_room_event
 from ....models import ExpulsionBallot, ExpulsionVote, Participant, Room
-from .django_compat import cancel_pending_vote_for_target
 from .snapshot import expulsion_vote_snapshot
 from ..domain.entities import BallotRecord, VoteParticipant, VoteRecord
 
@@ -61,6 +60,34 @@ class DjangoExpulsionVotingGateway:
         ).first()
         return self._vote_state(vote) if vote else None
 
+    def pending_vote_for_target_for_update(self, room_id, target_id):
+        vote = ExpulsionVote.objects.select_for_update().filter(
+            room_id=room_id,
+            target_id=target_id,
+            status=ExpulsionVote.Status.PENDING,
+        ).select_related('target', 'initiated_by').first()
+        return self._vote_state(vote) if vote else None
+
+    def pending_vote_for_room_for_update(self, room_id):
+        vote = ExpulsionVote.objects.select_for_update().filter(
+            room_id=room_id,
+            status=ExpulsionVote.Status.PENDING,
+        ).select_related('target', 'initiated_by').first()
+        return self._vote_state(vote) if vote else None
+
+    def participant_has_ballot(self, vote_id, participant_id):
+        return ExpulsionBallot.objects.filter(
+            vote_id=vote_id,
+            voter_id=participant_id,
+        ).exists()
+
+    def session_was_removed(self, room_id, participant_id):
+        return ExpulsionVote.objects.filter(
+            room_id=room_id,
+            target_id=participant_id,
+            status=ExpulsionVote.Status.APPROVED,
+        ).exists()
+
     def create_vote(self, room_id, target_id, caller_id):
         vote = ExpulsionVote.objects.create(
             room_id=room_id,
@@ -92,11 +119,6 @@ class DjangoExpulsionVotingGateway:
         participant = Participant.objects.select_for_update().get(pk=participant_id)
         participant.presence = Participant.Presence.INACTIVE
         participant.save(update_fields=('presence', 'updated_at'))
-
-    def cancel_vote_for_target(self, room_id, target_id, reason):
-        room = Room.objects.get(pk=room_id)
-        target = Participant.objects.get(pk=target_id)
-        return cancel_pending_vote_for_target(room, target, reason)
 
     def save_ballot(self, ballot_id, choice, cast_at):
         ballot = ExpulsionBallot.objects.select_for_update().get(pk=ballot_id)

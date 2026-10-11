@@ -1,7 +1,7 @@
 import asyncio
 
-from ....connections import has_room_connection
-from ....events import room_event_message, room_group_name
+from ....infrastructure.connections import has_room_connection
+from ....infrastructure.events import room_event_message, room_group_name
 
 GRACE_TASKS = {}
 

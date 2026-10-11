@@ -23,14 +23,4 @@ class PresencePorts(Protocol):
 
     def now(self): ...
 
-    def cancel_vote_for_target(self, room_id: int, participant_id: int, reason: str): ...
-
-    def cancel_vote_for_participant(
-        self,
-        room_id: int,
-        participant_id: int,
-        target_reason: str,
-        voter_reason: str,
-    ): ...
-
     def room_snapshot(self, room_id: int) -> dict: ...

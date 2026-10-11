@@ -12,17 +12,18 @@ from ..domain.rules import (
     membership_change,
     missing_identity_fields,
 )
+from ....application.ports import VoteCancellation
 from .ports import RoomMembershipPorts
 
 
-def _membership_for(ports: RoomMembershipPorts, room, data):
+def _membership_for(ports: RoomMembershipPorts, room, data, vote_cancellation):
     session_id = data.get('session_id')
     participant = None
     if session_id is not None:
         participant = ports.participant_for_session_for_update(room.id, session_id)
 
     if participant is not None:
-        if ports.session_was_removed(room.id, participant.id):
+        if vote_cancellation.session_was_removed(room.id, participant.id):
             raise RemovedSession()
 
         change = membership_change(
@@ -69,37 +70,45 @@ def _publish_join_events(ports, room_id, event_name, cancelled_vote):
         )
 
 
-def create_or_discover_room(ports: RoomMembershipPorts, data):
+def create_or_discover_room(
+    ports: RoomMembershipPorts, data, vote_cancellation: VoteCancellation
+):
     with ports.atomic():
         room, created = ports.create_or_lock_active_room(data['game_id'])
         if not game_matches(room.game_id, data['game_id']):
             raise ActiveRoomGameConflict()
-        participant, event_name = _membership_for(ports, room, data)
-        cancelled_vote = ports.cancel_vote_for_target(
-            room.id, participant.id, 'target_reconnected'
+        participant, event_name = _membership_for(
+            ports, room, data, vote_cancellation
+        )
+        cancelled_vote = vote_cancellation.target_reconnected(
+            room.id, participant.id
         )
         response = _membership_response(ports, room, participant)
         _publish_join_events(ports, room.id, event_name, cancelled_vote)
     return response, created
 
 
-def join_room(ports: RoomMembershipPorts, data):
+def join_room(ports: RoomMembershipPorts, data, vote_cancellation: VoteCancellation):
     with ports.atomic():
         room = ports.active_room_for_update()
         if room is None:
             return None
         if not game_matches(room.game_id, data['game_id']):
             raise ActiveRoomGameConflict()
-        participant, event_name = _membership_for(ports, room, data)
-        cancelled_vote = ports.cancel_vote_for_target(
-            room.id, participant.id, 'target_reconnected'
+        participant, event_name = _membership_for(
+            ports, room, data, vote_cancellation
+        )
+        cancelled_vote = vote_cancellation.target_reconnected(
+            room.id, participant.id
         )
         response = _membership_response(ports, room, participant)
         _publish_join_events(ports, room.id, event_name, cancelled_vote)
     return response
 
 
-def leave_room(ports: RoomMembershipPorts, data):
+def leave_room(
+    ports: RoomMembershipPorts, data, vote_cancellation: VoteCancellation
+):
     with ports.atomic():
         room = ports.active_room_for_update()
         if room is None:
@@ -113,12 +122,7 @@ def leave_room(ports: RoomMembershipPorts, data):
         participant = ports.save_membership_changes(
             participant.id, dict(leave_changes(ports.now()))
         )
-        cancelled_vote = ports.cancel_vote_for_participant(
-            room.id,
-            participant.id,
-            target_reason='target_left',
-            voter_reason='eligible_voter_left',
-        )
+        cancelled_vote = vote_cancellation.participant_left(room.id, participant.id)
         snapshot = ports.room_snapshot(room.id)
         if not ports.has_active_participants(room.id):
             ports.delete_room(room.id)

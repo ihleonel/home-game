@@ -3,12 +3,8 @@ from contextlib import contextmanager
 from django.db import transaction
 from django.utils import timezone
 
-from ....events import room_snapshot
+from ....infrastructure.events import room_snapshot
 from ....models import Participant, Room
-from ....voting import (
-    cancel_pending_vote_for_participant,
-    cancel_pending_vote_for_target,
-)
 from ..domain.entities import PresenceParticipant
 
 
@@ -59,20 +55,6 @@ class DjangoPresenceGateway:
         for field, value in changes.items():
             setattr(participant, field, value)
         participant.save(update_fields=(*changes, 'updated_at'))
-
-    def cancel_vote_for_target(self, room_id, participant_id, reason):
-        room = Room.objects.get(pk=room_id)
-        participant = Participant.objects.get(pk=participant_id)
-        return cancel_pending_vote_for_target(room, participant, reason)
-
-    def cancel_vote_for_participant(
-        self, room_id, participant_id, target_reason, voter_reason
-    ):
-        room = Room.objects.get(pk=room_id)
-        participant = Participant.objects.get(pk=participant_id)
-        return cancel_pending_vote_for_participant(
-            room, participant, target_reason, voter_reason
-        )
 
     def room_snapshot(self, room_id):
         return room_snapshot(Room.objects.get(pk=room_id))

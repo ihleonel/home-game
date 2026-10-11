@@ -21,11 +21,14 @@ class PresenceUseCaseTests(SimpleTestCase):
             lock_active_room=True,
             active_participant_for_update=participant,
             save_presence_changes=None,
-            cancel_vote_for_target={'status': 'cancelled'},
             room_snapshot={'room': 'online'},
         )
+        vote_cancellation = Mock()
+        vote_cancellation.target_reconnected.return_value = {'status': 'cancelled'}
 
-        result = mark_online(ports, 12, str(participant.session_id))
+        result = mark_online(
+            ports, 12, str(participant.session_id), vote_cancellation
+        )
 
         self.assertEqual(result[0], {'room': 'online'})
         self.assertEqual(
@@ -38,8 +41,8 @@ class PresenceUseCaseTests(SimpleTestCase):
         ports.save_presence_changes.assert_called_once_with(
             participant.id, {'presence': 'online', 'disconnected_at': None}
         )
-        ports.cancel_vote_for_target.assert_called_once_with(
-            12, participant.id, 'target_reconnected'
+        vote_cancellation.target_reconnected.assert_called_once_with(
+            12, participant.id
         )
         self.assertEqual(ports.timeline[-1], 'commit')
 
@@ -51,11 +54,16 @@ class PresenceUseCaseTests(SimpleTestCase):
             active_participant_for_update=participant,
             now=disconnected_at,
             save_presence_changes=None,
-            cancel_vote_for_participant={'status': 'cancelled'},
             room_snapshot={'room': 'reconnecting'},
         )
+        vote_cancellation = Mock()
+        vote_cancellation.participant_disconnected.return_value = {
+            'status': 'cancelled'
+        }
 
-        result = mark_reconnecting(ports, 12, str(participant.session_id))
+        result = mark_reconnecting(
+            ports, 12, str(participant.session_id), vote_cancellation
+        )
 
         self.assertEqual(result[0], {'room': 'reconnecting'})
         self.assertEqual(result[1], disconnected_at)
@@ -67,11 +75,8 @@ class PresenceUseCaseTests(SimpleTestCase):
             participant.id,
             {'presence': 'reconnecting', 'disconnected_at': disconnected_at},
         )
-        ports.cancel_vote_for_participant.assert_called_once_with(
-            12,
-            participant.id,
-            target_reason='target_disconnected',
-            voter_reason='eligible_voter_disconnected',
+        vote_cancellation.participant_disconnected.assert_called_once_with(
+            12, participant.id
         )
 
     def test_grace_expiry_marks_only_matching_reconnect_and_returns_snapshot(self):

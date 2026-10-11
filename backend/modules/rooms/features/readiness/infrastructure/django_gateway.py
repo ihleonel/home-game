@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 from django.db import transaction
 
-from ....events import room_snapshot, schedule_room_event
+from ....infrastructure.events import room_snapshot, schedule_room_event
 from ....models import Participant, Room
 from ..domain.entities import ReadinessParticipant
 

@@ -12,6 +12,7 @@ from ..domain.rules import (
     resolve_ballot,
     resolve_electorate,
 )
+from .cancellations import ExpulsionVoteCancellation
 from .ports import ExpulsionVotingPorts
 
 
@@ -121,7 +122,7 @@ def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
         target = ports.participant_by_id_for_update(vote.target_id)
         inactivity_checked_at = ports.now()
         if not is_inactive_target(target, inactivity_checked_at):
-            cancelled_vote = ports.cancel_vote_for_target(
+            cancelled_vote = ExpulsionVoteCancellation(ports).for_target(
                 room_id, target.id, 'target_reconnected'
             )
             snapshot = ports.room_snapshot(room_id)

@@ -21,8 +21,6 @@ class RoomMembershipPorts(Protocol):
         self, room_id: int, session_id
     ) -> ParticipantMembership | None: ...
 
-    def session_was_removed(self, room_id: int, participant_id: int) -> bool: ...
-
     def create_participant(
         self, room_id: int, display_name: str, game_marker: str
     ) -> ParticipantMembership: ...
@@ -36,18 +34,6 @@ class RoomMembershipPorts(Protocol):
     def has_active_participants(self, room_id: int) -> bool: ...
 
     def delete_room(self, room_id: int) -> None: ...
-
-    def cancel_vote_for_target(
-        self, room_id: int, participant_id: int, reason: str
-    ): ...
-
-    def cancel_vote_for_participant(
-        self,
-        room_id: int,
-        participant_id: int,
-        target_reason: str,
-        voter_reason: str,
-    ): ...
 
     def schedule_room_event(
         self,

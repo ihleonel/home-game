@@ -1,6 +1,6 @@
-"""Compatibility exports for the process-local presence connection registry."""
+"""Compatibility exports for the process-local room connection registry."""
 
-from .features.presence.infrastructure.connections import (
+from .infrastructure.connections import (
     has_room_connection,
     register_connection,
     unregister_connection,

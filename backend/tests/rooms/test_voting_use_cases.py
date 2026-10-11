@@ -10,6 +10,9 @@ from modules.rooms.features.expulsion_voting.application.use_cases import (
     cast_ballot,
     start_vote,
 )
+from modules.rooms.features.expulsion_voting.application.cancellations import (
+    ExpulsionVoteCancellation,
+)
 from modules.rooms.features.expulsion_voting.domain.entities import (
     BallotRecord,
     VoteParticipant,
@@ -53,6 +56,52 @@ class ExpulsionVotingDomainTests(SimpleTestCase):
 
 
 class ExpulsionVotingUseCaseTests(SimpleTestCase):
+    def test_target_departure_cancels_without_checking_voter_electorate(self):
+        vote = VoteRecord(41, uuid4(), 'pending', 24, 12)
+        ports = _ports(
+            pending_vote_for_room_for_update=vote,
+            save_vote_resolution=None,
+            now=_now(),
+            vote_snapshot={'resolution_reason': 'target_left'},
+        )
+
+        result = ExpulsionVoteCancellation(ports).for_participant(
+            7, 24, 'target_left', 'eligible_voter_left'
+        )
+
+        self.assertEqual(result, {'resolution_reason': 'target_left'})
+        ports.participant_has_ballot.assert_not_called()
+        ports.save_vote_resolution.assert_called_once_with(
+            vote.id, 'cancelled', 'target_left', _now()
+        )
+
+    def test_eligible_voter_departure_uses_fixed_ballot_to_select_cancel_reason(self):
+        vote = VoteRecord(41, uuid4(), 'pending', 99, 12)
+        ports = _ports(
+            pending_vote_for_room_for_update=vote,
+            participant_has_ballot=True,
+            save_vote_resolution=None,
+            now=_now(),
+            vote_snapshot={'resolution_reason': 'eligible_voter_disconnected'},
+        )
+
+        result = ExpulsionVoteCancellation(ports).for_participant(
+            7,
+            24,
+            'target_disconnected',
+            'eligible_voter_disconnected',
+        )
+
+        self.assertEqual(
+            result, {'resolution_reason': 'eligible_voter_disconnected'}
+        )
+        ports.save_vote_resolution.assert_called_once_with(
+            vote.id,
+            'cancelled',
+            'eligible_voter_disconnected',
+            _now(),
+        )
+
     def test_start_vote_fixes_connected_electorate_and_publishes_after_persistence(self):
         caller, other = _participant(1), _participant(2)
         target = _participant(
@@ -138,8 +187,10 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
             has_connection=True,
             ballot_for_voter_for_update=BallotRecord(51, None),
             participant_by_id_for_update=target,
-            now=_now(),
-            cancel_vote_for_target={'resolution_reason': 'target_reconnected'},
+            pending_vote_for_target_for_update=vote,
+            now=deque((_now(), _now())),
+            save_vote_resolution=None,
+            vote_snapshot={'resolution_reason': 'target_reconnected'},
             room_snapshot={'room': 'reconnected'},
             schedule_room_event=None,
         )
@@ -152,6 +203,9 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
 
         self.assertEqual(response['vote']['resolution_reason'], 'target_reconnected')
         ports.save_ballot.assert_not_called()
+        ports.save_vote_resolution.assert_called_once_with(
+            vote.id, 'cancelled', 'target_reconnected', _now()
+        )
         ports.schedule_room_event.assert_called_once_with(
             12,
             'expulsion_vote_cancelled',

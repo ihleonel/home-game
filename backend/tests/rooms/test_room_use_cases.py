@@ -26,15 +26,17 @@ from modules.rooms.features.readiness.domain.errors import ActiveRoomNotFound
 class MembershipUseCaseTests(SimpleTestCase):
     def test_create_or_discover_sequences_creation_snapshot_and_event(self):
         participant = _participant()
+        vote_cancellation = Mock()
         ports = _ports(
             create_or_lock_active_room=(ActiveRoom(12, 'starlight-garden'), True),
             participant_for_session_for_update=None,
             create_participant=participant,
-            cancel_vote_for_target=None,
             room_snapshot=deque(({'revision': 1}, {'revision': 2})),
         )
 
-        response, created = create_or_discover_room(ports, _new_member_data())
+        response, created = create_or_discover_room(
+            ports, _new_member_data(), vote_cancellation
+        )
 
         self.assertTrue(created)
         self.assertEqual(response, {
@@ -49,7 +51,6 @@ class MembershipUseCaseTests(SimpleTestCase):
                 'create_or_lock_active_room',
                 'participant_for_session_for_update',
                 'create_participant',
-                'cancel_vote_for_target',
                 'room_snapshot',
                 'room_snapshot',
                 'schedule_room_event',
@@ -59,14 +60,18 @@ class MembershipUseCaseTests(SimpleTestCase):
         ports.schedule_room_event.assert_called_once_with(
             12, 'player_joined', {'revision': 2}
         )
+        vote_cancellation.target_reconnected.assert_called_once_with(
+            12, participant.id
+        )
 
     def test_game_conflict_is_decided_before_membership_or_vote_work(self):
         ports = _ports(
             create_or_lock_active_room=(ActiveRoom(12, 'cloud-couriers'), False)
         )
+        vote_cancellation = Mock()
 
         with self.assertRaises(ActiveRoomGameConflict):
-            create_or_discover_room(ports, _new_member_data())
+            create_or_discover_room(ports, _new_member_data(), vote_cancellation)
 
         self.assertEqual(
             ports.timeline,
@@ -78,9 +83,12 @@ class MembershipUseCaseTests(SimpleTestCase):
             create_or_lock_active_room=(ActiveRoom(12, 'starlight-garden'), True),
             participant_for_session_for_update=None,
         )
+        vote_cancellation = Mock()
 
         with self.assertRaises(MissingParticipantIdentity) as error:
-            create_or_discover_room(ports, {'game_id': 'starlight-garden'})
+            create_or_discover_room(
+                ports, {'game_id': 'starlight-garden'}, vote_cancellation
+            )
 
         self.assertEqual(set(error.exception.fields), {'display_name', 'game_marker'})
         ports.create_participant.assert_not_called()
@@ -93,18 +101,23 @@ class MembershipUseCaseTests(SimpleTestCase):
             participant_for_session_for_update=participant,
             session_was_removed=False,
             save_membership_changes=participant,
-            cancel_vote_for_target={'status': 'cancelled'},
             room_snapshot=deque(({'revision': 1}, {'revision': 2}, {'revision': 3})),
         )
+        vote_cancellation = Mock()
+        vote_cancellation.session_was_removed.return_value = False
+        vote_cancellation.target_reconnected.return_value = {'status': 'cancelled'}
         data = {
             'game_id': 'starlight-garden',
             'session_id': participant.session_id,
             'display_name': 'Guest Updated',
         }
 
-        response = join_room(ports, data)
+        response = join_room(ports, data, vote_cancellation)
 
         self.assertEqual(response['session_id'], str(participant.session_id))
+        vote_cancellation.target_reconnected.assert_called_once_with(
+            12, participant.id
+        )
         ports.save_membership_changes.assert_called_once_with(
             participant.id,
             {
@@ -128,13 +141,14 @@ class MembershipUseCaseTests(SimpleTestCase):
             active_room_for_update=ActiveRoom(12, 'starlight-garden'),
             active_participant_for_session_for_update=participant,
             save_membership_changes=participant,
-            cancel_vote_for_participant={'status': 'cancelled'},
             room_snapshot={'room': 'snapshot'},
             has_active_participants=False,
             now='leave-time',
         )
+        vote_cancellation = Mock()
+        vote_cancellation.participant_left.return_value = {'status': 'cancelled'}
 
-        leave_room(ports, {'session_id': participant.session_id})
+        leave_room(ports, {'session_id': participant.session_id}, vote_cancellation)
 
         ports.save_membership_changes.assert_called_once_with(
             participant.id,
@@ -152,7 +166,6 @@ class MembershipUseCaseTests(SimpleTestCase):
                 'active_participant_for_session_for_update',
                 'now',
                 'save_membership_changes',
-                'cancel_vote_for_participant',
                 'room_snapshot',
                 'has_active_participants',
                 'delete_room',
@@ -160,6 +173,9 @@ class MembershipUseCaseTests(SimpleTestCase):
                 'schedule_room_event',
                 'commit',
             ],
+        )
+        vote_cancellation.participant_left.assert_called_once_with(
+            12, participant.id
         )
 
 
@@ -242,6 +258,7 @@ def _ports(**results):
             return _result
 
         getattr(ports, name).side_effect = operation
+    ports.session_was_removed.return_value = False
     return ports
 
 

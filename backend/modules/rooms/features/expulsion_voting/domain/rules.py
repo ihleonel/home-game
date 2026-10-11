@@ -54,6 +54,20 @@ def ballot_is_unanswered(choice):
     return choice is None
 
 
+def membership_cancellation_reason(
+    vote_target_id,
+    participant_id,
+    participant_is_voter,
+    target_reason,
+    voter_reason,
+):
+    if vote_target_id == participant_id:
+        return target_reason
+    if participant_is_voter:
+        return voter_reason
+    return None
+
+
 def resolve_ballot(choice, yes_count, no_count, eligible_count):
     if choice == 'no' or no_count > 0:
         return VoteResolution('rejected', 'voter_rejected', 'expulsion_vote_rejected')

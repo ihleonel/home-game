@@ -3,12 +3,8 @@ from contextlib import contextmanager
 from django.db import transaction
 from django.utils import timezone
 
-from ....events import room_snapshot, schedule_room_event
-from ....models import ExpulsionVote, Participant, Room
-from ....voting import (
-    cancel_pending_vote_for_participant,
-    cancel_pending_vote_for_target,
-)
+from ....infrastructure.events import room_snapshot, schedule_room_event
+from ....models import Participant, Room
 from ...membership.domain.entities import ActiveRoom, ParticipantMembership
 
 
@@ -56,13 +52,6 @@ class DjangoRoomMembershipGateway:
         ).first()
         return self._participant_state(participant) if participant else None
 
-    def session_was_removed(self, room_id, participant_id):
-        return ExpulsionVote.objects.filter(
-            room_id=room_id,
-            target_id=participant_id,
-            status=ExpulsionVote.Status.APPROVED,
-        ).exists()
-
     def create_participant(self, room_id, display_name, game_marker):
         participant = Participant.objects.create(
             room_id=room_id,
@@ -90,20 +79,6 @@ class DjangoRoomMembershipGateway:
 
     def delete_room(self, room_id):
         Room.objects.filter(pk=room_id).delete()
-
-    def cancel_vote_for_target(self, room_id, participant_id, reason):
-        room = Room.objects.get(pk=room_id)
-        participant = Participant.objects.get(pk=participant_id)
-        return cancel_pending_vote_for_target(room, participant, reason)
-
-    def cancel_vote_for_participant(
-        self, room_id, participant_id, target_reason, voter_reason
-    ):
-        room = Room.objects.get(pk=room_id)
-        participant = Participant.objects.get(pk=participant_id)
-        return cancel_pending_vote_for_participant(
-            room, participant, target_reason, voter_reason
-        )
 
     def schedule_room_event(
         self,

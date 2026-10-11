@@ -1,4 +1,4 @@
-from ....events import room_event_message, room_group_name
+from ....infrastructure.events import room_event_message, room_group_name
 
 
 async def add_to_room_group(channel_layer, room_group, channel_name):

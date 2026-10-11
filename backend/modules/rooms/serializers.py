@@ -6,7 +6,7 @@ from rest_framework import serializers
 from .constants import RECONNECT_GRACE_SECONDS
 from .features.catalog.domain.catalog import contains_game, contains_marker
 from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
-from .voting import expulsion_vote_snapshot
+from .infrastructure.snapshots import expulsion_vote_snapshot
 
 
 class SessionIDField(serializers.UUIDField):

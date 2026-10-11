@@ -4,6 +4,7 @@ from ..domain.rules import (
     online_change,
     reconnecting_change,
 )
+from ....application.ports import VoteCancellation
 from .ports import PresencePorts
 from .results import PresenceEvent
 
@@ -12,7 +13,12 @@ def find_active_membership(ports: PresencePorts, session_id: str):
     return ports.active_membership(session_id)
 
 
-def mark_online(ports: PresencePorts, room_id: int, session_id: str):
+def mark_online(
+    ports: PresencePorts,
+    room_id: int,
+    session_id: str,
+    vote_cancellation: VoteCancellation,
+):
     with ports.atomic():
         if not ports.lock_active_room(room_id):
             return None
@@ -23,8 +29,8 @@ def mark_online(ports: PresencePorts, room_id: int, session_id: str):
         change = online_change(participant.presence, participant.disconnected_at)
         if change.changed:
             ports.save_presence_changes(participant.id, dict(change.updates))
-        cancelled_vote = ports.cancel_vote_for_target(
-            room_id, participant.id, 'target_reconnected'
+        cancelled_vote = vote_cancellation.target_reconnected(
+            room_id, participant.id
         )
         snapshot = ports.room_snapshot(room_id)
         events = []
@@ -37,7 +43,12 @@ def mark_online(ports: PresencePorts, room_id: int, session_id: str):
         return snapshot, tuple(events)
 
 
-def mark_reconnecting(ports: PresencePorts, room_id: int, session_id: str):
+def mark_reconnecting(
+    ports: PresencePorts,
+    room_id: int,
+    session_id: str,
+    vote_cancellation: VoteCancellation,
+):
     with ports.atomic():
         if not ports.lock_active_room(room_id):
             return None
@@ -47,11 +58,8 @@ def mark_reconnecting(ports: PresencePorts, room_id: int, session_id: str):
 
         change = reconnecting_change(ports.now())
         ports.save_presence_changes(participant.id, dict(change.updates))
-        cancelled_vote = ports.cancel_vote_for_participant(
-            room_id,
-            participant.id,
-            target_reason='target_disconnected',
-            voter_reason='eligible_voter_disconnected',
+        cancelled_vote = vote_cancellation.participant_disconnected(
+            room_id, participant.id
         )
         snapshot = ports.room_snapshot(room_id)
         events = [PresenceEvent('participant_reconnecting', snapshot)]
