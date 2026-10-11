@@ -13,11 +13,19 @@ class DjangoReadinessGateway:
         with transaction.atomic():
             yield self
 
-    def active_room_for_update(self):
-        room = Room.objects.select_for_update().filter(
-            status=Room.Status.ACTIVE
-        ).first()
-        return room.pk if room else None
+    def active_room_for_update(self, *, session_id):
+        memberships = list(
+            Participant.objects.select_for_update()
+            .select_related('room')
+            .filter(
+                session_id=session_id,
+                left_at__isnull=True,
+                room__status=Room.Status.ACTIVE,
+            )[:2]
+        )
+        if len(memberships) != 1:
+            return None
+        return memberships[0].room_id
 
     def active_participant_for_session_for_update(self, room_id, session_id):
         participant = Participant.objects.select_for_update().filter(

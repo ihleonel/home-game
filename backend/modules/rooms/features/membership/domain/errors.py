@@ -6,6 +6,10 @@ class ActiveRoomNotFound(Exception):
     pass
 
 
+class ActiveRoomSelectionRequired(Exception):
+    pass
+
+
 class ActiveParticipantNotFound(Exception):
     pass
 

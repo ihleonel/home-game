@@ -195,7 +195,7 @@ class RoomApiTests(APITestCase):
         self.assertEqual(Participant.objects.count(), 3)
 
 
-    def test_join_rejects_a_different_game_without_switching_the_room(self):
+    def test_join_returns_not_found_when_selected_game_has_no_room(self):
         self.create_room()
 
         response = self.join_room(
@@ -204,9 +204,145 @@ class RoomApiTests(APITestCase):
             game_marker=self.other_game['markers'][0]['id'],
         )
 
-        self.assertEqual(response.status_code, http_status.HTTP_409_CONFLICT)
+        self.assertEqual(response.status_code, http_status.HTTP_404_NOT_FOUND)
         self.assertEqual(Room.objects.get().game_id, self.game['id'])
         self.assertEqual(Participant.objects.count(), 1)
+
+    def test_join_targets_the_selected_game_when_multiple_rooms_are_active(self):
+        first = self.create_room(game=self.game, display_name='First Game Guest')
+        second = self.create_room(
+            game=self.other_game, display_name='Second Game Guest'
+        )
+
+        response = self.join_room(
+            game=self.other_game,
+            display_name='Second Game Guest Two',
+            game_marker=self.other_game['markers'][1]['id'],
+        )
+
+        self.assertEqual(first.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(response.data['room']['game_id'], self.other_game['id'])
+        self.assertEqual(
+            Room.objects.get(game_id=self.game['id']).participants.count(), 1
+        )
+        self.assertEqual(
+            Room.objects.get(game_id=self.other_game['id']).participants.count(), 2
+        )
+
+    def test_leave_targets_the_room_containing_the_session(self):
+        first = self.create_room(game=self.game, display_name='First Game Guest')
+        second = self.create_room(
+            game=self.other_game, display_name='Second Game Guest'
+        )
+
+        response = self.client.post(
+            '/api/rooms/leave/',
+            {'session_id': second.data['session_id']},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_204_NO_CONTENT)
+        self.assertTrue(
+            Participant.objects.filter(
+                session_id=first.data['session_id'], left_at__isnull=True
+            ).exists()
+        )
+        self.assertFalse(
+            Participant.objects.filter(
+                session_id=second.data['session_id'], left_at__isnull=True
+            ).exists()
+        )
+        self.assertEqual(Room.objects.count(), 1)
+        self.assertEqual(Room.objects.get().game_id, self.game['id'])
+
+    def test_readiness_targets_the_room_containing_the_session(self):
+        self.create_room(game=self.game, display_name='First Game Guest')
+        second = self.create_room(
+            game=self.other_game, display_name='Second Game Guest'
+        )
+
+        response = self.client.patch(
+            '/api/rooms/ready/',
+            {'session_id': second.data['session_id'], 'is_ready': True},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(response.data['room']['game_id'], self.other_game['id'])
+        self.assertTrue(
+            Participant.objects.get(session_id=second.data['session_id']).is_ready
+        )
+        self.assertFalse(
+            Participant.objects.get(room__game_id=self.game['id']).is_ready
+        )
+
+    def test_active_room_lookup_uses_game_or_session_and_rejects_ambiguity(self):
+        self.create_room(game=self.game, display_name='First Game Guest')
+        second = self.create_room(
+            game=self.other_game, display_name='Second Game Guest'
+        )
+
+        by_game = self.client.get(
+            '/api/rooms/active/', {'game_id': self.other_game['id']}
+        )
+        by_session = self.client.get(
+            '/api/rooms/active/', {'session_id': second.data['session_id']}
+        )
+        ambiguous = self.client.get('/api/rooms/active/')
+        unknown_session = self.client.get(
+            '/api/rooms/active/', {'session_id': str(uuid.uuid4())}
+        )
+
+        self.assertEqual(by_game.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(by_game.data['room']['game_id'], self.other_game['id'])
+        self.assertEqual(by_session.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(by_session.data['room']['game_id'], self.other_game['id'])
+        self.assertEqual(ambiguous.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertEqual(unknown_session.status_code, http_status.HTTP_404_NOT_FOUND)
+
+    def test_ambiguous_session_does_not_select_a_room_for_mutations(self):
+        first = self.create_room(game=self.game, display_name='First Game Guest')
+        second = self.create_room(
+            game=self.other_game, display_name='Second Game Guest'
+        )
+        first_session = uuid.UUID(first.data['session_id'])
+        second_participant = Participant.objects.get(
+            session_id=second.data['session_id']
+        )
+        second_participant.session_id = first_session
+        second_participant.save(update_fields=('session_id', 'updated_at'))
+
+        scoped_lookup = self.client.get(
+            '/api/rooms/active/',
+            {
+                'game_id': self.other_game['id'],
+                'session_id': str(first_session),
+            },
+        )
+        readiness = self.client.patch(
+            '/api/rooms/ready/',
+            {'session_id': str(first_session), 'is_ready': True},
+            format='json',
+        )
+        leave = self.client.post(
+            '/api/rooms/leave/',
+            {'session_id': str(first_session)},
+            format='json',
+        )
+
+        self.assertEqual(scoped_lookup.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(scoped_lookup.data['room']['game_id'], self.other_game['id'])
+        self.assertEqual(readiness.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertEqual(leave.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertEqual(
+            Participant.objects.filter(session_id=first_session, left_at__isnull=True).count(),
+            2,
+        )
+        self.assertFalse(
+            Participant.objects.filter(session_id=first_session, is_ready=True).exists()
+        )
 
     def test_existing_token_can_join_without_resending_identity(self):
         created = self.create_room()

@@ -14,14 +14,52 @@ class DjangoRoomMembershipGateway:
         with transaction.atomic():
             yield self
 
-    def get_active_room_snapshot(self):
-        room = Room.objects.filter(status=Room.Status.ACTIVE).first()
+    def get_active_room_snapshot(self, game_id=None, session_id=None):
+        rooms = Room.objects.filter(status=Room.Status.ACTIVE)
+        if game_id is not None:
+            rooms = rooms.filter(game_id=game_id)
+        if session_id is not None:
+            memberships = Participant.objects.filter(
+                session_id=session_id,
+                left_at__isnull=True,
+                room__status=Room.Status.ACTIVE,
+            )
+            if game_id is not None:
+                memberships = memberships.filter(room__game_id=game_id)
+            room_ids = list(
+                memberships.values_list('room_id', flat=True).distinct()[:2]
+            )
+            if len(room_ids) != 1:
+                return None
+            rooms = rooms.filter(pk=room_ids[0])
+        room = rooms.first()
         return room_snapshot(room) if room is not None else None
 
-    def active_room_for_update(self):
-        room = Room.objects.select_for_update().filter(
-            status=Room.Status.ACTIVE
-        ).first()
+    def get_active_room_snapshots(self):
+        rooms = Room.objects.filter(status=Room.Status.ACTIVE).order_by('pk')
+        return [room_snapshot(room) for room in rooms]
+
+    def active_room_for_update(self, *, game_id=None, session_id=None):
+        if game_id is not None and session_id is None:
+            room = Room.objects.select_for_update().filter(
+                game_id=game_id,
+                status=Room.Status.ACTIVE,
+            ).first()
+        elif session_id is not None and game_id is None:
+            memberships = list(
+                Participant.objects.select_for_update()
+                .select_related('room')
+                .filter(
+                    session_id=session_id,
+                    left_at__isnull=True,
+                    room__status=Room.Status.ACTIVE,
+                )[:2]
+            )
+            if len(memberships) != 1:
+                return None
+            room = memberships[0].room
+        else:
+            return None
         return self._room_state(room) if room is not None else None
 
     def create_or_lock_active_room(self, game_id):

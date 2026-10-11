@@ -2,6 +2,7 @@ from ..domain.errors import (
     ActiveParticipantNotFound,
     ActiveRoomGameConflict,
     ActiveRoomNotFound,
+    ActiveRoomSelectionRequired,
     MissingParticipantIdentity,
     RemovedSession,
 )
@@ -90,7 +91,7 @@ def create_or_discover_room(
 
 def join_room(ports: RoomMembershipPorts, data, vote_cancellation: VoteCancellation):
     with ports.atomic():
-        room = ports.active_room_for_update()
+        room = ports.active_room_for_update(game_id=data['game_id'])
         if room is None:
             return None
         if not game_matches(room.game_id, data['game_id']):
@@ -110,7 +111,7 @@ def leave_room(
     ports: RoomMembershipPorts, data, vote_cancellation: VoteCancellation
 ):
     with ports.atomic():
-        room = ports.active_room_for_update()
+        room = ports.active_room_for_update(session_id=data['session_id'])
         if room is None:
             raise ActiveRoomNotFound()
         participant = ports.active_participant_for_session_for_update(
@@ -141,8 +142,14 @@ def leave_room(
             )
 
 
-def get_active_room(ports: RoomMembershipPorts):
-    snapshot = ports.get_active_room_snapshot()
+def get_active_room(ports: RoomMembershipPorts, game_id=None, session_id=None):
+    if game_id is None and session_id is None:
+        snapshots = ports.get_active_room_snapshots()
+        if len(snapshots) > 1:
+            raise ActiveRoomSelectionRequired()
+        snapshot = snapshots[0] if snapshots else None
+    else:
+        snapshot = ports.get_active_room_snapshot(game_id, session_id)
     if snapshot is None:
         raise ActiveRoomNotFound()
     return snapshot

@@ -5,7 +5,7 @@ from .ports import ReadinessPorts
 
 def set_ready_state(ports: ReadinessPorts, data):
     with ports.atomic():
-        room_id = ports.active_room_for_update()
+        room_id = ports.active_room_for_update(session_id=data['session_id'])
         if room_id is None:
             raise ActiveRoomNotFound()
         participant = ports.active_participant_for_session_for_update(

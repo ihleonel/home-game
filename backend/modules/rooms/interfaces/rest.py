@@ -25,6 +25,7 @@ from ..features.membership.domain.errors import (
     ActiveParticipantNotFound as MembershipParticipantNotFound,
     ActiveRoomGameConflict as ActiveRoomGameConflictError,
     ActiveRoomNotFound as MembershipRoomNotFound,
+    ActiveRoomSelectionRequired,
     MissingParticipantIdentity,
     RemovedSession,
 )
@@ -34,6 +35,7 @@ from ..features.readiness.domain.errors import (
     ActiveRoomNotFound,
 )
 from ..serializers import (
+    ActiveRoomLookupSerializer,
     CastExpulsionBallotSerializer,
     LeaveRoomSerializer,
     ReadyStateSerializer,
@@ -79,9 +81,18 @@ def game_catalog(request):
 
 @api_view(['GET'])
 def active_room(request):
+    serializer = ActiveRoomLookupSerializer(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
     dependencies = compose_room_dependencies()
     try:
-        room = get_active_room(dependencies.membership)
+        room = get_active_room(
+            dependencies.membership,
+            game_id=data.get('game_id'),
+            session_id=data.get('session_id'),
+        )
+    except ActiveRoomSelectionRequired:
+        raise NotFound('Indica el juego o la sesión para seleccionar una sala.')
     except MembershipRoomNotFound:
         raise NotFound('No hay ninguna sala activa.')
     return Response({'room': room})

@@ -36,6 +36,16 @@ class RoomRequestSerializer(serializers.Serializer):
         return attrs
 
 
+class ActiveRoomLookupSerializer(serializers.Serializer):
+    game_id = serializers.SlugField(max_length=64, required=False)
+    session_id = SessionIDField(required=False)
+
+    def validate_game_id(self, value):
+        if not contains_game(value):
+            raise serializers.ValidationError('Elige un juego del catálogo.')
+        return value
+
+
 class LeaveRoomSerializer(serializers.Serializer):
     session_id = SessionIDField()
 
