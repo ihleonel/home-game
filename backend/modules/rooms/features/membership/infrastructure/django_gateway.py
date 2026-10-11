@@ -26,13 +26,14 @@ class DjangoRoomMembershipGateway:
 
     def create_or_lock_active_room(self, game_id):
         room = Room.objects.select_for_update().filter(
-            status=Room.Status.ACTIVE
+            game_id=game_id,
+            status=Room.Status.ACTIVE,
         ).first()
         created = False
         if room is None:
             room, created = Room.objects.get_or_create(
+                game_id=game_id,
                 status=Room.Status.ACTIVE,
-                defaults={'game_id': game_id},
             )
             room = Room.objects.select_for_update().get(pk=room.pk)
         return self._room_state(room), created

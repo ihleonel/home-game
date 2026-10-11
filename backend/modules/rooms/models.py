@@ -19,9 +19,9 @@ class Room(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=('status',),
+                fields=('game_id', 'status'),
                 condition=models.Q(status='active'),
-                name='one_active_room',
+                name='one_active_room_per_game',
             ),
             models.CheckConstraint(
                 condition=models.Q(status='active'),

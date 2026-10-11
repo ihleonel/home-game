@@ -1,24 +1,30 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
-from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.db import close_old_connections, IntegrityError, transaction
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework import status as http_status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from modules.rooms.catalog import GAMES
 from modules.rooms.models import Participant, Room
 
 
 class RoomModelTests(TestCase):
-    def test_only_one_active_room_can_exist_globally(self):
-        Room.objects.create(game_id='first-game')
+    def test_only_one_active_room_can_exist_per_game(self):
+        first = Room.objects.create(game_id='first-game')
+        second = Room.objects.create(game_id='second-game')
 
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
-                Room.objects.create(game_id='second-game')
+                Room.objects.create(game_id='first-game')
 
-        self.assertEqual(Room.objects.filter(status=Room.Status.ACTIVE).count(), 1)
+        active_room_ids = set(
+            Room.objects.filter(status=Room.Status.ACTIVE).values_list('pk', flat=True)
+        )
+        self.assertEqual(active_room_ids, {first.pk, second.pk})
 
     def test_ended_room_status_cannot_be_persisted(self):
         with self.assertRaises(IntegrityError):
@@ -161,6 +167,34 @@ class RoomApiTests(APITestCase):
             {'Same Name'},
         )
 
+
+    def test_create_joins_or_creates_the_selected_games_room(self):
+        first = self.create_room(game=self.game, display_name='First Guest')
+        second_game_first_entry = self.create_room(
+            game=self.other_game, display_name='Second Game Guest'
+        )
+        first_game_second_entry = self.create_room(
+            game=self.game, display_name='First Game Guest Two'
+        )
+
+        self.assertEqual(first.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(
+            second_game_first_entry.status_code, http_status.HTTP_201_CREATED
+        )
+        self.assertEqual(first_game_second_entry.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(
+            set(Room.objects.values_list('game_id', flat=True)),
+            {self.game['id'], self.other_game['id']},
+        )
+        self.assertEqual(
+            Room.objects.get(game_id=self.game['id']).participants.count(), 2
+        )
+        self.assertEqual(
+            Room.objects.get(game_id=self.other_game['id']).participants.count(), 1
+        )
+        self.assertEqual(Participant.objects.count(), 3)
+
+
     def test_join_rejects_a_different_game_without_switching_the_room(self):
         self.create_room()
 
@@ -277,3 +311,42 @@ class RoomApiTests(APITestCase):
         self.assertEqual(response.status_code, http_status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Room.objects.count(), 0)
         self.assertEqual(Participant.objects.count(), 0)
+
+
+class ConcurrentRoomApiTests(TransactionTestCase):
+    reset_sequences = True
+
+    def test_competing_entries_for_one_game_converge_on_one_room(self):
+        game = GAMES[0]
+        start = Barrier(2)
+
+        def enter_game(index):
+            close_old_connections()
+            try:
+                client = APIClient()
+                start.wait(timeout=10)
+                return client.post(
+                    '/api/rooms/',
+                    {
+                        'game_id': game['id'],
+                        'display_name': f'Guest {index}',
+                        'game_marker': game['markers'][index]['id'],
+                    },
+                    format='json',
+                )
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses = list(executor.map(enter_game, range(2)))
+
+        self.assertEqual(
+            sorted(response.status_code for response in responses),
+            [http_status.HTTP_200_OK, http_status.HTTP_201_CREATED],
+        )
+        self.assertEqual(Room.objects.filter(game_id=game['id']).count(), 1)
+        self.assertEqual(Participant.objects.count(), 2)
+        self.assertEqual(
+            set(Participant.objects.values_list('room_id', flat=True)),
+            set(Room.objects.filter(game_id=game['id']).values_list('pk', flat=True)),
+        )
