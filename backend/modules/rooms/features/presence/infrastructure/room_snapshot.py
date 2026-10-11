@@ -1,8 +1,8 @@
 from django.utils import timezone
 
 from ....constants import RECONNECT_GRACE_SECONDS
+from ....infrastructure.snapshots import expulsion_vote_snapshot
 from ....models import ExpulsionVote, Participant
-from ...expulsion_voting.infrastructure.snapshot import expulsion_vote_snapshot
 from ..domain.rules import grace_expired
 
 
