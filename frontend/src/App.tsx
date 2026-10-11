@@ -944,6 +944,7 @@ function App() {
           )}
         </section>
       )}
+        {!room && (
         <section className="catalog-section" aria-labelledby="catalog-title">
           <div className="section-intro">
             <p className="eyebrow">Catálogo de juegos</p>
@@ -985,6 +986,7 @@ function App() {
           )}
 
         </section>
+        )}
         </>
       )}
 
