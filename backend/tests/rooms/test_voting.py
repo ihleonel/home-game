@@ -35,14 +35,23 @@ class ExpulsionVoteApiTests(APITestCase):
     def register_participant_connection(self, participant):
         channel_name = f'test-voter-{participant.public_id}'
         session_id = str(participant.session_id)
-        register_connection(self.room.pk, session_id, channel_name)
-        self.registered_connections.append((self.room.pk, session_id, channel_name))
+        register_connection(participant.room_id, session_id, channel_name)
+        self.registered_connections.append(
+            (participant.room_id, session_id, channel_name)
+        )
 
-    def create_participant(self, name, presence, disconnected_at=None):
+    def create_participant(
+        self,
+        name,
+        presence,
+        disconnected_at=None,
+        room=None,
+        game_marker='silver-leaf',
+    ):
         return Participant.objects.create(
-            room=self.room,
+            room=room or self.room,
             display_name=name,
-            game_marker='silver-leaf',
+            game_marker=game_marker,
             presence=presence,
             disconnected_at=disconnected_at,
         )
@@ -87,6 +96,105 @@ class ExpulsionVoteApiTests(APITestCase):
         )
         target_ballot = self.cast_ballot(response.data['vote'], self.target, 'yes')
         self.assertEqual(target_ballot.status_code, http_status.HTTP_403_FORBIDDEN)
+
+    def test_start_vote_resolves_the_callers_active_room(self):
+        other_room = Room.objects.create(game_id='cloud-couriers')
+        caller = self.create_participant(
+            'Courier One',
+            Participant.Presence.ONLINE,
+            room=other_room,
+            game_marker='wind-kite',
+        )
+        voter = self.create_participant(
+            'Courier Two',
+            Participant.Presence.ONLINE,
+            room=other_room,
+            game_marker='cloud-bell',
+        )
+        target = self.create_participant(
+            'Courier Three',
+            Participant.Presence.INACTIVE,
+            disconnected_at=timezone.now() - timedelta(seconds=61),
+            room=other_room,
+            game_marker='sunbeam',
+        )
+        self.register_participant_connection(caller)
+        self.register_participant_connection(voter)
+
+        response = self.client.post(
+            '/api/rooms/expulsion-votes/',
+            {
+                'session_id': str(caller.session_id),
+                'target_ref': str(target.public_id),
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(response.data['room']['game_id'], other_room.game_id)
+        vote = ExpulsionVote.objects.get()
+        self.assertEqual(vote.room_id, other_room.pk)
+        self.assertEqual(
+            set(vote.ballots.values_list('voter_id', flat=True)),
+            {caller.pk, voter.pk},
+        )
+
+    def test_start_vote_rejects_a_session_ambiguous_across_rooms(self):
+        other_room = Room.objects.create(game_id='cloud-couriers')
+        duplicate = self.create_participant(
+            'Duplicate Courier Session',
+            Participant.Presence.ONLINE,
+            room=other_room,
+            game_marker='wind-kite',
+        )
+        duplicate.session_id = self.initiator.session_id
+        duplicate.save(update_fields=('session_id', 'updated_at'))
+
+        response = self.start_vote()
+
+        self.assertEqual(response.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertFalse(ExpulsionVote.objects.exists())
+
+    def test_cast_ballot_resolves_the_room_from_the_vote_reference(self):
+        other_room = Room.objects.create(game_id='cloud-couriers')
+        caller = self.create_participant(
+            'Courier One',
+            Participant.Presence.ONLINE,
+            room=other_room,
+            game_marker='wind-kite',
+        )
+        voter = self.create_participant(
+            'Courier Two',
+            Participant.Presence.ONLINE,
+            room=other_room,
+            game_marker='cloud-bell',
+        )
+        target = self.create_participant(
+            'Courier Three',
+            Participant.Presence.INACTIVE,
+            disconnected_at=timezone.now() - timedelta(seconds=61),
+            room=other_room,
+            game_marker='sunbeam',
+        )
+        vote = ExpulsionVote.objects.create(
+            room=other_room,
+            target=target,
+            initiated_by=caller,
+        )
+        ExpulsionBallot.objects.create(vote=vote, voter=caller)
+        ExpulsionBallot.objects.create(vote=vote, voter=voter)
+        self.register_participant_connection(voter)
+
+        response = self.cast_ballot(
+            {'vote_ref': str(vote.public_id)}, voter, 'no'
+        )
+
+        vote.refresh_from_db()
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(response.data['room']['game_id'], other_room.game_id)
+        self.assertEqual(response.data['vote']['status'], ExpulsionVote.Status.REJECTED)
+        self.assertEqual(vote.status, ExpulsionVote.Status.REJECTED)
+        self.assertIsNone(target.left_at)
 
     def test_joiner_after_vote_start_cannot_vote(self):
         response = self.start_vote()

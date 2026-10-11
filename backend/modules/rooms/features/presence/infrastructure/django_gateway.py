@@ -10,13 +10,17 @@ from ..domain.entities import PresenceParticipant
 
 class DjangoPresenceGateway:
     def active_membership(self, session_id):
-        participant = Participant.objects.select_related('room').filter(
-            session_id=session_id,
-            room__status=Room.Status.ACTIVE,
-            left_at__isnull=True,
-        ).first()
-        if participant is None:
+        participants = list(
+            Participant.objects.select_related('room')
+            .filter(
+                session_id=session_id,
+                room__status=Room.Status.ACTIVE,
+                left_at__isnull=True,
+            )[:2]
+        )
+        if len(participants) != 1:
             return None
+        participant = participants[0]
         return participant.room_id, str(participant.session_id)
 
     @contextmanager

@@ -18,7 +18,7 @@ from .ports import ExpulsionVotingPorts
 
 def start_vote(ports: ExpulsionVotingPorts, data):
     with ports.atomic():
-        room_id = ports.active_room_for_update()
+        room_id = ports.active_room_for_session_for_update(data['session_id'])
         if room_id is None:
             raise VotingNotFound('No hay ninguna sala activa.')
 
@@ -88,7 +88,7 @@ def start_vote(ports: ExpulsionVotingPorts, data):
 
 def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
     with ports.atomic():
-        room_id = ports.active_room_for_update()
+        room_id = ports.room_for_vote_for_update(vote_ref)
         if room_id is None:
             raise VotingNotFound('No hay ninguna sala activa.')
 

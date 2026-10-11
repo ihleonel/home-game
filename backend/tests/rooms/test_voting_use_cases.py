@@ -111,7 +111,7 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
         )
         vote = VoteRecord(41, uuid4(), 'pending', target.id, caller.id)
         ports = _ports(
-            active_room_for_update=12,
+            active_room_for_session_for_update=12,
             participant_for_session_for_update=caller,
             participant_for_public_ref_for_update=target,
             has_connection=deque((True, True, True)),
@@ -145,7 +145,7 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
         ballot = BallotRecord(51, None)
         now = _now()
         ports = _ports(
-            active_room_for_update=12,
+            room_for_vote_for_update=12,
             vote_for_public_ref_for_update=vote,
             participant_for_session_for_update=caller,
             has_connection=True,
@@ -181,7 +181,7 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
         caller, target = _participant(2), _participant(3, presence='online')
         vote = VoteRecord(41, uuid4(), 'pending', target.id, 1)
         ports = _ports(
-            active_room_for_update=12,
+            room_for_vote_for_update=12,
             vote_for_public_ref_for_update=vote,
             participant_for_session_for_update=caller,
             has_connection=True,

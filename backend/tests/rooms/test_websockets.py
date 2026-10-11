@@ -44,6 +44,104 @@ class RoomWebSocketTests(TransactionTestCase):
         self.assertEqual(close_code, 4401)
         self.assertTrue(Room.objects.filter(pk=room.pk).exists())
 
+    def test_socket_rejects_a_session_ambiguous_across_active_rooms(self):
+        first_room, participants = self.create_room_with_guests('Guest One')
+        other_room = Room.objects.create(game_id='cloud-couriers')
+        ambiguous_participant = Participant.objects.create(
+            room=other_room,
+            session_id=participants[0].session_id,
+            display_name='Courier One',
+            game_marker='wind-kite',
+        )
+
+        async def connect_with_ambiguous_token():
+            communicator = WebsocketCommunicator(
+                application,
+                self.websocket_path(participants[0].session_id),
+            )
+            result = await communicator.connect()
+            if result[0]:
+                await communicator.disconnect()
+            return result
+
+        connected, close_code = async_to_sync(connect_with_ambiguous_token)()
+
+        self.assertFalse(connected)
+        self.assertEqual(close_code, 4401)
+        participants[0].refresh_from_db()
+        ambiguous_participant.refresh_from_db()
+        self.assertEqual(participants[0].presence, Participant.Presence.OFFLINE)
+        self.assertEqual(
+            ambiguous_participant.presence, Participant.Presence.OFFLINE
+        )
+        self.assertTrue(Room.objects.filter(pk=first_room.pk).exists())
+
+    def test_room_events_and_snapshots_stay_isolated_between_games(self):
+        first_room, first_participants = self.create_room_with_guests('Garden Guest')
+        other_room = Room.objects.create(game_id='cloud-couriers')
+        other_participant = Participant.objects.create(
+            room=other_room,
+            display_name='Courier Guest',
+            game_marker='wind-kite',
+        )
+        client = APIClient()
+
+        async def connect_and_broadcast():
+            first_socket = WebsocketCommunicator(
+                application,
+                self.websocket_path(first_participants[0].session_id),
+            )
+            other_socket = WebsocketCommunicator(
+                application,
+                self.websocket_path(other_participant.session_id),
+            )
+            first_connected, _ = await first_socket.connect()
+            first_snapshot = await first_socket.receive_json_from()
+            await first_socket.receive_json_from()
+            other_connected, _ = await other_socket.connect()
+            other_snapshot = await other_socket.receive_json_from()
+            await other_socket.receive_json_from()
+
+            response = await database_sync_to_async(client.post)(
+                '/api/rooms/join/',
+                {
+                    'game_id': first_room.game_id,
+                    'display_name': 'Garden Guest Two',
+                    'game_marker': 'moonstone',
+                },
+                format='json',
+            )
+            first_event = await first_socket.receive_json_from()
+            self.assertTrue(await other_socket.receive_nothing(timeout=0.05))
+
+            await first_socket.disconnect()
+            await other_socket.disconnect()
+            return (
+                first_connected,
+                first_snapshot,
+                other_connected,
+                other_snapshot,
+                response,
+                first_event,
+            )
+
+        (
+            first_connected,
+            first_snapshot,
+            other_connected,
+            other_snapshot,
+            response,
+            first_event,
+        ) = async_to_sync(connect_and_broadcast)()
+
+        self.assertTrue(first_connected)
+        self.assertTrue(other_connected)
+        self.assertEqual(first_snapshot['room']['game_id'], first_room.game_id)
+        self.assertEqual(other_snapshot['room']['game_id'], other_room.game_id)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(first_event['type'], 'player_joined')
+        self.assertEqual(first_event['room']['game_id'], first_room.game_id)
+
     def test_connect_sends_snapshot_and_disconnect_starts_grace_without_deleting(self):
         room, participants = self.create_room_with_guests('Guest One')
         participant = participants[0]

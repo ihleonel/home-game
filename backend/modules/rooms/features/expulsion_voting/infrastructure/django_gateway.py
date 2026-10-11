@@ -16,11 +16,26 @@ class DjangoExpulsionVotingGateway:
         with transaction.atomic():
             yield self
 
-    def active_room_for_update(self):
-        room = Room.objects.select_for_update().filter(
-            status=Room.Status.ACTIVE
+    def active_room_for_session_for_update(self, session_id):
+        participants = list(
+            Participant.objects.select_for_update()
+            .select_related('room')
+            .filter(
+                session_id=session_id,
+                left_at__isnull=True,
+                room__status=Room.Status.ACTIVE,
+            )[:2]
+        )
+        if len(participants) != 1:
+            return None
+        return participants[0].room_id
+
+    def room_for_vote_for_update(self, vote_ref):
+        vote = ExpulsionVote.objects.select_for_update().filter(
+            public_id=vote_ref,
+            room__status=Room.Status.ACTIVE,
         ).first()
-        return room.pk if room else None
+        return vote.room_id if vote is not None else None
 
     def participant_for_session_for_update(self, room_id, session_id):
         participant = Participant.objects.select_for_update().filter(
