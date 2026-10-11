@@ -104,9 +104,12 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T
 }
 
-async function fetchActiveRoom(): Promise<Room | null> {
+async function fetchActiveRoom(gameId: string, sessionId?: string): Promise<Room | null> {
   try {
-    const response = await requestJson<RoomEnvelope>('/api/rooms/active/')
+    const query = new URLSearchParams(
+      sessionId ? { session_id: sessionId } : { game_id: gameId },
+    )
+    const response = await requestJson<RoomEnvelope>(`/api/rooms/active/?${query.toString()}`)
     return response.room
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return null
@@ -339,16 +342,9 @@ function App() {
       setIsLoading(true)
       setLoadError(null)
       try {
-        const [catalog, activeRoom] = await Promise.all([
-          requestJson<Game[]>('/api/games/'),
-          fetchActiveRoom(),
-        ])
+        const catalog = await requestJson<Game[]>('/api/games/')
         if (!isCurrent) return
         setGames(catalog)
-        setRoom(activeRoom)
-        setRoomSession((current) =>
-          current && current.gameId === activeRoom?.game_id ? current : null,
-        )
       } catch (error) {
         if (isCurrent) {
           setLoadError(
@@ -366,9 +362,9 @@ function App() {
     }
   }, [loadAttempt])
 
-  async function refreshActiveRoom(): Promise<void> {
+  async function refreshActiveRoom(gameId: string, sessionId?: string): Promise<void> {
     try {
-      const activeRoom = await fetchActiveRoom()
+      const activeRoom = await fetchActiveRoom(gameId, sessionId)
       setRoom(activeRoom)
       setRoomSession((current) =>
         current && current.gameId === activeRoom?.game_id ? current : null,
@@ -382,6 +378,10 @@ function App() {
 
   function selectGame(game: Game): void {
     if (membershipRequestPending.current) return
+    if (roomSession) {
+      setActionError('Sal de la sala actual antes de elegir otro juego.')
+      return
+    }
     const savedIdentity = readStoredIdentity(game)
     setIdentity(savedIdentity)
     setActionError(null)
@@ -413,6 +413,10 @@ function App() {
     guestIdentity: GuestIdentity,
   ): Promise<void> {
     if (membershipRequestPending.current) return
+    if (roomSession) {
+      setActionError('Sal de la sala actual antes de elegir otro juego.')
+      return
+    }
     const displayName = guestIdentity.displayName.trim()
     if (!displayName || !guestIdentity.gameMarker) {
       setActionError('Escribe un nombre y elige una ficha para continuar.')
@@ -457,7 +461,7 @@ function App() {
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'No se ha podido procesar la solicitud de sala.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
-        void refreshActiveRoom()
+        void refreshActiveRoom(game.id)
       }
     } finally {
       membershipRequestPending.current = false
@@ -495,7 +499,7 @@ function App() {
       setActionError(error instanceof Error ? error.message : 'No se ha podido actualizar tu estado de preparación.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         setRoomSession(null)
-        void refreshActiveRoom()
+        void refreshActiveRoom(roomSession.gameId, roomSession.sessionId)
       }
     } finally {
       setPendingAction(null)
@@ -513,13 +517,13 @@ function App() {
         body: JSON.stringify({ session_id: roomSession.sessionId }),
       })
       setRoomSession(null)
-      await refreshActiveRoom()
+      await refreshActiveRoom(roomSession.gameId)
     } catch (error) {
       leavingRef.current = false
       setActionError(error instanceof Error ? error.message : 'No se ha podido salir de la sala.')
       if (error instanceof ApiError && error.status === 404) {
         setRoomSession(null)
-        void refreshActiveRoom()
+        void refreshActiveRoom(roomSession.gameId)
       }
     } finally {
       setPendingAction(null)
@@ -543,7 +547,7 @@ function App() {
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'No se ha podido iniciar la votación.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
-        void refreshActiveRoom()
+        void refreshActiveRoom(roomSession.gameId)
       }
     } finally {
       setPendingAction(null)
@@ -570,7 +574,7 @@ function App() {
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'No se ha podido registrar tu voto.')
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
-        void refreshActiveRoom()
+        void refreshActiveRoom(roomSession.gameId)
       }
     } finally {
       setPendingAction(null)
@@ -657,7 +661,7 @@ function App() {
               current?.sessionId === guestSessionId ? null : current,
             )
             setConnectionError(error.message)
-            void fetchActiveRoom().then(setRoom).catch(() => undefined)
+            void fetchActiveRoom(gameId, guestSessionId).then(setRoom).catch(() => undefined)
             return
           }
           scheduleReconnect()
@@ -751,7 +755,7 @@ function App() {
       {voteNotice && <p className="message message-info" role="status">{voteNotice}</p>}
 
       {isLoading ? (
-        <p className="loading-message" role="status">Cargando juegos y sala…</p>
+        <p className="loading-message" role="status">Cargando juegos…</p>
       ) : loadError ? (
         <section className="empty-state">
           <h2>HomeGame no está disponible</h2>
@@ -764,7 +768,9 @@ function App() {
             Volver a intentarlo
           </button>
         </section>
-      ) : room ? (
+      ) : (
+        <>
+      {room && (
         <section className="room-panel" aria-labelledby="active-room-title">
           <div className="room-heading">
             <div>
@@ -932,12 +938,16 @@ function App() {
             </div>
           )}
         </section>
-      ) : (
+      )}
         <section className="catalog-section" aria-labelledby="catalog-title">
           <div className="section-intro">
             <p className="eyebrow">Catálogo de juegos</p>
             <h2 id="catalog-title">Elige a qué jugar</h2>
-            <p>La sala se abre cuando el primer jugador elige un juego.</p>
+            <p>
+              {roomSession
+                ? 'Sal de la sala actual antes de elegir otro juego.'
+                : 'La sala se abre cuando el primer jugador elige un juego.'}
+            </p>
           </div>
 
           {games.length > 0 ? (
@@ -956,7 +966,7 @@ function App() {
                   </div>
                   <button
                     className="button button-primary"
-                    disabled={busy}
+                    disabled={busy || Boolean(roomSession)}
                     onClick={() => selectGame(game)}
                     type="button"
                   >
@@ -970,6 +980,7 @@ function App() {
           )}
 
         </section>
+        </>
       )}
 
       {intent === 'create' && selectedGame && (
