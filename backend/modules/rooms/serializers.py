@@ -3,8 +3,8 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework import serializers
 
-from .catalog import GAMES_BY_ID
 from .constants import RECONNECT_GRACE_SECONDS
+from .features.catalog.domain.catalog import contains_game, contains_marker
 from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
 from .voting import expulsion_vote_snapshot
 
@@ -23,15 +23,13 @@ class RoomRequestSerializer(serializers.Serializer):
     game_marker = serializers.SlugField(max_length=64, required=False)
 
     def validate_game_id(self, value):
-        if value not in GAMES_BY_ID:
+        if not contains_game(value):
             raise serializers.ValidationError('Choose a game from the catalog.')
         return value
 
     def validate(self, attrs):
         marker = attrs.get('game_marker')
-        game = GAMES_BY_ID[attrs['game_id']]
-        marker_ids = {option['id'] for option in game['markers']}
-        if marker is not None and marker not in marker_ids:
+        if marker is not None and not contains_marker(attrs['game_id'], marker):
             raise serializers.ValidationError(
                 {'game_marker': 'Choose a marker for the selected game.'}
             )
