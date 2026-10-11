@@ -1,4 +1,4 @@
-.PHONY: up migrate test
+.PHONY: up migrate test stop
 
 up:
 	docker compose up -d --build
@@ -8,3 +8,6 @@ migrate:
 
 test:
 	docker compose exec backend python manage.py test tests
+
+stop:
+	docker compose stop
