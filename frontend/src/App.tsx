@@ -506,8 +506,28 @@ function App() {
     }
   }
 
+  async function resyncRoomReadiness(session: RoomSession): Promise<void> {
+    try {
+      const activeRoom = await fetchActiveRoom(session.gameId, session.sessionId)
+      if (!activeRoom) return
+      setRoom(activeRoom)
+      const participant = activeRoom.participants.find(
+        (entry) => entry.participant_ref === session.participantRef,
+      )
+      if (!participant || participant.is_ready === session.isReady) return
+      const nextSession = { ...session, isReady: participant.is_ready }
+      saveGuestSession(nextSession)
+      setRoomSession((current) =>
+        current?.sessionId === session.sessionId ? nextSession : current,
+      )
+    } catch {
+      // Keep the current session; the action error already explains the rejection.
+    }
+  }
+
   async function leaveRoom(): Promise<void> {
     if (!roomSession) return
+    if (roomSession.isReady) return
     leavingRef.current = true
     setPendingAction('leave')
     setActionError(null)
@@ -528,6 +548,8 @@ function App() {
         setRoom(null)
         setConnectionError(null)
         setVoteNotice(null)
+      } else if (error instanceof ApiError && error.status === 409) {
+        await resyncRoomReadiness(roomSession)
       }
     } finally {
       setPendingAction(null)
@@ -895,6 +917,11 @@ function App() {
                   </span>
                 </p>
               </div>
+              {roomSession.isReady && (
+                <p className="quiet-copy" id="ready-leave-hint">
+                  Mientras estés listo no puedes salir de la sala. Marca que no estás listo para poder irte.
+                </p>
+              )}
               <div className="action-buttons">
                 <button
                   aria-pressed={roomSession.isReady}
@@ -910,8 +937,9 @@ function App() {
                       : 'Marcar como listo'}
                 </button>
                 <button
+                  aria-describedby={roomSession.isReady ? 'ready-leave-hint' : undefined}
                   className="button button-quiet"
-                  disabled={busy}
+                  disabled={busy || roomSession.isReady}
                   onClick={() => void leaveRoom()}
                   type="button"
                 >
