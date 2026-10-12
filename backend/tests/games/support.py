@@ -119,6 +119,28 @@ class FakeStore:
         )
 
 
+class FakeLifecycle:
+    """``MatchLifecycle`` that records every finish hook and can be told to fail.
+
+    Records ``on_match_finished`` on the shared :class:`CallLog`, so a test can
+    assert the hook ran at unit-of-work depth ``1`` and in order relative to
+    ``save``. Setting ``fail`` makes the next call raise, so a test can prove a
+    hook failure rolls the finishing action back instead of leaving a
+    half-finished state.
+    """
+
+    def __init__(self, log=None):
+        self.log = log if log is not None else CallLog()
+        self.calls = []
+        self.fail = None
+
+    def on_match_finished(self, *, match_ref, room_id):
+        self.log.record('on_match_finished')
+        self.calls.append({'match_ref': match_ref, 'room_id': room_id})
+        if self.fail is not None:
+            raise self.fail
+
+
 class FakeProjector:
     """``MatchProjector`` that records every publish.
 

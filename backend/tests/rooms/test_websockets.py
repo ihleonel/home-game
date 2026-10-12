@@ -19,7 +19,11 @@ from modules.games.runtime.infrastructure.channel_projector import (
 )
 from modules.games.runtime.infrastructure.django_store import DjangoMatchStore
 from modules.rooms.models import Participant, Room
-from tests.games.support import SCOPING_GAME_ID, SCOPING_GAME_MARKERS
+from tests.games.support import (
+    FakeLifecycle,
+    SCOPING_GAME_ID,
+    SCOPING_GAME_MARKERS,
+)
 
 
 class RoomWebSocketTests(TransactionTestCase):
@@ -57,7 +61,13 @@ class RoomWebSocketTests(TransactionTestCase):
         )
 
     def submit_for(self, match_ref, participant, value, expected_version):
-        """Drive one real action through the match runtime."""
+        """Drive one real action through the match runtime.
+
+        The lifecycle is the shared recording fake rather than the real room
+        adapter: finishing a match would otherwise broadcast a room-level
+        event to these sockets, and this module is about match groups, not
+        the room reset that the games API suite already exercises.
+        """
         return submit_action(
             match_ref=match_ref,
             participant_ref=str(participant.public_id),
@@ -67,6 +77,7 @@ class RoomWebSocketTests(TransactionTestCase):
             store=DjangoMatchStore(),
             registry=GAME_REGISTRY,
             projector=ChannelMatchProjector(),
+            lifecycle=FakeLifecycle(),
         )
 
     async def connect_two_guests_in_a_match(self, room, participants):

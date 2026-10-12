@@ -17,10 +17,31 @@ from dataclasses import dataclass
 from ...rooms.features.presence.infrastructure.django_gateway import (
     DjangoPresenceGateway,
 )
+from ...rooms.features.readiness.application.use_cases import reset_readiness
+from ...rooms.features.readiness.infrastructure.django_gateway import (
+    DjangoReadinessGateway,
+)
 from ..composition import GAME_REGISTRY
 from ..registry import GameRegistry
 from ..runtime.infrastructure.channel_projector import ChannelMatchProjector
 from ..runtime.infrastructure.django_store import DjangoMatchStore
+
+
+class DjangoMatchLifecycle:
+    """``MatchLifecycle`` adapter over the rooms readiness slice.
+
+    Finishing a match has a room-level consequence in this product, so the
+    runtime reaches it through the port instead of importing ``rooms``; this
+    adapter is where that consequence is actually applied.
+    """
+
+    def __init__(self, readiness=None):
+        self._readiness = (
+            readiness if readiness is not None else DjangoReadinessGateway()
+        )
+
+    def on_match_finished(self, *, match_ref, room_id):
+        reset_readiness(self._readiness, room_id)
 
 
 @dataclass(frozen=True)
@@ -31,6 +52,7 @@ class MatchDependencies:
     projector: ChannelMatchProjector
     registry: GameRegistry
     presence: DjangoPresenceGateway
+    lifecycle: DjangoMatchLifecycle
 
 
 def compose_match_dependencies():
@@ -40,4 +62,5 @@ def compose_match_dependencies():
         projector=ChannelMatchProjector(),
         registry=GAME_REGISTRY,
         presence=DjangoPresenceGateway(),
+        lifecycle=DjangoMatchLifecycle(),
     )

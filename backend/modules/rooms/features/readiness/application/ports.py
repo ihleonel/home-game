@@ -15,6 +15,10 @@ class ReadinessPorts(Protocol):
 
     def save_readiness(self, participant_id: int, is_ready: bool) -> None: ...
 
+    def reset_room_readiness(self, room_id: int) -> None:
+        """Set every participant of ``room_id`` who has not left to not ready."""
+        ...
+
     def room_snapshot(self, room_id: int) -> dict: ...
 
     def schedule_room_event(

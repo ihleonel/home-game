@@ -273,6 +273,49 @@ class SubmitActionApiTests(MatchApiTestCase):
         self.assert_error(response, status.HTTP_400_BAD_REQUEST, 'illegal_action')
 
 
+class MatchFinishResetsReadinessApiTests(MatchApiTestCase):
+    def test_finishing_a_match_resets_readiness_and_unblocks_leaving(self):
+        match_ref = self.start_match().data['match_ref']
+
+        # The dead end this unit closes: while both seats are ready, leaving
+        # the room is refused with 409.
+        blocked = self.client.post(
+            '/api/rooms/leave/',
+            {'session_id': str(self.first.session_id)},
+            format='json',
+        )
+        self.assertEqual(blocked.status_code, status.HTTP_409_CONFLICT)
+
+        # Seat 0 takes both rounds 2-0 through the real API.
+        for participant, value, version in (
+            (self.first, 'rock', 0),
+            (self.second, 'scissors', 1),
+            (self.first, 'rock', 2),
+            (self.second, 'scissors', 3),
+        ):
+            response = self.submit_action(
+                match_ref, participant, value=value, version=version
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'finished')
+
+        self.first.refresh_from_db()
+        self.second.refresh_from_db()
+        self.assertFalse(self.first.is_ready)
+        self.assertFalse(self.second.is_ready)
+
+        # The user-facing proof that the dead end is gone: the same leave that
+        # was a 409 while ready now succeeds.
+        left = self.client.post(
+            '/api/rooms/leave/',
+            {'session_id': str(self.first.session_id)},
+            format='json',
+        )
+        self.assertEqual(left.status_code, status.HTTP_204_NO_CONTENT)
+        self.first.refresh_from_db()
+        self.assertIsNotNone(self.first.left_at)
+
+
 class ResyncApiTests(MatchApiTestCase):
     def setUp(self):
         super().setUp()

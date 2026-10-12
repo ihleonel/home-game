@@ -26,6 +26,7 @@ def submit_action(
     store,
     registry,
     projector,
+    lifecycle,
     rng=None,
 ) -> MatchRecord:
     """Validate and apply one action, then publish the resulting views.
@@ -40,7 +41,30 @@ def submit_action(
     adapter serializes on the match row; otherwise two simultaneous actors
     both read version N, both pass the gate and one action is silently lost.
     A rejection rolls back an otherwise empty transaction, which is harmless.
+
+    When the action finishes the match, ``lifecycle.on_match_finished`` runs
+    inside that same unit of work, after the save and the audit row: the finish
+    and the room-level reset are one atomic outcome, and a reset failure aborts
+    the action instead of leaving a half-finished match. ``lifecycle`` is a
+    required part of finishing a match, not an optional extra: with no default,
+    a caller that forgets it fails loudly at the call site instead of silently
+    skipping the reset and leaving the post-match lobby a dead end. That
+    requirement is still not enough on its own, because ``None`` is a value a
+    caller can pass explicitly: the body rejects it up front with the same
+    ``TypeError`` a missing argument raises, so neither mistake can quietly
+    skip the reset.
     """
+    if lifecycle is None:
+        # ``lifecycle`` is required, but a required parameter only stops a
+        # caller from *omitting* it -- ``None`` is still a value they can pass,
+        # and treating it as "no hook" would silently skip the post-match
+        # readiness reset. Fail loudly, before any lookup or gate, for every
+        # action, with the same ``TypeError`` a missing argument produces.
+        raise TypeError(
+            "submit_action() 'lifecycle' must be provided; passing None would "
+            "silently skip the post-match readiness reset"
+        )
+
     with store.unit_of_work():
         record = store.load(match_ref)
         if record is None:
@@ -102,6 +126,12 @@ def submit_action(
             action=action,
             facts=facts,
         )
+
+        if status == 'finished':
+            lifecycle.on_match_finished(
+                match_ref=next_record.match_ref,
+                room_id=next_record.room_id,
+            )
 
     projector.publish(
         event=event,

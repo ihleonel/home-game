@@ -302,6 +302,7 @@ def submit_action_view(request, match_ref):
             store=dependencies.store,
             registry=dependencies.registry,
             projector=dependencies.projector,
+            lifecycle=dependencies.lifecycle,
         )
     except match_errors.MatchError as error:
         translate_match_error(error)

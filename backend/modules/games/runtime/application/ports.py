@@ -134,6 +134,33 @@ class MatchStore(Protocol):
         ...
 
 
+class MatchLifecycle(Protocol):
+    """Room-level consequences of finishing a match.
+
+    Finishing a match is not only a match concern in this product: the room
+    returns to its lobby with readiness reset so a rematch is possible (D7).
+    That consequence lives in ``rooms``, and the runtime must reach it through
+    this port rather than importing ``rooms``: the runtime's application layer
+    is framework-free, and the adapter built in the interface composition root
+    owns how a room's readiness is reset.
+
+    The hook is a required part of finishing a match, not an optional extra:
+    ``submit_action`` takes it with no default, so a caller that omits it fails
+    at the call site rather than silently skipping the reset.
+    """
+
+    def on_match_finished(self, *, match_ref: str, room_id: int) -> None:
+        """Apply the room-level consequence of ``match_ref`` finishing.
+
+        Called exactly once, from inside the unit of work that saves the
+        finished match, so the finish and the reset are one atomic outcome:
+        either both happen or neither does. Raising aborts the action instead
+        of leaving a half-finished state. The hook is a required part of
+        finishing a match; callers cannot opt out by omitting it.
+        """
+        ...
+
+
 class MatchProjector(Protocol):
     """Projection port for match events."""
 

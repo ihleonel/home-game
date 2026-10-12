@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 
 from django.db import transaction
+from django.utils import timezone
 
 from ....infrastructure.events import room_snapshot, schedule_room_event
 from ....models import Participant, Room
@@ -41,6 +42,12 @@ class DjangoReadinessGateway:
         participant = Participant.objects.select_for_update().get(pk=participant_id)
         participant.is_ready = is_ready
         participant.save(update_fields=('is_ready', 'updated_at'))
+
+    def reset_room_readiness(self, room_id):
+        Participant.objects.filter(
+            room_id=room_id,
+            left_at__isnull=True,
+        ).update(is_ready=False, updated_at=timezone.now())
 
     def room_snapshot(self, room_id):
         return room_snapshot(Room.objects.get(pk=room_id))

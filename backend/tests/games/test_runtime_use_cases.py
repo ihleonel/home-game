@@ -27,6 +27,7 @@ from modules.games.runtime.domain.errors import (
 from tests.games.support import (
     CallLog,
     FakeDefinition,
+    FakeLifecycle,
     FakeNoOptionDefinition,
     FakeProjector,
     FakeStore,
@@ -126,6 +127,7 @@ class SubmitActionTests(SimpleTestCase):
         self.log = CallLog()
         self.store = FakeStore(self.log)
         self.projector = FakeProjector(self.log)
+        self.lifecycle = FakeLifecycle(self.log)
         self.record = start_match(
             room_id=7,
             game_id='fake-game',
@@ -146,6 +148,7 @@ class SubmitActionTests(SimpleTestCase):
             'store': self.store,
             'registry': self.registry,
             'projector': self.projector,
+            'lifecycle': self.lifecycle,
         }
         kwargs.update(overrides)
         return submit_action(**kwargs)
@@ -278,6 +281,7 @@ class SubmitActionTests(SimpleTestCase):
                 store=store,
                 registry=registry,
                 projector=projector,
+                lifecycle=FakeLifecycle(),
             )
 
         self.assertEqual(definition.apply_calls, [])
@@ -383,6 +387,117 @@ class SubmitActionTests(SimpleTestCase):
 
         self.assertIs(self.definition.apply_calls[-1][3], sentinel)
 
+    def test_lifecycle_is_required_so_a_caller_cannot_skip_the_reset(self):
+        """Omitting ``lifecycle`` is a loud error; the missing default is the point.
+
+        Finishing a match resets the room's readiness so the post-match lobby
+        stops being a dead end, and a caller that forgets the hook would
+        silently skip that consequence. The signature therefore carries no
+        ``lifecycle`` default, and the absence of that default is itself the
+        behaviour under test: calling without the argument must raise
+        ``TypeError`` at the call site. Restoring a ``lifecycle=None`` default
+        makes this test fail, which is how the regression is caught.
+        """
+        kwargs = {
+            'match_ref': self.record.match_ref,
+            'participant_ref': 'p0',
+            'action_name': 'bid',
+            'action_value': 'high',
+            'expected_version': self.record.version,
+            'store': self.store,
+            'registry': self.registry,
+            'projector': self.projector,
+        }
+
+        with self.assertRaises(TypeError):
+            submit_action(**kwargs)
+
+    def test_explicit_none_lifecycle_is_rejected(self):
+        """Passing ``None`` explicitly must fail just like omitting it.
+
+        ``lifecycle`` is required, but ``None`` is still a value a caller can
+        pass, and the body must not treat it as "no hook". The call site has
+        to fail loudly instead of silently skipping the post-match readiness
+        reset.
+        """
+        with self.assertRaises(TypeError):
+            self._submit(lifecycle=None)
+
+    def test_explicit_none_lifecycle_is_rejected_before_any_state_change(self):
+        """An explicit ``None`` must fail for every action, not only a finish.
+
+        The action used here leaves the match in progress, so a check that
+        lived only on the finish path would never fire. The check runs up
+        front, before any lookup or gate, so the store is untouched.
+        """
+        before = self.store.records[self.record.match_ref]
+        uow_before = self.store.uow_entries
+        self.store.calls.clear()
+
+        with self.assertRaises(TypeError):
+            self._submit(lifecycle=None)
+
+        self.assertEqual(self.store.records[self.record.match_ref], before)
+        self.assertEqual(self.store.actions, [])
+        self.assertEqual(self.store.uow_entries, uow_before)
+        self.assertEqual(self.definition.apply_calls, [])
+        self.assertEqual(self.store.calls, [])
+
+    def test_finishing_action_calls_the_lifecycle_hook_with_match_and_room(self):
+        self._finish()
+
+        self.assertEqual(
+            self.lifecycle.calls,
+            [{'match_ref': self.record.match_ref, 'room_id': 7}],
+        )
+
+    def test_action_that_leaves_the_match_in_progress_calls_no_hook(self):
+        self._submit(participant_ref='p0', action_value='high')
+
+        self.assertEqual(self.lifecycle.calls, [])
+
+    def test_rejected_action_calls_no_hook(self):
+        with self.assertRaises(StaleVersion):
+            self._submit(expected_version=99)
+
+        self.assertEqual(self.lifecycle.calls, [])
+
+    def test_finishing_action_calls_the_hook_inside_the_unit_of_work(self):
+        # The finish and the room-level reset must be one atomic outcome, so
+        # the hook runs before the transaction closes, at depth 1.
+        first = self._submit(participant_ref='p0', action_value='high')
+        self.store.calls.clear()
+
+        self._submit(
+            participant_ref='p1',
+            action_value='low',
+            expected_version=first.version,
+        )
+
+        names = [name for name, _ in self.store.calls]
+        self.assertIn('on_match_finished', names)
+        hook_index = names.index('on_match_finished')
+        self.assertEqual(self.store.calls[hook_index][1], 1)
+        self.assertLess(hook_index, names.index('uow_exit'))
+
+    def test_hook_failure_rolls_the_finish_back(self):
+        first = self._submit(participant_ref='p0', action_value='high')
+        before = self.store.records[self.record.match_ref]
+        actions_before = list(self.store.actions)
+        self.lifecycle.fail = RuntimeError('readiness reset failed')
+
+        with self.assertRaises(RuntimeError):
+            self._submit(
+                participant_ref='p1',
+                action_value='low',
+                expected_version=first.version,
+            )
+
+        after = self.store.records[self.record.match_ref]
+        self.assertEqual(after, before)
+        self.assertEqual(after.status, 'in_progress')
+        self.assertEqual(self.store.actions, actions_before)
+
 
 class ApplicationPackageTests(SimpleTestCase):
     def test_seat_views_is_imported_from_the_views_module(self):
@@ -468,4 +583,5 @@ class RealDueloRuntimeTests(SimpleTestCase):
             store=store,
             registry=registry,
             projector=projector,
+            lifecycle=FakeLifecycle(),
         )

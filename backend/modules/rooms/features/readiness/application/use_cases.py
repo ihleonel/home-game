@@ -22,3 +22,17 @@ def set_ready_state(ports: ReadinessPorts, data):
             room_id, 'ready_changed', ports.room_snapshot(room_id)
         )
     return response
+
+
+def reset_readiness(ports: ReadinessPorts, room_id: int) -> None:
+    """Return a room to its lobby when its match finishes.
+
+    Every participant who has not left goes back to not ready, so the roster
+    must re-confirm before a rematch and, above all, nobody is trapped in the
+    room by the rule that a ready participant cannot leave.
+    """
+    with ports.atomic():
+        ports.reset_room_readiness(room_id)
+        ports.schedule_room_event(
+            room_id, 'ready_changed', ports.room_snapshot(room_id)
+        )
