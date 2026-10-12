@@ -13,7 +13,7 @@ which demands an open transaction.
 """
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import APIException
@@ -195,31 +195,43 @@ def _participant_payload(record, definition, seat_index):
 
 @api_view(['POST'])
 def start_match_view(request):
-    """Start a match in the caller's room from its ready participants."""
+    """Start a match in the caller's room from its ready participants.
+
+    The room is reaped before the seats are resolved, inside the same atomic
+    block as the seat read, so a ready participant who disconnected past the
+    grace window cannot occupy a seat. The runtime's own transaction starts
+    only after this block closes, so it is never nested here.
+    """
     data = _validated(StartMatchSerializer, request.data)
     dependencies = compose_match_dependencies()
-    room = _active_room(dependencies.presence, data['session_id'])
-    if room is None:
-        raise ActiveRoomNotFoundProblem()
+    with transaction.atomic():
+        room = _active_room(dependencies.presence, data['session_id'])
+        if room is None:
+            raise ActiveRoomNotFoundProblem()
 
-    if Match.objects.filter(
-        room_id=room.id, status=Match.Status.IN_PROGRESS
-    ).exists():
-        raise MatchInProgressProblem()
+        # Reap first: the seat query below must read post-reap state, so a
+        # ghost-ready membership is gone before seats are enumerated.
+        dependencies.reaping.reap(room_id=room.id)
 
-    # The seats are the room's own active participants that are ready, ordered
-    # by join time. Nothing is taken from the request body, so an unvalidated
-    # participant reference can never reach ``DjangoMatchStore.create``.
-    participants = list(
-        Participant.objects.filter(
-            room_id=room.id, left_at__isnull=True, is_ready=True
-        ).order_by('joined_at', 'pk')
-    )
-    requester = _request_participant(room.id, data['session_id'])
-    seats = [
-        (index, str(participant.public_id), participant.game_marker)
-        for index, participant in enumerate(participants)
-    ]
+        if Match.objects.filter(
+            room_id=room.id, status=Match.Status.IN_PROGRESS
+        ).exists():
+            raise MatchInProgressProblem()
+
+        # The seats are the room's own active participants that are ready,
+        # ordered by join time. Nothing is taken from the request body, so an
+        # unvalidated participant reference can never reach
+        # ``DjangoMatchStore.create``.
+        participants = list(
+            Participant.objects.filter(
+                room_id=room.id, left_at__isnull=True, is_ready=True
+            ).order_by('joined_at', 'pk')
+        )
+        requester = _request_participant(room.id, data['session_id'])
+        seats = [
+            (index, str(participant.public_id), participant.game_marker)
+            for index, participant in enumerate(participants)
+        ]
 
     try:
         record = start_match(

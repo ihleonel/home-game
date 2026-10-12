@@ -10,6 +10,10 @@ this module and nowhere else.
 ``presence`` is the existing rooms machinery reused to resolve a session to its
 active room: the games API asks the rooms module for the room instead of
 running a second session-to-room query.
+
+``reaping`` is reused from the rooms composition root for the same reason: the
+match-start path must remove a ghost-ready membership before it resolves the
+seats, and it must do so with the one grace window the rooms module owns.
 """
 
 from dataclasses import dataclass
@@ -21,6 +25,8 @@ from ...rooms.features.readiness.application.use_cases import reset_readiness
 from ...rooms.features.readiness.infrastructure.django_gateway import (
     DjangoReadinessGateway,
 )
+from ...rooms.features.reaping.application.service import ReapingService
+from ...rooms.interfaces.composition import compose_room_dependencies
 from ..composition import GAME_REGISTRY
 from ..registry import GameRegistry
 from ..runtime.infrastructure.channel_projector import ChannelMatchProjector
@@ -53,6 +59,7 @@ class MatchDependencies:
     registry: GameRegistry
     presence: DjangoPresenceGateway
     lifecycle: DjangoMatchLifecycle
+    reaping: ReapingService
 
 
 def compose_match_dependencies():
@@ -63,4 +70,7 @@ def compose_match_dependencies():
         registry=GAME_REGISTRY,
         presence=DjangoPresenceGateway(),
         lifecycle=DjangoMatchLifecycle(),
+        # Reuse the rooms composition root instead of re-binding the grace
+        # constant here: the reaping service must resolve the window once.
+        reaping=compose_room_dependencies().reaping,
     )

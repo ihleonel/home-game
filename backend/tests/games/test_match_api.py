@@ -11,7 +11,9 @@ action without parsing the Spanish prose.
 """
 
 import uuid
+from datetime import timedelta
 
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -44,6 +46,25 @@ class MatchApiTestCase(APITestCase):
             game_marker=marker,
             is_ready=is_ready,
         )
+
+    def disconnect(
+        self,
+        participant,
+        *,
+        presence=Participant.Presence.INACTIVE,
+        seconds_ago=61,
+    ):
+        """Mark ``participant`` as disconnected for the given grace offset.
+
+        The default 61s is past the 60s reconnect grace, so the row is stale
+        and reapable; a smaller ``seconds_ago`` keeps it inside the window.
+        """
+        participant.presence = presence
+        participant.disconnected_at = timezone.now() - timedelta(
+            seconds=seconds_ago
+        )
+        participant.save(update_fields=('presence', 'disconnected_at'))
+        return participant
 
     def start_match(self, participant=None):
         return self.client.post(
@@ -189,6 +210,96 @@ class StartMatchApiTests(MatchApiTestCase):
         )
 
         self.assert_error(response, status.HTTP_404_NOT_FOUND, 'active_room_not_found')
+
+
+class GhostReadyParticipantApiTests(MatchApiTestCase):
+    """A ready participant who closed the tab must not take a seat.
+
+    Seats come from ``left_at IS NULL AND is_ready=True``, and ``disconnect``
+    never clears readiness, so a stale ready row used to be seated from index
+    0. The reaping pass inside ``start_match_view`` must remove it before the
+    seats are resolved.
+    """
+
+    def test_a_ghost_ready_participant_leaves_only_the_live_player_ready(self):
+        # The only other ready participant is the ghost, so after the reap the
+        # room has a single ready player and the start must fail honestly
+        # instead of seating a phantom.
+        self.disconnect(self.second)
+
+        response = self.start_match(self.first)
+
+        self.assert_error(
+            response, status.HTTP_409_CONFLICT, 'wrong_seat_count', contains='1'
+        )
+        self.assertIn('2', str(response.data['detail']))
+        self.assertFalse(Match.objects.exists())
+        self.assertFalse(MatchSeat.objects.exists())
+        self.second.refresh_from_db()
+        self.assertIsNotNone(self.second.left_at)
+        self.assertFalse(self.second.is_ready)
+
+    def test_a_ghost_ready_participant_never_becomes_a_seat(self):
+        ghost = self.create_participant('Ghost', 'guante-fantasma')
+        self.disconnect(ghost, presence=Participant.Presence.RECONNECTING)
+
+        response = self.start_match(self.first)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        seat_refs = [seat['participant_ref'] for seat in response.data['seats']]
+        self.assertEqual(
+            seat_refs,
+            [str(self.first.public_id), str(self.second.public_id)],
+        )
+        self.assertNotIn(str(ghost.public_id), seat_refs)
+        match = Match.objects.get()
+        self.assertFalse(
+            MatchSeat.objects.filter(match=match, participant=ghost).exists()
+        )
+        ghost.refresh_from_db()
+        self.assertIsNotNone(ghost.left_at)
+        self.assertFalse(ghost.is_ready)
+
+    def test_a_ready_participant_inside_the_grace_window_is_kept(self):
+        inside = self.create_participant('Inside', 'guante-ambar')
+        self.disconnect(inside, seconds_ago=30)
+
+        response = self.start_match(self.first)
+
+        # Three ready rows still reach the seat check, so the existing honest
+        # count rejection is unchanged for a participant inside the grace.
+        self.assert_error(response, status.HTTP_409_CONFLICT, 'wrong_seat_count')
+        self.assertFalse(Match.objects.exists())
+        inside.refresh_from_db()
+        self.assertIsNotNone(inside.disconnected_at)
+        self.assertTrue(inside.is_ready)
+        self.assertIsNone(inside.left_at)
+
+
+class GhostFirstSeatOrderApiTests(MatchApiTestCase):
+    """The ghost that joined first would otherwise occupy seat 0."""
+
+    def setUp(self):
+        self.room = Room.objects.create(game_id='duelo')
+        self.ghost = self.create_participant('Ghost First', 'guante-fantasma')
+        self.disconnect(self.ghost)
+        self.first = self.create_participant('Guest One', 'guante-rojo')
+        self.second = self.create_participant('Guest Two', 'guante-azul')
+
+    def test_the_reaped_ghost_does_not_push_the_live_players_off_seat_zero(self):
+        response = self.start_match(self.first)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            [seat['participant_ref'] for seat in response.data['seats']],
+            [str(self.first.public_id), str(self.second.public_id)],
+        )
+        self.assertFalse(
+            MatchSeat.objects.filter(participant=self.ghost).exists()
+        )
+        self.ghost.refresh_from_db()
+        self.assertIsNotNone(self.ghost.left_at)
+        self.assertFalse(self.ghost.is_ready)
 
 
 class SubmitActionApiTests(MatchApiTestCase):
