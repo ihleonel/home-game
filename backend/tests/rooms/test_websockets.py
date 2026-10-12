@@ -19,16 +19,17 @@ from modules.games.runtime.infrastructure.channel_projector import (
 )
 from modules.games.runtime.infrastructure.django_store import DjangoMatchStore
 from modules.rooms.models import Participant, Room
+from tests.games.support import SCOPING_GAME_ID, SCOPING_GAME_MARKERS
 
 
 class RoomWebSocketTests(TransactionTestCase):
     def create_room_with_guests(self, *names):
-        room = Room.objects.create(game_id='starlight-garden')
+        room = Room.objects.create(game_id='duelo')
         participants = [
             Participant.objects.create(
                 room=room,
                 display_name=name,
-                game_marker='silver-leaf',
+                game_marker='guante-rojo',
             )
             for name in names
         ]
@@ -117,12 +118,12 @@ class RoomWebSocketTests(TransactionTestCase):
 
     def test_socket_rejects_a_session_ambiguous_across_active_rooms(self):
         first_room, participants = self.create_room_with_guests('Guest One')
-        other_room = Room.objects.create(game_id='cloud-couriers')
+        other_room = Room.objects.create(game_id=SCOPING_GAME_ID)
         ambiguous_participant = Participant.objects.create(
             room=other_room,
             session_id=participants[0].session_id,
             display_name='Courier One',
-            game_marker='wind-kite',
+            game_marker=SCOPING_GAME_MARKERS[0],
         )
 
         async def connect_with_ambiguous_token():
@@ -149,11 +150,11 @@ class RoomWebSocketTests(TransactionTestCase):
 
     def test_room_events_and_snapshots_stay_isolated_between_games(self):
         first_room, first_participants = self.create_room_with_guests('Garden Guest')
-        other_room = Room.objects.create(game_id='cloud-couriers')
+        other_room = Room.objects.create(game_id=SCOPING_GAME_ID)
         other_participant = Participant.objects.create(
             room=other_room,
             display_name='Courier Guest',
-            game_marker='wind-kite',
+            game_marker=SCOPING_GAME_MARKERS[0],
         )
         client = APIClient()
 
@@ -178,7 +179,7 @@ class RoomWebSocketTests(TransactionTestCase):
                 {
                     'game_id': first_room.game_id,
                     'display_name': 'Garden Guest Two',
-                    'game_marker': 'moonstone',
+                    'game_marker': 'guante-azul',
                 },
                 format='json',
             )
@@ -265,7 +266,7 @@ class RoomWebSocketTests(TransactionTestCase):
                 {
                     'game_id': room.game_id,
                     'display_name': 'Guest Two',
-                    'game_marker': 'moonstone',
+                    'game_marker': 'guante-azul',
                 },
             )
             create_event = await communicator.receive_json_from()
@@ -277,7 +278,7 @@ class RoomWebSocketTests(TransactionTestCase):
                 {
                     'game_id': room.game_id,
                     'display_name': 'Guest Three',
-                    'game_marker': 'night-bloom',
+                    'game_marker': 'guante-verde',
                 },
             )
             join_event = await communicator.receive_json_from()

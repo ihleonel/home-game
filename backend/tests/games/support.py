@@ -2,7 +2,16 @@
 
 from contextlib import contextmanager
 
-from modules.games.contracts import ActionSpec, Fact, Outcome, Transition, seat_id
+from modules.games.contracts import (
+    ActionSpec,
+    Fact,
+    Outcome,
+    SeatOption,
+    Transition,
+    seat_id,
+)
+from modules.games.duelo.game import DueloDefinition
+from modules.games.registry import GameRegistry
 from modules.games.runtime.application.ports import MatchRecord
 
 _BID_RANK = {'low': 0, 'high': 1}
@@ -209,3 +218,38 @@ class FakeNoOptionDefinition(FakeDefinition):
             state={**state, 'bids': {**state['bids'], seat: action.value}},
             facts=(Fact(name='pass_recorded', seat=seat, detail={}),),
         )
+
+
+class SecondScopingGame:
+    """A second game declared **only** so tests can prove per-game scoping.
+
+    Only one real game (``duelo``) is registered in production, but the room and
+    match isolation tests need two distinct registered games to show that rooms,
+    memberships, active-room lookups and seat subscriptions stay scoped to a
+    single ``game_id``. This definition implements only the members the room
+    serializer reads, is never registered in production, and therefore ships no
+    fake game.
+    """
+
+    game_id = 'scoping-test-game'
+    label = 'Scoping test game'
+    description = 'Second game declared in tests to prove per-game scoping.'
+    min_seats = 1
+    max_seats = 2
+    seat_options = (
+        SeatOption(id='scoping-badge-a', label='Scoping badge A'),
+        SeatOption(id='scoping-badge-b', label='Scoping badge B'),
+        SeatOption(id='scoping-badge-c', label='Scoping badge C'),
+    )
+
+
+SCOPING_GAME = SecondScopingGame()
+
+# The id and markers used wherever a module only needs a *different* valid game.
+SCOPING_GAME_ID = SCOPING_GAME.game_id
+SCOPING_GAME_MARKERS = tuple(option.id for option in SCOPING_GAME.seat_options)
+
+# Real ``duelo`` plus the test-only second game, for patching the room
+# serializer's registry in tests that exercise two games through the REST API.
+SCOPING_TEST_REGISTRY = GameRegistry((DueloDefinition(), SCOPING_GAME))
+SCOPING_TEST_GAMES = SCOPING_TEST_REGISTRY.list_games()

@@ -1,10 +1,7 @@
 from django.test import SimpleTestCase, TestCase
 from django.utils import translation
 
-from modules.rooms.catalog import GAMES, GAMES_BY_ID
 from modules.rooms.events import room_snapshot
-from modules.rooms.features.catalog.application.use_cases import list_games
-from modules.rooms.features.catalog.domain.catalog import contains_game, contains_marker
 from modules.rooms.features.membership.domain.rules import (
     is_disconnected_presence,
     membership_change,
@@ -14,36 +11,7 @@ from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Ro
 from modules.rooms.serializers import RoomRequestSerializer, RoomSerializer
 
 
-class CatalogSliceTests(SimpleTestCase):
-    def test_static_catalog_is_owned_by_feature_and_compatibility_exports_are_stable(self):
-        self.assertEqual(list(GAMES_BY_ID), [game['id'] for game in GAMES])
-        self.assertTrue(contains_game(GAMES[0]['id']))
-        self.assertTrue(contains_marker(GAMES[0]['id'], GAMES[0]['markers'][0]['id']))
-        self.assertFalse(contains_marker(GAMES[0]['id'], GAMES[1]['markers'][0]['id']))
-
-    def test_list_games_uses_catalog_port(self):
-        catalog = _CatalogStub()
-
-        self.assertEqual(list_games(catalog), catalog.games)
-
-    def test_display_copy_is_spanish_without_changing_catalog_identifiers(self):
-        self.assertEqual(
-            [game['id'] for game in GAMES],
-            ['starlight-garden', 'cloud-couriers', 'amber-islands'],
-        )
-        self.assertEqual(
-            [game['label'] for game in GAMES],
-            ['Jardín estrellado', 'Mensajeros de las nubes', 'Islas de ámbar'],
-        )
-        self.assertEqual(
-            [marker['id'] for marker in GAMES[0]['markers']],
-            ['silver-leaf', 'moonstone', 'night-bloom'],
-        )
-        self.assertEqual(
-            [marker['label'] for marker in GAMES[0]['markers']],
-            ['Hoja plateada', 'Piedra lunar', 'Flor nocturna'],
-        )
-
+class RoomRequestSerializerTests(SimpleTestCase):
     def test_framework_validation_messages_use_spanish(self):
         with translation.override('es-es'):
             serializer = RoomRequestSerializer(data={})
@@ -62,7 +30,7 @@ class MembershipDomainTests(SimpleTestCase):
             was_left=True,
             was_disconnected=True,
             current_display_name='Guest',
-            current_game_marker='silver-leaf',
+            current_game_marker='badge-a',
             data={'display_name': 'Guest Updated'},
         )
 
@@ -82,8 +50,8 @@ class MembershipDomainTests(SimpleTestCase):
             was_left=False,
             was_disconnected=False,
             current_display_name='Guest',
-            current_game_marker='silver-leaf',
-            data={'display_name': 'Guest', 'game_marker': 'silver-leaf'},
+            current_game_marker='badge-a',
+            data={'display_name': 'Guest', 'game_marker': 'badge-a'},
         )
 
         self.assertEqual(change.updates, ())
@@ -104,17 +72,17 @@ class ReadinessDomainTests(SimpleTestCase):
 
 class EventSnapshotContractTests(TestCase):
     def test_event_snapshot_matches_rest_room_contract_without_using_its_serializer(self):
-        room = Room.objects.create(game_id='starlight-garden')
+        room = Room.objects.create(game_id='duelo')
         caller = Participant.objects.create(
             room=room,
             display_name='Guest One',
-            game_marker='silver-leaf',
+            game_marker='guante-rojo',
             presence=Participant.Presence.ONLINE,
         )
         target = Participant.objects.create(
             room=room,
             display_name='Guest Two',
-            game_marker='moonstone',
+            game_marker='guante-azul',
             presence=Participant.Presence.INACTIVE,
         )
         vote = ExpulsionVote.objects.create(
@@ -125,10 +93,3 @@ class EventSnapshotContractTests(TestCase):
         ExpulsionBallot.objects.create(vote=vote, voter=caller)
 
         self.assertEqual(room_snapshot(room), dict(RoomSerializer(room).data))
-
-
-class _CatalogStub:
-    games = ('game',)
-
-    def list_games(self):
-        return self.games

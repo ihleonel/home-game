@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-from ..features.catalog.infrastructure.static_catalog import StaticCatalog
 from ..features.expulsion_voting.application.cancellations import (
     ExpulsionVoteCancellation,
 )
@@ -16,7 +15,6 @@ from ..features.readiness.infrastructure.django_gateway import DjangoReadinessGa
 
 @dataclass(frozen=True)
 class RoomDependencies:
-    catalog: StaticCatalog
     membership: DjangoRoomMembershipGateway
     readiness: DjangoReadinessGateway
     presence: DjangoPresenceGateway
@@ -27,7 +25,6 @@ class RoomDependencies:
 def compose_room_dependencies():
     expulsion_voting = DjangoExpulsionVotingGateway()
     return RoomDependencies(
-        catalog=StaticCatalog(),
         membership=DjangoRoomMembershipGateway(),
         readiness=DjangoReadinessGateway(),
         presence=DjangoPresenceGateway(),

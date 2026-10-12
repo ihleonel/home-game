@@ -9,8 +9,15 @@ from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.test import APIClient, APITestCase
 
-from modules.rooms.catalog import GAMES
 from modules.rooms.models import Participant, Room
+from tests.games.support import SCOPING_TEST_GAMES, SCOPING_TEST_REGISTRY
+
+
+# Aliases into the single shared two-game fixture in tests.games.support. The
+# real ``duelo`` definition plus the test-only second game keep the per-game
+# scoping assertions without shipping any fake game.
+TEST_GAME_REGISTRY = SCOPING_TEST_REGISTRY
+TEST_GAMES = SCOPING_TEST_GAMES
 
 
 class RoomModelTests(TestCase):
@@ -105,8 +112,13 @@ class ParticipantModelTests(TestCase):
 
 class RoomApiTests(APITestCase):
     def setUp(self):
-        self.game = GAMES[0]
-        self.other_game = GAMES[1]
+        self.game = TEST_GAMES[0]
+        self.other_game = TEST_GAMES[1]
+        registry_patcher = patch(
+            'modules.rooms.serializers.GAME_REGISTRY', TEST_GAME_REGISTRY
+        )
+        registry_patcher.start()
+        self.addCleanup(registry_patcher.stop)
 
     def create_room(self, game=None, display_name='Guest One', game_marker=None, **extra):
         game = game or self.game
@@ -122,16 +134,6 @@ class RoomApiTests(APITestCase):
         data = {'game_id': (game or self.game)['id']}
         data.update(identity)
         return self.client.post('/api/rooms/join/', data, format='json')
-
-    def test_catalog_lists_stable_games_and_marker_options(self):
-        response = self.client.get('/api/games/')
-
-        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
-        self.assertEqual([game['id'] for game in response.data], [game['id'] for game in GAMES])
-        for game in response.data:
-            self.assertTrue(game['label'])
-            self.assertTrue(game['description'])
-            self.assertTrue(game['markers'])
 
     def test_active_room_is_not_found_when_no_room_exists(self):
         response = self.client.get('/api/rooms/active/')
@@ -502,8 +504,15 @@ class RoomApiTests(APITestCase):
 class ConcurrentRoomApiTests(TransactionTestCase):
     reset_sequences = True
 
+    def setUp(self):
+        registry_patcher = patch(
+            'modules.rooms.serializers.GAME_REGISTRY', TEST_GAME_REGISTRY
+        )
+        registry_patcher.start()
+        self.addCleanup(registry_patcher.stop)
+
     def test_competing_entries_for_one_game_converge_on_one_room(self):
-        game = GAMES[0]
+        game = TEST_GAMES[0]
         start = Barrier(2)
 
         def enter_game(index):

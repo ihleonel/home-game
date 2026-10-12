@@ -3,8 +3,9 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework import serializers
 
+from modules.games.composition import GAME_REGISTRY
+
 from .constants import RECONNECT_GRACE_SECONDS
-from .features.catalog.domain.catalog import contains_game, contains_marker
 from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
 from .infrastructure.snapshots import expulsion_vote_snapshot
 
@@ -23,13 +24,15 @@ class RoomRequestSerializer(serializers.Serializer):
     game_marker = serializers.SlugField(max_length=64, required=False)
 
     def validate_game_id(self, value):
-        if not contains_game(value):
+        if not GAME_REGISTRY.is_known_game(value):
             raise serializers.ValidationError('Elige un juego del catálogo.')
         return value
 
     def validate(self, attrs):
         marker = attrs.get('game_marker')
-        if marker is not None and not contains_marker(attrs['game_id'], marker):
+        if marker is not None and not GAME_REGISTRY.contains_seat_option(
+            attrs['game_id'], marker
+        ):
             raise serializers.ValidationError(
                 {'game_marker': 'Elige una ficha para el juego seleccionado.'}
             )
@@ -41,7 +44,7 @@ class ActiveRoomLookupSerializer(serializers.Serializer):
     session_id = SessionIDField(required=False)
 
     def validate_game_id(self, value):
-        if not contains_game(value):
+        if not GAME_REGISTRY.is_known_game(value):
             raise serializers.ValidationError('Elige un juego del catálogo.')
         return value
 

@@ -23,6 +23,7 @@ from modules.rooms.features.readiness.application.ports import ReadinessPorts
 from modules.rooms.features.readiness.application.use_cases import set_ready_state
 from modules.rooms.features.readiness.domain.entities import ReadinessParticipant
 from modules.rooms.features.readiness.domain.errors import ActiveRoomNotFound
+from tests.games.support import SCOPING_GAME_ID
 
 from .support import ports_fake
 
@@ -36,7 +37,7 @@ class MembershipUseCaseTests(SimpleTestCase):
         # place would make it publish one and consume an extra snapshot.
         vote_cancellation.target_reconnected.return_value = None
         ports = _ports(
-            create_or_lock_active_room=(ActiveRoom(12, 'starlight-garden'), True),
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
             participant_for_session_for_update=None,
             create_participant=participant,
             room_snapshot=deque(({'revision': 1}, {'revision': 2})),
@@ -74,7 +75,7 @@ class MembershipUseCaseTests(SimpleTestCase):
 
     def test_game_conflict_is_decided_before_membership_or_vote_work(self):
         ports = _ports(
-            create_or_lock_active_room=(ActiveRoom(12, 'cloud-couriers'), False)
+            create_or_lock_active_room=(ActiveRoom(12, SCOPING_GAME_ID), False)
         )
         vote_cancellation = Mock()
 
@@ -88,14 +89,14 @@ class MembershipUseCaseTests(SimpleTestCase):
 
     def test_identity_requirement_is_checked_before_new_participant_persistence(self):
         ports = _ports(
-            create_or_lock_active_room=(ActiveRoom(12, 'starlight-garden'), True),
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
             participant_for_session_for_update=None,
         )
         vote_cancellation = Mock()
 
         with self.assertRaises(MissingParticipantIdentity) as error:
             create_or_discover_room(
-                ports, {'game_id': 'starlight-garden'}, vote_cancellation
+                ports, {'game_id': 'duelo'}, vote_cancellation
             )
 
         self.assertEqual(set(error.exception.fields), {'display_name', 'game_marker'})
@@ -105,7 +106,7 @@ class MembershipUseCaseTests(SimpleTestCase):
     def test_rejoin_applies_domain_changes_and_keeps_vote_cancellation_events(self):
         participant = _participant(presence='reconnecting')
         ports = _ports(
-            active_room_for_update=ActiveRoom(12, 'starlight-garden'),
+            active_room_for_update=ActiveRoom(12, 'duelo'),
             participant_for_session_for_update=participant,
             save_membership_changes=participant,
             room_snapshot=deque(({'revision': 1}, {'revision': 2}, {'revision': 3})),
@@ -114,7 +115,7 @@ class MembershipUseCaseTests(SimpleTestCase):
         vote_cancellation.session_was_removed.return_value = False
         vote_cancellation.target_reconnected.return_value = {'status': 'cancelled'}
         data = {
-            'game_id': 'starlight-garden',
+            'game_id': 'duelo',
             'session_id': participant.session_id,
             'display_name': 'Guest Updated',
         }
@@ -145,7 +146,7 @@ class MembershipUseCaseTests(SimpleTestCase):
     def test_ready_participant_cannot_leave_before_any_membership_or_event_work(self):
         participant = _participant(is_ready=True)
         ports = _ports(
-            active_room_for_update=ActiveRoom(12, 'starlight-garden'),
+            active_room_for_update=ActiveRoom(12, 'duelo'),
             active_participant_for_session_for_update=participant,
         )
         vote_cancellation = Mock()
@@ -172,7 +173,7 @@ class MembershipUseCaseTests(SimpleTestCase):
     def test_leave_sequences_state_change_vote_hooks_cleanup_and_events(self):
         participant = _participant()
         ports = _ports(
-            active_room_for_update=ActiveRoom(12, 'starlight-garden'),
+            active_room_for_update=ActiveRoom(12, 'duelo'),
             active_participant_for_session_for_update=participant,
             save_membership_changes=participant,
             room_snapshot={'room': 'snapshot'},
@@ -277,10 +278,10 @@ def _new_member_data():
     # before falling through to creation; a visitor with no session id is a
     # different branch and is covered by its own identity-requirement test.
     return {
-        'game_id': 'starlight-garden',
+        'game_id': 'duelo',
         'session_id': uuid4(),
         'display_name': 'Guest One',
-        'game_marker': 'silver-leaf',
+        'game_marker': 'guante-rojo',
     }
 
 
@@ -290,7 +291,7 @@ def _participant(presence='offline', is_ready=False):
         session_id=uuid4(),
         public_id=uuid4(),
         display_name='Guest One',
-        game_marker='silver-leaf',
+        game_marker='guante-rojo',
         presence=presence,
         was_left=False,
         is_ready=is_ready,

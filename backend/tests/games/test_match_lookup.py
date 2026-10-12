@@ -20,6 +20,7 @@ from modules.games.runtime.infrastructure.channel_projector import (
     match_seat_group_name,
 )
 from modules.rooms.models import Participant, Room
+from tests.games.support import SCOPING_GAME_ID, SCOPING_GAME_MARKERS
 
 
 class MatchLookupTestCase(TestCase):
@@ -91,12 +92,12 @@ class NoSubscriptionTests(MatchLookupTestCase):
         )
 
     def test_match_that_belongs_to_another_room_returns_none(self):
-        other_room = Room.objects.create(game_id='cloud-couriers')
+        other_room = Room.objects.create(game_id=SCOPING_GAME_ID)
         other_participant = Participant.objects.create(
             room=other_room,
             session_id=self.first.session_id,
             display_name='Courier One',
-            game_marker='wind-kite',
+            game_marker=SCOPING_GAME_MARKERS[0],
         )
         other_match = Match.objects.create(
             room=other_room,

@@ -8,7 +8,6 @@ from rest_framework.exceptions import (
 )
 from rest_framework.response import Response
 
-from ..features.catalog.application.use_cases import list_games
 from ..features.expulsion_voting.application.use_cases import cast_ballot, start_vote
 from ..features.expulsion_voting.domain.errors import (
     VotingConflict,
@@ -81,12 +80,6 @@ def _request_data(serializer_class, request):
     serializer = serializer_class(data=request.data)
     serializer.is_valid(raise_exception=True)
     return serializer.validated_data
-
-
-@api_view(['GET'])
-def game_catalog(request):
-    dependencies = compose_room_dependencies()
-    return Response(list(list_games(dependencies.catalog)))
 
 
 @api_view(['GET'])
