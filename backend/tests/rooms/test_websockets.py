@@ -219,6 +219,13 @@ class RoomWebSocketTests(TransactionTestCase):
             )
             ready_event = await communicator.receive_json_from()
 
+            not_ready_response = await api_request(
+                'patch',
+                '/api/rooms/ready/',
+                {'session_id': joined_session_id, 'is_ready': False},
+            )
+            not_ready_event = await communicator.receive_json_from()
+
             leave_response = await api_request(
                 'post',
                 '/api/rooms/leave/',
@@ -237,6 +244,8 @@ class RoomWebSocketTests(TransactionTestCase):
                 join_event,
                 ready_response.status_code,
                 ready_event,
+                not_ready_response.status_code,
+                not_ready_event,
                 leave_response.status_code,
                 leave_event,
             )
@@ -252,6 +261,8 @@ class RoomWebSocketTests(TransactionTestCase):
             join_event,
             ready_status,
             ready_event,
+            not_ready_status,
+            not_ready_event,
             leave_status,
             leave_event,
         ) = async_to_sync(exchange_events)()
@@ -271,6 +282,15 @@ class RoomWebSocketTests(TransactionTestCase):
             next(
                 participant['is_ready']
                 for participant in ready_event['room']['participants']
+                if participant['display_name'] == 'Guest Three'
+            )
+        )
+        self.assertEqual(not_ready_status, 200)
+        self.assertEqual(not_ready_event['type'], 'ready_changed')
+        self.assertFalse(
+            next(
+                participant['is_ready']
+                for participant in not_ready_event['room']['participants']
                 if participant['display_name'] == 'Guest Three'
             )
         )
