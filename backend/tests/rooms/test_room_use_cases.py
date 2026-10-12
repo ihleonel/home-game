@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from django.test import SimpleTestCase
 
+from modules.rooms.features.membership.application.ports import RoomMembershipPorts
 from modules.rooms.features.membership.application.use_cases import (
     create_or_discover_room,
     join_room,
@@ -18,6 +19,7 @@ from modules.rooms.features.membership.domain.errors import (
     ActiveRoomGameConflict,
     MissingParticipantIdentity,
 )
+from modules.rooms.features.readiness.application.ports import ReadinessPorts
 from modules.rooms.features.readiness.application.use_cases import set_ready_state
 from modules.rooms.features.readiness.domain.entities import ReadinessParticipant
 from modules.rooms.features.readiness.domain.errors import ActiveRoomNotFound
@@ -27,6 +29,10 @@ class MembershipUseCaseTests(SimpleTestCase):
     def test_create_or_discover_sequences_creation_snapshot_and_event(self):
         participant = _participant()
         vote_cancellation = Mock()
+        # A first join has no pending expulsion vote, so the use case must not
+        # publish a cancellation event. Leaving the default Mock return value in
+        # place would make it publish one and consume an extra snapshot.
+        vote_cancellation.target_reconnected.return_value = None
         ports = _ports(
             create_or_lock_active_room=(ActiveRoom(12, 'starlight-garden'), True),
             participant_for_session_for_update=None,
@@ -234,6 +240,20 @@ class ReadinessUseCaseTests(SimpleTestCase):
         ports.active_participant_for_session_for_update.assert_not_called()
 
 
+_UNSET = object()
+
+
+def _declared_ports():
+    """Port names declared by the protocols this fake stands in for."""
+    protocols = (RoomMembershipPorts, ReadinessPorts)
+    return {
+        name
+        for protocol in protocols
+        for name, member in vars(protocol).items()
+        if not name.startswith('_') and callable(member)
+    }
+
+
 def _ports(**results):
     ports = Mock()
     ports.timeline = []
@@ -250,7 +270,14 @@ def _ports(**results):
             ports.timeline.append('commit')
 
     ports.atomic.side_effect = atomic
-    for name, result in results.items():
+
+    # Record every declared port, not only the ones configured below. Recording
+    # just the configured names let a timeline assertion omit a step silently, so
+    # it passed or failed for a reason unrelated to the sequence under test.
+    # Unconfigured ports return an inert sentinel instead of a fabricated value.
+    for name in sorted(_declared_ports() - {'atomic'}):
+        result = results.get(name, _UNSET)
+
         def operation(*args, _name=name, _result=result, **kwargs):
             ports.timeline.append(_name)
             if isinstance(_result, deque):
@@ -258,13 +285,18 @@ def _ports(**results):
             return _result
 
         getattr(ports, name).side_effect = operation
+
     ports.session_was_removed.return_value = False
     return ports
 
 
 def _new_member_data():
+    # The client posts its session id, so the use case looks the participant up
+    # before falling through to creation; a visitor with no session id is a
+    # different branch and is covered by its own identity-requirement test.
     return {
         'game_id': 'starlight-garden',
+        'session_id': uuid4(),
         'display_name': 'Guest One',
         'game_marker': 'silver-leaf',
     }
