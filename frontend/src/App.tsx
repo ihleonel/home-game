@@ -242,7 +242,7 @@ function IdentityForm({
     <form className="identity-form" onSubmit={onSubmit}>
       <div className="form-heading">
         <div>
-          <p className="eyebrow">{intent === 'create' ? 'Nueva sala' : 'Unirse a la sala'}</p>
+          <p className="eyebrow">Tu ficha</p>
           <h3 id={`identity-form-title-${prefix}`}>{game.label}</h3>
         </div>
         <p className="form-note">Tu ficha te identifica visualmente en esta sala.</p>
@@ -284,7 +284,7 @@ function IdentityForm({
       </div>
       <div className="form-actions">
         <button className="button button-primary" disabled={busy} type="submit">
-          {busy ? 'Conectando…' : intent === 'create' ? 'Crear sala' : 'Unirse a la sala'}
+          {busy ? 'Conectando…' : 'Entrar en la sala'}
         </button>
         <button className="button button-quiet" disabled={busy} onClick={onCancel} type="button">
           Cancelar
@@ -952,7 +952,7 @@ function App() {
             <p>
               {roomSession
                 ? 'Sal de la sala actual antes de elegir otro juego.'
-                : 'La sala se abre cuando el primer jugador elige un juego.'}
+                : 'Al elegir un juego, entras en la sala de ese juego.'}
             </p>
           </div>
 
