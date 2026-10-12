@@ -17,6 +17,7 @@ from modules.rooms.features.membership.domain.entities import (
 from modules.rooms.features.membership.domain.errors import (
     ActiveRoomGameConflict,
     MissingParticipantIdentity,
+    ReadyParticipantCannotLeave,
 )
 from modules.rooms.features.readiness.application.ports import ReadinessPorts
 from modules.rooms.features.readiness.application.use_cases import set_ready_state
@@ -141,6 +142,33 @@ class MembershipUseCaseTests(SimpleTestCase):
             {'status': 'cancelled'},
         )
 
+    def test_ready_participant_cannot_leave_before_any_membership_or_event_work(self):
+        participant = _participant(is_ready=True)
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'starlight-garden'),
+            active_participant_for_session_for_update=participant,
+        )
+        vote_cancellation = Mock()
+
+        with self.assertRaises(ReadyParticipantCannotLeave):
+            leave_room(
+                ports, {'session_id': participant.session_id}, vote_cancellation
+            )
+
+        self.assertEqual(
+            ports.timeline,
+            [
+                'begin',
+                'active_room_for_update',
+                'active_participant_for_session_for_update',
+                'rollback',
+            ],
+        )
+        ports.save_membership_changes.assert_not_called()
+        vote_cancellation.participant_left.assert_not_called()
+        ports.room_snapshot.assert_not_called()
+        ports.schedule_room_event.assert_not_called()
+
     def test_leave_sequences_state_change_vote_hooks_cleanup_and_events(self):
         participant = _participant()
         ports = _ports(
@@ -256,7 +284,7 @@ def _new_member_data():
     }
 
 
-def _participant(presence='offline'):
+def _participant(presence='offline', is_ready=False):
     return ParticipantMembership(
         id=24,
         session_id=uuid4(),
@@ -265,4 +293,5 @@ def _participant(presence='offline'):
         game_marker='silver-leaf',
         presence=presence,
         was_left=False,
+        is_ready=is_ready,
     )

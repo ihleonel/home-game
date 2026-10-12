@@ -1,6 +1,7 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from unittest.mock import patch
 
 from django.db import close_old_connections, IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase
@@ -256,6 +257,55 @@ class RoomApiTests(APITestCase):
         )
         self.assertEqual(Room.objects.count(), 1)
         self.assertEqual(Room.objects.get().game_id, self.game['id'])
+
+    def test_ready_participant_cannot_leave_until_readiness_is_cleared(self):
+        created = self.create_room()
+        self.join_room(
+            display_name='Guest Two',
+            game_marker=self.game['markers'][1]['id'],
+        )
+        session_id = created.data['session_id']
+
+        ready_response = self.client.patch(
+            '/api/rooms/ready/',
+            {'session_id': session_id, 'is_ready': True},
+            format='json',
+        )
+        self.assertEqual(ready_response.status_code, http_status.HTTP_200_OK)
+
+        with patch(
+            'modules.rooms.infrastructure.events.broadcast_room_event'
+        ) as broadcast:
+            with self.captureOnCommitCallbacks(execute=True):
+                blocked_leave = self.client.post(
+                    '/api/rooms/leave/',
+                    {'session_id': session_id},
+                    format='json',
+                )
+
+        self.assertEqual(blocked_leave.status_code, http_status.HTTP_409_CONFLICT)
+        broadcast.assert_not_called()
+        participant = Participant.objects.get(session_id=session_id)
+        self.assertIsNone(participant.left_at)
+        self.assertTrue(participant.is_ready)
+
+        not_ready_response = self.client.patch(
+            '/api/rooms/ready/',
+            {'session_id': session_id, 'is_ready': False},
+            format='json',
+        )
+        self.assertEqual(not_ready_response.status_code, http_status.HTTP_200_OK)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            allowed_leave = self.client.post(
+                '/api/rooms/leave/',
+                {'session_id': session_id},
+                format='json',
+            )
+
+        self.assertEqual(allowed_leave.status_code, http_status.HTTP_204_NO_CONTENT)
+        participant.refresh_from_db()
+        self.assertIsNotNone(participant.left_at)
 
     def test_readiness_targets_the_room_containing_the_session(self):
         self.create_room(game=self.game, display_name='First Game Guest')

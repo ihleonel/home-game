@@ -17,3 +17,4 @@ class ParticipantMembership:
     game_marker: str
     presence: str
     was_left: bool
+    is_ready: bool

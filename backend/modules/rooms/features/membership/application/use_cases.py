@@ -4,9 +4,11 @@ from ..domain.errors import (
     ActiveRoomNotFound,
     ActiveRoomSelectionRequired,
     MissingParticipantIdentity,
+    ReadyParticipantCannotLeave,
     RemovedSession,
 )
 from ..domain.rules import (
+    can_leave,
     game_matches,
     is_disconnected_presence,
     leave_changes,
@@ -119,6 +121,8 @@ def leave_room(
         )
         if participant is None:
             raise ActiveParticipantNotFound()
+        if not can_leave(participant.is_ready):
+            raise ReadyParticipantCannotLeave()
 
         participant = ports.save_membership_changes(
             participant.id, dict(leave_changes(ports.now()))

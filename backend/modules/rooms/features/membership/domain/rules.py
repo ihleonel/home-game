@@ -55,6 +55,10 @@ def is_disconnected_presence(presence):
     return presence in ('reconnecting', 'inactive')
 
 
+def can_leave(is_ready):
+    return not is_ready
+
+
 def leave_changes(left_at):
     return (
         ('left_at', left_at),

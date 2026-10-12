@@ -27,6 +27,7 @@ from ..features.membership.domain.errors import (
     ActiveRoomNotFound as MembershipRoomNotFound,
     ActiveRoomSelectionRequired,
     MissingParticipantIdentity,
+    ReadyParticipantCannotLeave,
     RemovedSession,
 )
 from ..features.readiness.application.use_cases import set_ready_state
@@ -55,6 +56,15 @@ class ExpulsionVoteConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = 'La votación de expulsión ya no se puede modificar.'
     default_code = 'expulsion_vote_conflict'
+
+
+class ReadyLeaveForbidden(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = (
+        'No puedes salir de la sala mientras estés listo. '
+        'Deja de estar listo para poder salir.'
+    )
+    default_code = 'ready_participant_cannot_leave'
 
 
 def _translate_voting_error(error):
@@ -153,6 +163,8 @@ def leave_room(request):
         raise NotFound('No hay ninguna sala activa.')
     except MembershipParticipantNotFound:
         raise NotFound('La sesión no pertenece a ningún participante activo de la sala.')
+    except ReadyParticipantCannotLeave:
+        raise ReadyLeaveForbidden()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 

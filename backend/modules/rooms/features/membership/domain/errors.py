@@ -18,6 +18,10 @@ class RemovedSession(Exception):
     pass
 
 
+class ReadyParticipantCannotLeave(Exception):
+    pass
+
+
 class MissingParticipantIdentity(Exception):
     def __init__(self, fields):
         self.fields = fields
