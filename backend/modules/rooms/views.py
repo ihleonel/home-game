@@ -1,0 +1,28 @@
+"""Compatibility exports for the REST interface adapter."""
+
+from .interfaces.rest import (
+    ActiveRoomGameConflict,
+    ExpulsionVoteConflict,
+    _request_data,
+    active_room,
+    cast_expulsion_ballot,
+    create_room,
+    game_catalog,
+    join_room,
+    leave_room,
+    start_expulsion_vote,
+    update_ready_state,
+)
+
+__all__ = (
+    'ActiveRoomGameConflict',
+    'ExpulsionVoteConflict',
+    'active_room',
+    'cast_expulsion_ballot',
+    'create_room',
+    'game_catalog',
+    'join_room',
+    'leave_room',
+    'start_expulsion_vote',
+    'update_ready_state',
+)

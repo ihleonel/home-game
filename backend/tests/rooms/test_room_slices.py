@@ -1,0 +1,134 @@
+from django.test import SimpleTestCase, TestCase
+from django.utils import translation
+
+from modules.rooms.catalog import GAMES, GAMES_BY_ID
+from modules.rooms.events import room_snapshot
+from modules.rooms.features.catalog.application.use_cases import list_games
+from modules.rooms.features.catalog.domain.catalog import contains_game, contains_marker
+from modules.rooms.features.membership.domain.rules import (
+    is_disconnected_presence,
+    membership_change,
+)
+from modules.rooms.features.readiness.domain.rules import readiness_change
+from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from modules.rooms.serializers import RoomRequestSerializer, RoomSerializer
+
+
+class CatalogSliceTests(SimpleTestCase):
+    def test_static_catalog_is_owned_by_feature_and_compatibility_exports_are_stable(self):
+        self.assertEqual(list(GAMES_BY_ID), [game['id'] for game in GAMES])
+        self.assertTrue(contains_game(GAMES[0]['id']))
+        self.assertTrue(contains_marker(GAMES[0]['id'], GAMES[0]['markers'][0]['id']))
+        self.assertFalse(contains_marker(GAMES[0]['id'], GAMES[1]['markers'][0]['id']))
+
+    def test_list_games_uses_catalog_port(self):
+        catalog = _CatalogStub()
+
+        self.assertEqual(list_games(catalog), catalog.games)
+
+    def test_display_copy_is_spanish_without_changing_catalog_identifiers(self):
+        self.assertEqual(
+            [game['id'] for game in GAMES],
+            ['starlight-garden', 'cloud-couriers', 'amber-islands'],
+        )
+        self.assertEqual(
+            [game['label'] for game in GAMES],
+            ['Jardín estrellado', 'Mensajeros de las nubes', 'Islas de ámbar'],
+        )
+        self.assertEqual(
+            [marker['id'] for marker in GAMES[0]['markers']],
+            ['silver-leaf', 'moonstone', 'night-bloom'],
+        )
+        self.assertEqual(
+            [marker['label'] for marker in GAMES[0]['markers']],
+            ['Hoja plateada', 'Piedra lunar', 'Flor nocturna'],
+        )
+
+    def test_framework_validation_messages_use_spanish(self):
+        with translation.override('es-es'):
+            serializer = RoomRequestSerializer(data={})
+
+            self.assertFalse(serializer.is_valid())
+
+        self.assertEqual(
+            str(serializer.errors['game_id'][0]),
+            'Este campo es requerido.',
+        )
+
+
+class MembershipDomainTests(SimpleTestCase):
+    def test_rejoin_emits_join_event_and_resets_leave_and_presence_fields(self):
+        change = membership_change(
+            was_left=True,
+            was_disconnected=True,
+            current_display_name='Guest',
+            current_game_marker='silver-leaf',
+            data={'display_name': 'Guest Updated'},
+        )
+
+        self.assertEqual(change.event_name, 'player_joined')
+        self.assertEqual(
+            dict(change.updates),
+            {
+                'display_name': 'Guest Updated',
+                'left_at': None,
+                'presence': 'offline',
+                'disconnected_at': None,
+            },
+        )
+
+    def test_unchanged_active_membership_does_not_emit_an_event(self):
+        change = membership_change(
+            was_left=False,
+            was_disconnected=False,
+            current_display_name='Guest',
+            current_game_marker='silver-leaf',
+            data={'display_name': 'Guest', 'game_marker': 'silver-leaf'},
+        )
+
+        self.assertEqual(change.updates, ())
+        self.assertIsNone(change.event_name)
+
+    def test_only_reconnecting_and_inactive_presence_counts_as_disconnected(self):
+        self.assertTrue(is_disconnected_presence('reconnecting'))
+        self.assertTrue(is_disconnected_presence('inactive'))
+        self.assertFalse(is_disconnected_presence('offline'))
+
+
+class ReadinessDomainTests(SimpleTestCase):
+    def test_change_distinguishes_requested_value_from_state_transition(self):
+        self.assertEqual(readiness_change(False, True).value, True)
+        self.assertTrue(readiness_change(False, True).changed)
+        self.assertFalse(readiness_change(True, True).changed)
+
+
+class EventSnapshotContractTests(TestCase):
+    def test_event_snapshot_matches_rest_room_contract_without_using_its_serializer(self):
+        room = Room.objects.create(game_id='starlight-garden')
+        caller = Participant.objects.create(
+            room=room,
+            display_name='Guest One',
+            game_marker='silver-leaf',
+            presence=Participant.Presence.ONLINE,
+        )
+        target = Participant.objects.create(
+            room=room,
+            display_name='Guest Two',
+            game_marker='moonstone',
+            presence=Participant.Presence.INACTIVE,
+        )
+        vote = ExpulsionVote.objects.create(
+            room=room,
+            target=target,
+            initiated_by=caller,
+        )
+        ExpulsionBallot.objects.create(vote=vote, voter=caller)
+
+        self.assertEqual(room_snapshot(room), dict(RoomSerializer(room).data))
+
+
+class _CatalogStub:
+    games = ('game',)
+
+    def list_games(self):
+        return self.games
