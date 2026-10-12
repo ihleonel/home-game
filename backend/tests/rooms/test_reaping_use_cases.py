@@ -244,6 +244,92 @@ class ReapingUseCaseTests(SimpleTestCase):
         ports.schedule_room_event.assert_not_called()
         vote_cancellation.participant_left.assert_not_called()
 
+    def test_connected_row_returned_by_the_port_is_not_reaped(self):
+        # The port is trusted to return only stale rows, but reaping is
+        # destructive, so the use case re-applies the domain rule and drops a
+        # non-stale row instead of trusting the gateway blindly.
+        participant = _participant(
+            presence='online', disconnected_at=NOW - timedelta(seconds=90)
+        )
+        ports = _ports(
+            active_room_ids=(12,),
+            room_ids_with_in_progress_match=set(),
+            now=NOW,
+            reapable_participants_for_update=(participant,),
+        )
+        vote_cancellation = Mock()
+
+        outcome = reap_ghost_memberships(
+            ports, vote_cancellation, grace_seconds=60
+        )
+
+        self.assertEqual(outcome, ReapOutcome(0, 0, 0))
+        ports.save_reaped_changes.assert_not_called()
+        ports.room_snapshot.assert_not_called()
+        ports.has_active_participants.assert_not_called()
+        ports.delete_room.assert_not_called()
+        ports.schedule_room_event.assert_not_called()
+        vote_cancellation.participant_left.assert_not_called()
+
+    def test_row_disconnected_inside_the_grace_window_is_not_reaped(self):
+        participant = _participant(
+            presence='reconnecting',
+            disconnected_at=NOW - timedelta(seconds=59),
+        )
+        ports = _ports(
+            active_room_ids=(12,),
+            room_ids_with_in_progress_match=set(),
+            now=NOW,
+            reapable_participants_for_update=(participant,),
+        )
+        vote_cancellation = Mock()
+
+        outcome = reap_ghost_memberships(
+            ports, vote_cancellation, grace_seconds=60
+        )
+
+        self.assertEqual(outcome, ReapOutcome(0, 0, 0))
+        ports.save_reaped_changes.assert_not_called()
+        ports.schedule_room_event.assert_not_called()
+        ports.delete_room.assert_not_called()
+        vote_cancellation.participant_left.assert_not_called()
+
+    def test_guard_drops_only_the_non_stale_rows_from_a_mixed_batch(self):
+        stale = _participant(
+            participant_id=24,
+            disconnected_at=NOW - timedelta(seconds=90),
+        )
+        not_stale = _participant(
+            participant_id=25,
+            presence='inactive',
+            disconnected_at=NOW - timedelta(seconds=10),
+        )
+        ports = _ports(
+            active_room_ids=(12,),
+            room_ids_with_in_progress_match=set(),
+            now=NOW,
+            reapable_participants_for_update=(not_stale, stale),
+            room_snapshot={'revision': 1},
+            has_active_participants=True,
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.participant_left.return_value = None
+
+        outcome = reap_ghost_memberships(
+            ports, vote_cancellation, grace_seconds=60
+        )
+
+        self.assertEqual(outcome, ReapOutcome(1, 1, 0))
+        ports.save_reaped_changes.assert_called_once_with(
+            24,
+            {
+                'left_at': NOW,
+                'presence': 'offline',
+                'disconnected_at': None,
+                'is_ready': False,
+            },
+        )
+
     def test_room_id_is_passed_through_to_active_room_ids(self):
         ports = _ports(
             active_room_ids=(12,),

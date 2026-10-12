@@ -1,6 +1,6 @@
 from ....application.ports import VoteCancellation
 from ..domain.entities import ReapOutcome
-from ..domain.rules import reap_changes, staleness_cutoff
+from ..domain.rules import is_stale, reap_changes, staleness_cutoff
 from .ports import ReapingPorts
 
 
@@ -31,8 +31,12 @@ def reap_ghost_memberships(
 
         now = ports.now()
         cutoff = staleness_cutoff(now, grace_seconds)
-        reapable = ports.reapable_participants_for_update(
-            candidate_rooms, cutoff=cutoff
+        reapable = tuple(
+            participant
+            for participant in ports.reapable_participants_for_update(
+                candidate_rooms, cutoff=cutoff
+            )
+            if is_stale(participant.presence, participant.disconnected_at, cutoff)
         )
 
         rooms_reaped = 0

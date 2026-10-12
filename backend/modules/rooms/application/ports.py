@@ -1,6 +1,10 @@
 from typing import Protocol
 
 
+class GhostReaping(Protocol):
+    def reap(self, *, room_id: int | None = None): ...
+
+
 class VoteCancellation(Protocol):
     def session_was_removed(self, room_id: int, participant_id: int) -> bool: ...
 
