@@ -21,10 +21,18 @@ class ReapingService:
         self.vote_cancellation = vote_cancellation
         self.grace_seconds = grace_seconds
 
-    def reap(self, *, room_id: int | None = None):
+    def reap(self, *, room_id: int | None = None, grace_seconds: int | None = None):
+        """Reap ghost memberships and rooms.
+
+        ``grace_seconds`` overrides the composed grace window for a single run
+        and ``None`` keeps the bound value, so every adapter resolves the
+        window in one place and ``--startup`` can pass ``0`` without a second
+        code path.
+        """
+        bound_grace = self.grace_seconds if grace_seconds is None else grace_seconds
         return reap_ghost_memberships(
             self.ports,
             self.vote_cancellation,
-            grace_seconds=self.grace_seconds,
+            grace_seconds=bound_grace,
             room_id=room_id,
         )
