@@ -917,11 +917,6 @@ function App() {
                   </span>
                 </p>
               </div>
-              {roomSession.isReady && (
-                <p className="quiet-copy" id="ready-leave-hint">
-                  Mientras estés listo no puedes salir de la sala. Marca que no estás listo para poder irte.
-                </p>
-              )}
               <div className="action-buttons">
                 <button
                   aria-pressed={roomSession.isReady}
@@ -937,7 +932,6 @@ function App() {
                       : 'Marcar como listo'}
                 </button>
                 <button
-                  aria-describedby={roomSession.isReady ? 'ready-leave-hint' : undefined}
                   className="button button-quiet"
                   disabled={busy || roomSession.isReady}
                   onClick={() => void leaveRoom()}
