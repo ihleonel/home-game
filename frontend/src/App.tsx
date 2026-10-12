@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
+import { hasMatchRenderer, renderMatchScreen } from './games/registry'
+import type { MatchState, MatchView } from './games/registry'
 
 type Marker = { id: string; label: string }
 type Game = {
@@ -60,17 +62,44 @@ type RoomSession = GuestIdentity & {
   isReady: boolean
 }
 type StoredRoomSession = Pick<RoomSession, 'gameId' | 'sessionId' | 'isReady'>
-type PendingAction = RoomIntent | 'ready' | 'leave' | 'vote' | null
+type PendingAction = RoomIntent | 'ready' | 'leave' | 'vote' | 'pick' | 'start' | null
+
+type MatchEnvelope = {
+  match_ref: string
+  version: number
+  status: string
+  seat_index: number | null
+  view: MatchView
+}
+
+/**
+ * Every frame the room socket can send.
+ *
+ * A room frame carries ``room`` (and optionally ``vote``); a match frame
+ * carries ``match_ref`` and ``view``. They share one socket, so the client
+ * branches on ``type`` instead of assuming a room shape.
+ */
+type ServerMessage = {
+  type?: string
+  room?: Room
+  vote?: ExpulsionVote
+  match_ref?: string
+  seat_index?: number | null
+  version?: number
+  view?: MatchView
+}
 
 const DISPLAY_NAME_KEY = 'homegame:display-name'
 const ROOM_SESSION_KEY = 'homegame:room-session'
 
 class ApiError extends Error {
   readonly status: number
+  readonly code: string | null
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code: string | null = null) {
     super(message)
     this.status = status
+    this.code = code
     this.name = 'ApiError'
   }
 }
@@ -90,6 +119,20 @@ function getErrorMessage(payload: unknown): string {
   return 'No se ha podido completar la solicitud. Inténtalo de nuevo.'
 }
 
+/**
+ * Read the machine-readable ``code`` the games API attaches to a rejection.
+ *
+ * ``stale_version`` is the only value the client acts on differently; every
+ * other rejection is shown from its ``detail`` and resynced the same way.
+ */
+function getErrorCode(payload: unknown): string | null {
+  if (typeof payload === 'object' && payload !== null) {
+    const code = (payload as Record<string, unknown>).code
+    if (typeof code === 'string') return code
+  }
+  return null
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -99,7 +142,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     response.status === 204 ? null : await response.json().catch(() => null)
 
   if (!response.ok) {
-    throw new ApiError(response.status, getErrorMessage(payload))
+    throw new ApiError(response.status, getErrorMessage(payload), getErrorCode(payload))
   }
   return payload as T
 }
@@ -115,6 +158,47 @@ async function fetchActiveRoom(gameId: string, sessionId?: string): Promise<Room
     if (error instanceof ApiError && error.status === 404) return null
     throw error
   }
+}
+
+/**
+ * Apply a resync response over the current match.
+ *
+ * The current match must still be the one the response is for, and an older
+ * version never overwrites a newer one, so a slow resync cannot regress the
+ * view a WebSocket event already advanced.
+ */
+function mergeMatch(
+  current: MatchState | null,
+  incoming: MatchEnvelope,
+): MatchState | null {
+  if (!current || current.matchRef !== incoming.match_ref) return current
+  if (current.version !== null && incoming.version < current.version) return current
+  return {
+    matchRef: incoming.match_ref,
+    seatIndex: incoming.seat_index,
+    version: incoming.version,
+    view: incoming.view,
+  }
+}
+
+/**
+ * Apply a ``match.event`` over the current match.
+ *
+ * Events for any match that is not the current one are ignored, as are events
+ * whose version is older than the one already held. The view itself is kept
+ * exactly as the server sent it; nothing here derives a game fact.
+ */
+function mergeMatchEvent(
+  current: MatchState | null,
+  matchRef: string,
+  version: number | null,
+  view: MatchView,
+): MatchState | null {
+  if (!current || current.matchRef !== matchRef) return current
+  if (version !== null && current.version !== null && version < current.version) {
+    return current
+  }
+  return { ...current, version: version ?? current.version, view }
 }
 
 function readSessionValue(key: string): string | null {
@@ -314,6 +398,7 @@ function App() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  const [match, setMatch] = useState<MatchState | null>(null)
 
   const activeGame = games.find((game) => game.id === room?.game_id)
   const selectedGame = games.find((game) => game.id === selectedGameId)
@@ -327,6 +412,17 @@ function App() {
   )
   const allReady = Boolean(room?.participants.length) &&
     room?.participants.every((participant) => participant.is_ready)
+  // Readiness is rendered from the room snapshot, not from this session's
+  // stored copy: the backend resets every participant when a match finishes,
+  // and that server state is what re-enables leaving the lobby.
+  const ownReady = currentParticipant
+    ? currentParticipant.is_ready
+    : roomSession?.isReady ?? false
+  // A session without a room has no match, so a previous match cannot leak
+  // into a later room while its state is still in memory.
+  const activeMatch = roomSession ? match : null
+  const matchInProgress = Boolean(activeMatch && !activeMatch.view.finished)
+  const matchRendererAvailable = room ? hasMatchRenderer(room.game_id) : false
 
   useEffect(() => {
     const dialog = identityDialogRef.current
@@ -454,6 +550,7 @@ function App() {
       leavingRef.current = false
       setRoom(response.room)
       setRoomSession(nextSession)
+      setMatch(null)
       setConnectionError(null)
       setVoteNotice(null)
       setIntent(null)
@@ -483,7 +580,7 @@ function App() {
 
   async function toggleReady(): Promise<void> {
     if (!roomSession) return
-    const isReady = !roomSession.isReady
+    const isReady = !ownReady
     setPendingAction('ready')
     setActionError(null)
     try {
@@ -527,7 +624,7 @@ function App() {
 
   async function leaveRoom(): Promise<void> {
     if (!roomSession) return
-    if (roomSession.isReady) return
+    if (ownReady) return
     leavingRef.current = true
     setPendingAction('leave')
     setActionError(null)
@@ -538,6 +635,7 @@ function App() {
       })
       setRoomSession(null)
       setRoom(null)
+      setMatch(null)
       setConnectionError(null)
       setVoteNotice(null)
     } catch (error) {
@@ -546,6 +644,7 @@ function App() {
       if (error instanceof ApiError && error.status === 404) {
         setRoomSession(null)
         setRoom(null)
+        setMatch(null)
         setConnectionError(null)
         setVoteNotice(null)
       } else if (error instanceof ApiError && error.status === 409) {
@@ -602,6 +701,86 @@ function App() {
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         void refreshActiveRoom(roomSession.gameId)
       }
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const resyncMatch = useCallback(
+    async (matchRef: string, sessionId: string): Promise<void> => {
+      try {
+        const response = await requestJson<MatchEnvelope>(
+          `/api/matches/${encodeURIComponent(matchRef)}/?session_id=${encodeURIComponent(sessionId)}`,
+        )
+        setMatch((current) => mergeMatch(current, response))
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) {
+          setMatch((current) => (current?.matchRef === matchRef ? null : current))
+          return
+        }
+        setActionError(
+          error instanceof Error ? error.message : 'No se ha podido sincronizar la partida.',
+        )
+      }
+    },
+    [],
+  )
+
+  async function startMatch(): Promise<void> {
+    if (!roomSession) return
+    setPendingAction('start')
+    setActionError(null)
+    try {
+      const response = await requestJson<MatchEnvelope>('/api/matches/', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: roomSession.sessionId }),
+      })
+      setMatch({
+        matchRef: response.match_ref,
+        seatIndex: response.seat_index,
+        version: response.version,
+        view: response.view,
+      })
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No se ha podido iniciar la partida.')
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function submitPick(value: string): Promise<void> {
+    if (!roomSession || !match || match.version === null) return
+    const { matchRef, version } = match
+    setPendingAction('pick')
+    setActionError(null)
+    try {
+      const response = await requestJson<MatchEnvelope>(
+        `/api/matches/${encodeURIComponent(matchRef)}/actions/`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            session_id: roomSession.sessionId,
+            action_name: 'pick',
+            action_value: value,
+            expected_version: version,
+          }),
+        },
+      )
+      setMatch((current) => mergeMatch(current, response))
+    } catch (error) {
+      const stale = error instanceof ApiError && error.code === 'stale_version'
+      setActionError(
+        stale
+          ? 'La partida cambió. Se ha sincronizado de nuevo el estado.'
+          : error instanceof Error
+            ? error.message
+            : 'No se ha podido registrar tu jugada.',
+      )
+      // A stale version means this client composed the pick against an older
+      // state; any other rejection still leaves the local view unconfirmed.
+      // Both are resolved by re-reading the server rather than reconciling
+      // locally, so the resync runs for either one.
+      await resyncMatch(matchRef, roomSession.sessionId)
     } finally {
       setPendingAction(null)
     }
@@ -712,20 +891,50 @@ function App() {
 
         socket.onmessage = (messageEvent) => {
           if (leavingRef.current) return
+          let message: ServerMessage
           try {
-            const message = JSON.parse(String(messageEvent.data)) as RoomEnvelope & {
-              type?: string
-              vote?: ExpulsionVote
-            }
-            if (
-              message.room.game_id === gameId &&
-              Array.isArray(message.room.participants)
-            ) {
-              setRoom(message.room)
-            }
-            if (message.vote) setVoteNotice(expulsionVoteMessage(message.vote))
+            message = JSON.parse(String(messageEvent.data)) as ServerMessage
           } catch {
             setConnectionError('No se ha podido leer una actualización de la sala.')
+            return
+          }
+          if (
+            message.room &&
+            message.room.game_id === gameId &&
+            Array.isArray(message.room.participants)
+          ) {
+            setRoom(message.room)
+          }
+          if (message.vote) setVoteNotice(expulsionVoteMessage(message.vote))
+          if (
+            message.type === 'match.snapshot' &&
+            typeof message.match_ref === 'string' &&
+            message.view
+          ) {
+            const matchRef = message.match_ref
+            const view = message.view
+            const seatIndex =
+              typeof message.seat_index === 'number' ? message.seat_index : null
+            setMatch((current) => ({
+              matchRef,
+              seatIndex,
+              version: current && current.matchRef === matchRef ? current.version : null,
+              view,
+            }))
+            // The snapshot names the match and carries its view, but no
+            // version. One resync read fills the version in; this is the
+            // reload resume path, not a second way to discover a match.
+            void resyncMatch(matchRef, guestSessionId)
+          } else if (
+            message.type === 'match.event' &&
+            typeof message.match_ref === 'string' &&
+            message.view
+          ) {
+            const matchRef = message.match_ref
+            const view = message.view
+            const version =
+              typeof message.version === 'number' ? message.version : null
+            setMatch((current) => mergeMatchEvent(current, matchRef, version, view))
           }
         }
 
@@ -763,7 +972,7 @@ function App() {
         currentSocket.close(1000, 'Room session ended')
       }
     }
-  }, [sessionDisplayName, sessionGameId, sessionGameMarker, sessionId])
+  }, [resyncMatch, sessionDisplayName, sessionGameId, sessionGameMarker, sessionId])
 
   const busy = pendingAction !== null
 
@@ -906,6 +1115,23 @@ function App() {
             </section>
           )}
 
+          {isJoined && (matchRendererAvailable ? (
+            activeMatch
+              ? renderMatchScreen(room.game_id, {
+                  busy,
+                  match: activeMatch,
+                  onPick: (value: string) => void submitPick(value),
+                })
+              : null
+          ) : (
+            <section className="match-unavailable" aria-labelledby="match-unavailable-title">
+              <h3 id="match-unavailable-title">Vista de partida no disponible</h3>
+              <p className="quiet-copy">
+                Este juego todavía no tiene una vista de partida en HomeGame.
+              </p>
+            </section>
+          ))}
+
           {isJoined && roomSession ? (
             <section className="your-room-actions" aria-labelledby="your-status-title">
               <div className="your-identity">
@@ -918,22 +1144,40 @@ function App() {
                 </p>
               </div>
               <div className="action-buttons">
+                {!matchInProgress && (
+                  <>
+                    <button
+                      aria-describedby={!ownReady ? 'start-match-requires-ready' : undefined}
+                      className="button button-primary"
+                      disabled={busy || !ownReady}
+                      onClick={() => void startMatch()}
+                      type="button"
+                    >
+                      {pendingAction === 'start' ? 'Iniciando…' : 'Iniciar partida'}
+                    </button>
+                    {!ownReady && (
+                      <span className="quiet-copy" id="start-match-requires-ready">
+                        Marca que estás listo para iniciar la partida.
+                      </span>
+                    )}
+                  </>
+                )}
                 <button
-                  aria-pressed={roomSession.isReady}
-                  className={roomSession.isReady ? 'button button-ready is-ready' : 'button button-ready'}
+                  aria-pressed={ownReady}
+                  className={ownReady ? 'button button-ready is-ready' : 'button button-ready'}
                   disabled={busy}
                   onClick={() => void toggleReady()}
                   type="button"
                 >
                   {pendingAction === 'ready'
                     ? 'Actualizando…'
-                    : roomSession.isReady
+                    : ownReady
                       ? 'Marcar como no listo'
                       : 'Marcar como listo'}
                 </button>
                 <button
                   className="button button-quiet"
-                  disabled={busy || roomSession.isReady}
+                  disabled={busy || ownReady}
                   onClick={() => void leaveRoom()}
                   type="button"
                 >
