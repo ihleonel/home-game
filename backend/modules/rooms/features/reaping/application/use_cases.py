@@ -1,3 +1,20 @@
+"""Reap memberships and rooms that nobody is coming back to.
+
+Staleness is decided from the persisted ``presence`` and ``disconnected_at``
+columns rather than from the in-process connection registry, so this sweep is
+correct from any process and survives a restart. Two rules carry the weight:
+
+- a room holding an in-progress match is skipped entirely, because its seats
+  belong to players who may still reconnect into the running match;
+- the reaped membership clears ``is_ready`` as well as setting ``left_at``,
+  because ``participant_for_session_for_update`` resolves left rows too and the
+  rejoin path would otherwise revive a ready ghost.
+
+Deleting an emptied room takes that room's matches with it (``Match.room`` is
+CASCADE), which is the accepted cost of having no soft-close state: ``Room``
+only allows ``status='active'``.
+"""
+
 from ....application.ports import VoteCancellation
 from ..domain.entities import ReapOutcome
 from ..domain.rules import is_stale, reap_changes, staleness_cutoff
