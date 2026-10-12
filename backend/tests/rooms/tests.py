@@ -1,5 +1,6 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from threading import Barrier
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.test import APIClient, APITestCase
 
+from modules.rooms.constants import RECONNECT_GRACE_SECONDS
 from modules.rooms.models import Participant, Room
 from tests.games.support import SCOPING_TEST_GAMES, SCOPING_TEST_REGISTRY
 
@@ -134,6 +136,33 @@ class RoomApiTests(APITestCase):
         data = {'game_id': (game or self.game)['id']}
         data.update(identity)
         return self.client.post('/api/rooms/join/', data, format='json')
+
+    def create_ghost_room(
+        self,
+        game=None,
+        *,
+        presence=Participant.Presence.RECONNECTING,
+        is_ready=False,
+        disconnected_at=None,
+    ):
+        """A room whose only participant disconnected and never came back."""
+        game = game or self.game
+        room = Room.objects.create(game_id=game['id'])
+        participant = Participant.objects.create(
+            room=room,
+            session_id=uuid.uuid4(),
+            display_name='Ghost Guest',
+            game_marker=game['markers'][0]['id'],
+            presence=presence,
+            disconnected_at=(
+                disconnected_at
+                if disconnected_at is not None
+                else timezone.now()
+                - timedelta(seconds=RECONNECT_GRACE_SECONDS + 30)
+            ),
+            is_ready=is_ready,
+        )
+        return room, participant
 
     def test_active_room_is_not_found_when_no_room_exists(self):
         response = self.client.get('/api/rooms/active/')
@@ -492,6 +521,92 @@ class RoomApiTests(APITestCase):
         self.assertEqual(invalid_response.status_code, http_status.HTTP_400_BAD_REQUEST)
         participant.refresh_from_db()
         self.assertTrue(participant.is_ready)
+
+    def test_active_room_lookup_reaps_a_ghost_room_and_answers_not_found(self):
+        room, _ = self.create_ghost_room()
+
+        response = self.client.get(
+            '/api/rooms/active/', {'game_id': self.game['id']}
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertFalse(Room.objects.filter(pk=room.pk).exists())
+        self.assertEqual(Participant.objects.count(), 0)
+
+    def test_active_room_lookup_keeps_a_room_inside_the_grace_window(self):
+        room, participant = self.create_ghost_room(
+            disconnected_at=timezone.now()
+            - timedelta(seconds=RECONNECT_GRACE_SECONDS - 5),
+        )
+
+        response = self.client.get(
+            '/api/rooms/active/', {'game_id': self.game['id']}
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(response.data['room']['game_id'], self.game['id'])
+        self.assertTrue(Room.objects.filter(pk=room.pk).exists())
+        participant.refresh_from_db()
+        self.assertIsNone(participant.left_at)
+        self.assertEqual(participant.presence, Participant.Presence.RECONNECTING)
+
+    def test_join_after_a_ghost_room_answers_not_found_without_recreating_it(self):
+        self.create_ghost_room()
+
+        response = self.join_room(
+            display_name='Guest Two',
+            game_marker=self.game['markers'][1]['id'],
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertEqual(
+            response.data['detail'],
+            'No hay ninguna sala activa a la que unirse.',
+        )
+        self.assertEqual(Room.objects.count(), 0)
+        self.assertEqual(Participant.objects.count(), 0)
+
+    def test_create_after_a_ghost_room_returns_created_with_a_clean_roster(self):
+        _, ghost = self.create_ghost_room()
+
+        response = self.create_room(display_name='Guest Two')
+
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(Room.objects.count(), 1)
+        self.assertEqual(Participant.objects.count(), 1)
+        roster = response.data['room']['participants']
+        self.assertEqual([entry['display_name'] for entry in roster], ['Guest Two'])
+        self.assertNotIn(
+            str(ghost.public_id), [entry['participant_ref'] for entry in roster]
+        )
+
+    def test_reaped_ready_participant_does_not_come_back_ready_on_rejoin(self):
+        room, ghost = self.create_ghost_room(is_ready=True)
+        # A live companion keeps the room alive across the reap, so the ghost's
+        # row is revived rather than cascade-deleted with the room.
+        Participant.objects.create(
+            room=room,
+            session_id=uuid.uuid4(),
+            display_name='Companion',
+            game_marker=self.game['markers'][1]['id'],
+            presence=Participant.Presence.ONLINE,
+        )
+        self.assertEqual(Room.objects.count(), 1)
+
+        response = self.join_room(
+            session_id=str(ghost.session_id),
+            display_name='Ghost Guest',
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        rejoin_entry = next(
+            entry
+            for entry in response.data['room']['participants']
+            if entry['participant_ref'] == str(ghost.public_id)
+        )
+        self.assertFalse(rejoin_entry['is_ready'])
+        ghost.refresh_from_db()
+        self.assertFalse(ghost.is_ready)
 
     def test_marker_must_belong_to_the_selected_game(self):
         response = self.create_room(game_marker='unlisted-marker')

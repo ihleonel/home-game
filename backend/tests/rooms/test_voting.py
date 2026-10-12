@@ -253,7 +253,7 @@ class ExpulsionVoteApiTests(APITestCase):
         )
         self.assertEqual(rejoin.status_code, http_status.HTTP_400_BAD_REQUEST)
 
-    def test_target_reconnect_cancels_pending_vote(self):
+    def test_target_rejoin_past_the_grace_window_is_reaped_and_cancels_the_pending_vote(self):
         started = self.start_vote()
 
         rejoin = self.client.post(
@@ -269,7 +269,9 @@ class ExpulsionVoteApiTests(APITestCase):
         vote = ExpulsionVote.objects.get()
         self.assertEqual(rejoin.status_code, http_status.HTTP_200_OK)
         self.assertEqual(vote.status, ExpulsionVote.Status.CANCELLED)
-        self.assertEqual(vote.resolution_reason, 'target_reconnected')
+        # The target was reaped before membership resolution, so the rejoin is
+        # a fresh arrival and cancels the vote as a departure, not a reconnect.
+        self.assertEqual(vote.resolution_reason, 'target_left')
         self.assertIsNone(self.target.left_at)
         self.assertEqual(self.target.presence, Participant.Presence.OFFLINE)
         self.assertIsNone(rejoin.data['room']['expulsion_vote'])

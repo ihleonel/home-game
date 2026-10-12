@@ -89,6 +89,9 @@ def active_room(request):
     data = serializer.validated_data
     dependencies = compose_room_dependencies()
     try:
+        # Reap first so an emptied ghost room is gone before the lookup runs,
+        # and the lookup then answers "no active room" instead of a dead one.
+        dependencies.reaping.reap()
         room = get_active_room(
             dependencies.membership,
             game_id=data.get('game_id'),
@@ -110,6 +113,7 @@ def create_room(request):
             dependencies.membership,
             data,
             dependencies.vote_cancellation,
+            dependencies.reaping,
         )
     except ActiveRoomGameConflictError:
         raise ActiveRoomGameConflict()
@@ -130,6 +134,7 @@ def join_room(request):
             dependencies.membership,
             data,
             dependencies.vote_cancellation,
+            dependencies.reaping,
         )
     except ActiveRoomGameConflictError:
         raise ActiveRoomGameConflict()

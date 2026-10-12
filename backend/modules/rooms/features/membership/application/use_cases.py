@@ -15,7 +15,7 @@ from ..domain.rules import (
     membership_change,
     missing_identity_fields,
 )
-from ....application.ports import VoteCancellation
+from ....application.ports import GhostReaping, VoteCancellation
 from .ports import RoomMembershipPorts
 
 
@@ -74,9 +74,16 @@ def _publish_join_events(ports, room_id, event_name, cancelled_vote):
 
 
 def create_or_discover_room(
-    ports: RoomMembershipPorts, data, vote_cancellation: VoteCancellation
+    ports: RoomMembershipPorts,
+    data,
+    vote_cancellation: VoteCancellation,
+    reaping: GhostReaping,
 ):
     with ports.atomic():
+        # Reaping happens before the room is locked or created: reaping an
+        # emptied room deletes its row, so resolving the room first would lock
+        # and then delete the very row this transaction goes on to use.
+        reaping.reap()
         room, created = ports.create_or_lock_active_room(data['game_id'])
         if not game_matches(room.game_id, data['game_id']):
             raise ActiveRoomGameConflict()
@@ -91,8 +98,18 @@ def create_or_discover_room(
     return response, created
 
 
-def join_room(ports: RoomMembershipPorts, data, vote_cancellation: VoteCancellation):
+def join_room(
+    ports: RoomMembershipPorts,
+    data,
+    vote_cancellation: VoteCancellation,
+    reaping: GhostReaping,
+):
     with ports.atomic():
+        # Reaping happens before the room is resolved for the same reason as in
+        # create_or_discover_room: the reap may delete the ghost room, and doing
+        # it first gives the joining player a clean room instead of a revived
+        # ghost one.
+        reaping.reap()
         room = ports.active_room_for_update(game_id=data['game_id'])
         if room is None:
             return None

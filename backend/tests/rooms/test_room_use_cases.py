@@ -32,6 +32,7 @@ class MembershipUseCaseTests(SimpleTestCase):
     def test_create_or_discover_sequences_creation_snapshot_and_event(self):
         participant = _participant()
         vote_cancellation = Mock()
+        reaping = Mock()
         # A first join has no pending expulsion vote, so the use case must not
         # publish a cancellation event. Leaving the default Mock return value in
         # place would make it publish one and consume an extra snapshot.
@@ -44,7 +45,7 @@ class MembershipUseCaseTests(SimpleTestCase):
         )
 
         response, created = create_or_discover_room(
-            ports, _new_member_data(), vote_cancellation
+            ports, _new_member_data(), vote_cancellation, reaping
         )
 
         self.assertTrue(created)
@@ -78,9 +79,12 @@ class MembershipUseCaseTests(SimpleTestCase):
             create_or_lock_active_room=(ActiveRoom(12, SCOPING_GAME_ID), False)
         )
         vote_cancellation = Mock()
+        reaping = Mock()
 
         with self.assertRaises(ActiveRoomGameConflict):
-            create_or_discover_room(ports, _new_member_data(), vote_cancellation)
+            create_or_discover_room(
+                ports, _new_member_data(), vote_cancellation, reaping
+            )
 
         self.assertEqual(
             ports.timeline,
@@ -93,10 +97,11 @@ class MembershipUseCaseTests(SimpleTestCase):
             participant_for_session_for_update=None,
         )
         vote_cancellation = Mock()
+        reaping = Mock()
 
         with self.assertRaises(MissingParticipantIdentity) as error:
             create_or_discover_room(
-                ports, {'game_id': 'duelo'}, vote_cancellation
+                ports, {'game_id': 'duelo'}, vote_cancellation, reaping
             )
 
         self.assertEqual(set(error.exception.fields), {'display_name', 'game_marker'})
@@ -114,13 +119,14 @@ class MembershipUseCaseTests(SimpleTestCase):
         vote_cancellation = Mock()
         vote_cancellation.session_was_removed.return_value = False
         vote_cancellation.target_reconnected.return_value = {'status': 'cancelled'}
+        reaping = Mock()
         data = {
             'game_id': 'duelo',
             'session_id': participant.session_id,
             'display_name': 'Guest Updated',
         }
 
-        response = join_room(ports, data, vote_cancellation)
+        response = join_room(ports, data, vote_cancellation, reaping)
 
         self.assertEqual(response['session_id'], str(participant.session_id))
         vote_cancellation.target_reconnected.assert_called_once_with(
@@ -213,6 +219,74 @@ class MembershipUseCaseTests(SimpleTestCase):
             12, participant.id
         )
 
+    def test_create_reaps_before_locking_or_creating_the_room(self):
+        participant = _participant()
+        ports = _ports(
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
+            participant_for_session_for_update=None,
+            create_participant=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.target_reconnected.return_value = None
+        reaping = _reaping(ports)
+
+        create_or_discover_room(
+            ports, _new_member_data(), vote_cancellation, reaping
+        )
+
+        reaping.reap.assert_called_once_with()
+        self.assertEqual(ports.timeline[0], 'begin')
+        self.assertLess(
+            ports.timeline.index('reap'),
+            ports.timeline.index('create_or_lock_active_room'),
+        )
+        self.assertLess(ports.timeline.index('reap'), ports.timeline.index('commit'))
+
+    def test_join_reaps_before_resolving_the_room(self):
+        participant = _participant()
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'duelo'),
+            participant_for_session_for_update=participant,
+            save_membership_changes=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.session_was_removed.return_value = False
+        vote_cancellation.target_reconnected.return_value = None
+        reaping = _reaping(ports)
+        data = {
+            'game_id': 'duelo',
+            'session_id': participant.session_id,
+            'display_name': 'Guest Updated',
+        }
+
+        join_room(ports, data, vote_cancellation, reaping)
+
+        reaping.reap.assert_called_once_with()
+        self.assertEqual(ports.timeline[0], 'begin')
+        self.assertLess(
+            ports.timeline.index('reap'),
+            ports.timeline.index('active_room_for_update'),
+        )
+        self.assertLess(ports.timeline.index('reap'), ports.timeline.index('commit'))
+
+    def test_join_without_a_room_returns_none_after_reaping(self):
+        ports = _ports(active_room_for_update=None)
+        vote_cancellation = Mock()
+        reaping = _reaping(ports)
+
+        result = join_room(
+            ports, {'game_id': 'duelo'}, vote_cancellation, reaping
+        )
+
+        self.assertIsNone(result)
+        reaping.reap.assert_called_once_with()
+        self.assertEqual(
+            ports.timeline,
+            ['begin', 'reap', 'active_room_for_update', 'commit'],
+        )
+
 
 class ReadinessUseCaseTests(SimpleTestCase):
     def test_readiness_change_is_saved_and_published_inside_unit_of_work(self):
@@ -271,6 +345,13 @@ class ReadinessUseCaseTests(SimpleTestCase):
 
 def _ports(**results):
     return ports_fake(RoomMembershipPorts, ReadinessPorts, **results)
+
+
+def _reaping(ports):
+    """Reaping collaborator that leaves a marker in the ports timeline."""
+    reaping = Mock()
+    reaping.reap.side_effect = lambda **kwargs: ports.timeline.append('reap')
+    return reaping
 
 
 def _new_member_data():
