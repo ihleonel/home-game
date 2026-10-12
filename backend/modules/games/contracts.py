@@ -13,6 +13,15 @@ SeatId = str
 ParticipantRef = str
 
 
+def seat_id(index: int) -> str:
+    """Return the canonical seat id for a seat index.
+
+    This is the single source of the ``f'seat-{index}'`` convention shared by
+    the runtime and every game definition, so the two cannot drift apart.
+    """
+    return f'seat-{index}'
+
+
 @dataclass(frozen=True)
 class Seat:
     index: int
@@ -81,7 +90,16 @@ class GameDefinition(Protocol):
 
     def start(self, seats: Sequence[Seat], rng: RandomSource | None) -> Mapping: ...
 
-    def active_seats(self, state: Mapping) -> tuple[SeatId, ...]: ...
+    def active_seats(self, state: Mapping) -> tuple[SeatId, ...]:
+        """Return the seats that may act in ``state``.
+
+        The order of the returned tuple is **not significant**: the runtime
+        orders seats by its own ``MatchSeat.index``. Match state is persisted
+        in a Postgres ``jsonb`` column, which does not preserve object key
+        order, so a definition must not rely on the order of a state-derived
+        tuple.
+        """
+        ...
 
     def legal_actions(self, state: Mapping, seat: SeatId) -> tuple[ActionSpec, ...]: ...
 
@@ -91,7 +109,14 @@ class GameDefinition(Protocol):
         seat: SeatId,
         action: Action,
         rng: RandomSource | None,
-    ) -> Transition: ...
+    ) -> Transition:
+        """Advance the match and return the new state plus the facts emitted.
+
+        Precondition: the runtime passes only actions obtained from
+        ``legal_actions`` for a seat returned by ``active_seats``. An
+        implementation must still never silently accept an invalid value.
+        """
+        ...
 
     def view(self, state: Mapping, seat: SeatId | None) -> Mapping: ...
 
