@@ -1,7 +1,5 @@
 from collections import deque
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock
 from uuid import uuid4
 
 from django.test import SimpleTestCase
@@ -13,6 +11,9 @@ from modules.rooms.features.expulsion_voting.application.use_cases import (
 from modules.rooms.features.expulsion_voting.application.cancellations import (
     ExpulsionVoteCancellation,
 )
+from modules.rooms.features.expulsion_voting.application.ports import (
+    ExpulsionVotingPorts,
+)
 from modules.rooms.features.expulsion_voting.domain.entities import (
     BallotRecord,
     VoteParticipant,
@@ -22,6 +23,8 @@ from modules.rooms.features.expulsion_voting.domain.rules import (
     resolve_ballot,
     resolve_electorate,
 )
+
+from .support import ports_fake
 
 
 class ExpulsionVotingDomainTests(SimpleTestCase):
@@ -215,30 +218,7 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
 
 
 def _ports(**results):
-    ports = Mock()
-    ports.timeline = []
-
-    @contextmanager
-    def atomic():
-        ports.timeline.append('begin')
-        try:
-            yield
-        except Exception:
-            ports.timeline.append('rollback')
-            raise
-        else:
-            ports.timeline.append('commit')
-
-    ports.atomic.side_effect = atomic
-    for name, result in results.items():
-        def operation(*args, _name=name, _result=result, **kwargs):
-            ports.timeline.append(_name)
-            if isinstance(_result, deque):
-                return _result.popleft()
-            return _result
-
-        getattr(ports, name).side_effect = operation
-    return ports
+    return ports_fake(ExpulsionVotingPorts, **results)
 
 
 def _participant(participant_id, presence='online', disconnected_at=None):

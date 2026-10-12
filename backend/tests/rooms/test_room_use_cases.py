@@ -1,5 +1,4 @@
 from collections import deque
-from contextlib import contextmanager
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -23,6 +22,8 @@ from modules.rooms.features.readiness.application.ports import ReadinessPorts
 from modules.rooms.features.readiness.application.use_cases import set_ready_state
 from modules.rooms.features.readiness.domain.entities import ReadinessParticipant
 from modules.rooms.features.readiness.domain.errors import ActiveRoomNotFound
+
+from .support import ports_fake
 
 
 class MembershipUseCaseTests(SimpleTestCase):
@@ -105,7 +106,6 @@ class MembershipUseCaseTests(SimpleTestCase):
         ports = _ports(
             active_room_for_update=ActiveRoom(12, 'starlight-garden'),
             participant_for_session_for_update=participant,
-            session_was_removed=False,
             save_membership_changes=participant,
             room_snapshot=deque(({'revision': 1}, {'revision': 2}, {'revision': 3})),
         )
@@ -240,54 +240,8 @@ class ReadinessUseCaseTests(SimpleTestCase):
         ports.active_participant_for_session_for_update.assert_not_called()
 
 
-_UNSET = object()
-
-
-def _declared_ports():
-    """Port names declared by the protocols this fake stands in for."""
-    protocols = (RoomMembershipPorts, ReadinessPorts)
-    return {
-        name
-        for protocol in protocols
-        for name, member in vars(protocol).items()
-        if not name.startswith('_') and callable(member)
-    }
-
-
 def _ports(**results):
-    ports = Mock()
-    ports.timeline = []
-
-    @contextmanager
-    def atomic():
-        ports.timeline.append('begin')
-        try:
-            yield
-        except Exception:
-            ports.timeline.append('rollback')
-            raise
-        else:
-            ports.timeline.append('commit')
-
-    ports.atomic.side_effect = atomic
-
-    # Record every declared port, not only the ones configured below. Recording
-    # just the configured names let a timeline assertion omit a step silently, so
-    # it passed or failed for a reason unrelated to the sequence under test.
-    # Unconfigured ports return an inert sentinel instead of a fabricated value.
-    for name in sorted(_declared_ports() - {'atomic'}):
-        result = results.get(name, _UNSET)
-
-        def operation(*args, _name=name, _result=result, **kwargs):
-            ports.timeline.append(_name)
-            if isinstance(_result, deque):
-                return _result.popleft()
-            return _result
-
-        getattr(ports, name).side_effect = operation
-
-    ports.session_was_removed.return_value = False
-    return ports
+    return ports_fake(RoomMembershipPorts, ReadinessPorts, **results)
 
 
 def _new_member_data():
