@@ -5,10 +5,16 @@ import type { MatchView } from '../games/registry'
  *
  * It is the runtime's public projection (S6): it never carries a pick or any
  * other hidden play, only whether the seat's socket is still there.
+ *
+ * ``remaining_seconds`` is the reconnect window the server still grants that
+ * seat, in seconds. The server computes it (S8) so the screen never depends on
+ * the browser clock; it is ``null`` for an ``online`` or already ``inactive``
+ * seat, and also when the server sent no usable value.
  */
 export type SeatPresence = {
   index: number
   presence: 'online' | 'reconnecting' | 'inactive'
+  remaining_seconds: number | null
 }
 
 export type Marker = { id: string; label: string }

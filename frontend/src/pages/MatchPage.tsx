@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AppMessages } from '../components/AppMessages'
 import { CatalogGate } from '../components/CatalogGate'
@@ -22,6 +23,67 @@ function abandonmentOutcome(view: MatchView): string {
   return view.winner === view.you
     ? 'Victoria por abandono: tu rival no ha vuelto a conectarse.'
     : 'Derrota por abandono: no has vuelto a conectarte a tiempo.'
+}
+
+/**
+ * The reconnect notice in player-facing Spanish.
+ *
+ * ``seconds`` is ``null`` when the server sent no usable remaining time, and a
+ * value of zero means the server window elapsed but the seat has not been
+ * marked ``inactive`` yet: in both cases the notice stops promising an
+ * immediate expulsion and hands the resolution to the runtime. The number
+ * itself is rendered by the ``role="timer"`` line, never inside this sentence.
+ */
+function reconnectNotice(label: string, seconds: number | null): string {
+  // The ticking number never lives in this sentence. This paragraph is a live
+  // region, so a value that changes every second would be announced every
+  // second; the countdown gets its own ``role="timer"`` line instead, which a
+  // screen reader can read on demand rather than being interrupted by it. The
+  // sentence therefore changes only when the window itself changes state.
+  if (seconds !== null && seconds <= 0) {
+    return `${label} se ha desconectado. La ventana de reconexión ha terminado: la partida se resolverá por abandono.`
+  }
+  return `${label} se ha desconectado. Está dentro de la ventana de reconexión: si no vuelve a tiempo, la partida se resolverá por abandono.`
+}
+
+type ReconnectCountdown = {
+  remainingSeconds: number
+}
+
+/**
+ * Count the reconnect window down locally, once a second.
+ *
+ * The server owns the deadline and sends ``remaining_seconds`` (S8); the
+ * screen only replays it, so the number moves without waiting for a new frame.
+ * A new server value re-arms the count during render and a null clears it, so
+ * the latest value always wins. Each value arms a fresh countdown object, and a
+ * tick carries the object it belongs to as its run id, so a tick left over from
+ * a previous value can never decrement a freshly armed one -- the same guard the
+ * lobby countdown draws from its run id.
+ */
+function useReconnectCountdown(remainingSeconds: number | null): number | null {
+  const [countdown, setCountdown] = useState<ReconnectCountdown | null>(null)
+  const [armedFor, setArmedFor] = useState<number | null>(null)
+
+  if (remainingSeconds !== armedFor) {
+    setArmedFor(remainingSeconds)
+    setCountdown(typeof remainingSeconds === 'number' ? { remainingSeconds } : null)
+  }
+
+  useEffect(() => {
+    if (!countdown || countdown.remainingSeconds <= 0) return
+    const armed = countdown
+    const timeout = window.setTimeout(() => {
+      setCountdown((current) =>
+        current === armed && current.remainingSeconds > 0
+          ? { remainingSeconds: current.remainingSeconds - 1 }
+          : current,
+      )
+    }, 1000)
+    return () => window.clearTimeout(timeout)
+  }, [countdown])
+
+  return countdown ? countdown.remainingSeconds : null
 }
 
 /**
@@ -52,19 +114,31 @@ export function MatchPage() {
   } = useRoomSession()
   const seatPresence = useMatchPresence()
 
+  // These run before the redirects below because hooks must run on every
+  // render: the countdown is armed from the presence the provider parsed, and
+  // when a seat leaves the reconnect window the latest remaining value (or its
+  // absence) flows in and re-arms it. A finished match stops the timer.
+  const seated = typeof activeMatch?.view.you === 'string'
+  const opponentSeats = seatPresence.filter(
+    (seat) => !seated || seat.index !== activeMatch?.seatIndex,
+  )
+  const reconnectingSeats = opponentSeats.filter((seat) => seat.presence === 'reconnecting')
+  const soonestRemaining = reconnectingSeats.reduce<number | null>((soonest, seat) => {
+    const value = seat.remaining_seconds
+    if (typeof value !== 'number') return soonest
+    return soonest === null || value < soonest ? value : soonest
+  }, null)
+  const matchOngoing = Boolean(activeMatch && !activeMatch.view.finished)
+  const reconnectSeconds = useReconnectCountdown(matchOngoing ? soonestRemaining : null)
+
   const activeGame = games.find((game) => game.id === room?.game_id)
 
   if (!roomSession || !room) return <Navigate to="/" replace />
   if (!activeMatch) return <Navigate to={`/rooms/${room.game_id}`} replace />
 
-  const seated = typeof activeMatch.view.you === 'string'
   const rivalLabel = seated ? 'Tu rival' : 'Un jugador'
-  const opponentSeats = seatPresence.filter(
-    (seat) => !seated || seat.index !== activeMatch.seatIndex,
-  )
-  const rivalReconnecting = opponentSeats.some((seat) => seat.presence === 'reconnecting')
+  const rivalReconnecting = reconnectingSeats.length > 0
   const rivalInactive = opponentSeats.some((seat) => seat.presence === 'inactive')
-  const matchOngoing = !activeMatch.view.finished
 
   return (
     <main className="match-screen">
@@ -84,9 +158,18 @@ export function MatchPage() {
 
       {matchOngoing && rivalReconnecting && (
         <p className="message message-info" role="status">
-          {`${rivalLabel} se ha desconectado. Está dentro de la ventana de reconexión: si no vuelve a tiempo, la partida se resolverá por abandono.`}
+          {reconnectNotice(rivalLabel, reconnectSeconds)}
         </p>
       )}
+
+      {matchOngoing &&
+        rivalReconnecting &&
+        reconnectSeconds !== null &&
+        reconnectSeconds > 0 && (
+          <p className="message message-info" role="timer">
+            {`Quedan ${reconnectSeconds} s de ventana de reconexión.`}
+          </p>
+        )}
 
       {matchOngoing && rivalInactive && (
         <p className="message message-error" role="alert">
