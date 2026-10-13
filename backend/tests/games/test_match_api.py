@@ -186,6 +186,33 @@ class GhostReadyParticipantApiTests(MatchApiTestCase):
         self.assertIsNone(inside.left_at)
 
 
+class ReadySeatsOnlyApiTests(MatchApiTestCase):
+    """Seats come from the room's ready members, so readiness is the filter."""
+
+    def test_a_not_ready_member_is_neither_a_seat_nor_a_ready_participant(self):
+        # A third member who never marked ready must not shift the seats: the
+        # room opens with exactly its two ready participants, so the
+        # ``is_ready=True`` half of the seat query stays load-bearing. A member
+        # that did reach the ready set is covered by the ghost and seat-count
+        # tests above.
+        third = self.create_participant(
+            'Guest Three', 'guante-verde', is_ready=False
+        )
+
+        opened = self.open_match()
+
+        seat_refs = [seat.participant_ref for seat in opened.record.seats]
+        self.assertEqual(
+            seat_refs,
+            [str(self.first.public_id), str(self.second.public_id)],
+        )
+        self.assertNotIn(str(third.public_id), seat_refs)
+        self.assertEqual(
+            [str(participant.public_id) for participant in opened.participants],
+            [str(self.first.public_id), str(self.second.public_id)],
+        )
+
+
 class GhostFirstSeatOrderApiTests(MatchApiTestCase):
     """The ghost that joined first would otherwise occupy seat 0."""
 
