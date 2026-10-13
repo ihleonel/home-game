@@ -1,4 +1,5 @@
 from ....application.ports import VoteCancellation
+from ..domain.rules import GRACE
 from .ports import ReapingPorts
 from .use_cases import reap_ghost_memberships
 
@@ -21,18 +22,17 @@ class ReapingService:
         self.vote_cancellation = vote_cancellation
         self.grace_seconds = grace_seconds
 
-    def reap(self, *, room_id: int | None = None, grace_seconds: int | None = None):
+    def reap(self, *, room_id: int | None = None, policy: str = GRACE):
         """Reap ghost memberships and rooms.
 
-        ``grace_seconds`` overrides the composed grace window for a single run
-        and ``None`` keeps the bound value, so every adapter resolves the
-        window in one place and ``--startup`` can pass ``0`` without a second
-        code path.
+        The grace window stays bound here; adapters only choose the staleness
+        policy. ``GRACE`` (the default) is the hot-path and on-demand rule, and
+        ``STARTUP`` is the presence-agnostic boot sweep.
         """
-        bound_grace = self.grace_seconds if grace_seconds is None else grace_seconds
         return reap_ghost_memberships(
             self.ports,
             self.vote_cancellation,
-            grace_seconds=bound_grace,
+            grace_seconds=self.grace_seconds,
             room_id=room_id,
+            policy=policy,
         )

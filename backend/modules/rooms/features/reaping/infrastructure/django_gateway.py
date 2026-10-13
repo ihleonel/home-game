@@ -1,12 +1,14 @@
 from contextlib import contextmanager
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from ....infrastructure.events import room_snapshot, schedule_room_event
 from ....models import Participant, Room
 from .....games.models import Match
 from ..domain.entities import ReapableParticipant
+from ..domain.rules import GRACE
 
 
 class DjangoRoomReapingGateway:
@@ -32,24 +34,36 @@ class DjangoRoomReapingGateway:
             ).values_list('room_id', flat=True)
         )
 
-    def reapable_participants_for_update(self, room_ids, *, cutoff):
-        # The cutoff comparison lives in SQL on purpose: this query decides who
+    def reapable_participants_for_update(self, room_ids, *, policy, cutoff):
+        # The cutoff comparisons live in SQL on purpose: this query decides who
         # gets removed, so a participant inside the grace window must never
-        # leave the database.
+        # leave the database. The two grace branches mirror ``is_stale``
+        # exactly; under ``STARTUP`` there is no presence predicate at all,
+        # because every non-left row is a ghost at boot.
         participants = (
             Participant.objects.select_for_update()
             .filter(
                 room_id__in=room_ids,
                 left_at__isnull=True,
-                presence__in=(
-                    Participant.Presence.RECONNECTING,
-                    Participant.Presence.INACTIVE,
-                ),
-                disconnected_at__isnull=False,
-                disconnected_at__lte=cutoff,
             )
             .order_by('pk')
         )
+        if policy == GRACE:
+            participants = participants.filter(
+                Q(
+                    presence__in=(
+                        Participant.Presence.RECONNECTING,
+                        Participant.Presence.INACTIVE,
+                    ),
+                    disconnected_at__isnull=False,
+                    disconnected_at__lte=cutoff,
+                )
+                | Q(
+                    presence=Participant.Presence.OFFLINE,
+                    updated_at__isnull=False,
+                    updated_at__lte=cutoff,
+                )
+            )
         return tuple(
             ReapableParticipant(
                 id=participant.pk,
@@ -60,6 +74,7 @@ class DjangoRoomReapingGateway:
                 session_id=participant.session_id,
                 presence=participant.presence,
                 disconnected_at=participant.disconnected_at,
+                updated_at=participant.updated_at,
             )
             for participant in participants
         )

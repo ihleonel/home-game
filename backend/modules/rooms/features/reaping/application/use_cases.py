@@ -17,7 +17,7 @@ only allows ``status='active'``.
 
 from ....application.ports import VoteCancellation
 from ..domain.entities import ReapOutcome
-from ..domain.rules import is_stale, reap_changes, staleness_cutoff
+from ..domain.rules import GRACE, is_stale, reap_changes, staleness_cutoff
 from .ports import ReapingPorts
 
 
@@ -34,6 +34,7 @@ def reap_ghost_memberships(
     *,
     grace_seconds: int,
     room_id: int | None = None,
+    policy: str = GRACE,
 ) -> ReapOutcome:
     with ports.atomic():
         room_ids = ports.active_room_ids(room_id=room_id)
@@ -51,9 +52,15 @@ def reap_ghost_memberships(
         reapable = tuple(
             participant
             for participant in ports.reapable_participants_for_update(
-                candidate_rooms, cutoff=cutoff
+                candidate_rooms, policy=policy, cutoff=cutoff
             )
-            if is_stale(participant.presence, participant.disconnected_at, cutoff)
+            if is_stale(
+                policy,
+                participant.presence,
+                participant.disconnected_at,
+                participant.updated_at,
+                cutoff,
+            )
         )
 
         rooms_reaped = 0

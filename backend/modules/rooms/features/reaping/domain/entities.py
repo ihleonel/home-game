@@ -9,6 +9,7 @@ class ReapableParticipant:
     session_id: object
     presence: str
     disconnected_at: datetime | None
+    updated_at: datetime | None
 
 
 @dataclass(frozen=True)

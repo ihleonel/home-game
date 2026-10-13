@@ -14,6 +14,8 @@ from modules.rooms.features.reaping.domain.entities import (
     ReapOutcome,
 )
 from modules.rooms.features.reaping.domain.rules import (
+    GRACE,
+    STARTUP,
     is_stale,
     reap_changes,
     staleness_cutoff,
@@ -49,7 +51,7 @@ class ReapingUseCaseTests(SimpleTestCase):
         self.assertEqual(outcome, ReapOutcome(1, 1, 1))
         ports.active_room_ids.assert_called_once_with(room_id=None)
         ports.reapable_participants_for_update.assert_called_once_with(
-            (12,), cutoff=CUTOFF
+            (12,), policy=GRACE, cutoff=CUTOFF
         )
         ports.save_reaped_changes.assert_called_once_with(
             24,
@@ -294,6 +296,97 @@ class ReapingUseCaseTests(SimpleTestCase):
         ports.delete_room.assert_not_called()
         vote_cancellation.participant_left.assert_not_called()
 
+    def test_never_socketed_offline_row_returned_by_the_port_is_reaped(self):
+        participant = _participant(
+            presence='offline',
+            disconnected_at=None,
+            updated_at=NOW - timedelta(seconds=90),
+        )
+        ports = _ports(
+            active_room_ids=(12,),
+            room_ids_with_in_progress_match=set(),
+            now=NOW,
+            reapable_participants_for_update=(participant,),
+            room_snapshot={'revision': 1},
+            has_active_participants=False,
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.participant_left.return_value = None
+
+        outcome = reap_ghost_memberships(
+            ports, vote_cancellation, grace_seconds=60
+        )
+
+        self.assertEqual(outcome, ReapOutcome(1, 1, 1))
+        ports.save_reaped_changes.assert_called_once_with(
+            24,
+            {
+                'left_at': NOW,
+                'presence': 'offline',
+                'disconnected_at': None,
+                'is_ready': False,
+            },
+        )
+
+    def test_fresh_offline_row_returned_by_the_port_is_not_reaped(self):
+        participant = _participant(
+            presence='offline',
+            disconnected_at=None,
+            updated_at=NOW - timedelta(seconds=10),
+        )
+        ports = _ports(
+            active_room_ids=(12,),
+            room_ids_with_in_progress_match=set(),
+            now=NOW,
+            reapable_participants_for_update=(participant,),
+        )
+        vote_cancellation = Mock()
+
+        outcome = reap_ghost_memberships(
+            ports, vote_cancellation, grace_seconds=60
+        )
+
+        self.assertEqual(outcome, ReapOutcome(0, 0, 0))
+        ports.save_reaped_changes.assert_not_called()
+        ports.schedule_room_event.assert_not_called()
+        ports.delete_room.assert_not_called()
+        vote_cancellation.participant_left.assert_not_called()
+
+    def test_startup_policy_reaps_a_presence_agnostic_row(self):
+        participant = _participant(
+            presence='online',
+            disconnected_at=None,
+            updated_at=NOW,
+        )
+        ports = _ports(
+            active_room_ids=(12,),
+            room_ids_with_in_progress_match=set(),
+            now=NOW,
+            reapable_participants_for_update=(participant,),
+            room_snapshot={'revision': 1},
+            has_active_participants=False,
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.participant_left.return_value = None
+
+        outcome = reap_ghost_memberships(
+            ports, vote_cancellation, grace_seconds=60, policy=STARTUP
+        )
+
+        self.assertEqual(outcome, ReapOutcome(1, 1, 1))
+        ports.reapable_participants_for_update.assert_called_once_with(
+            (12,), policy=STARTUP, cutoff=CUTOFF
+        )
+        ports.save_reaped_changes.assert_called_once_with(
+            24,
+            {
+                'left_at': NOW,
+                'presence': 'offline',
+                'disconnected_at': None,
+                'is_ready': False,
+            },
+        )
+
     def test_guard_drops_only_the_non_stale_rows_from_a_mixed_batch(self):
         stale = _participant(
             participant_id=24,
@@ -395,24 +488,53 @@ class StalenessRulesTests(SimpleTestCase):
     def test_disconnected_inside_the_grace_window_is_not_stale(self):
         disconnected_at = NOW - timedelta(seconds=59)
 
-        self.assertFalse(is_stale('reconnecting', disconnected_at, CUTOFF))
-        self.assertFalse(is_stale('inactive', disconnected_at, CUTOFF))
+        self.assertFalse(
+            is_stale(GRACE, 'reconnecting', disconnected_at, NOW, CUTOFF)
+        )
+        self.assertFalse(is_stale(GRACE, 'inactive', disconnected_at, NOW, CUTOFF))
 
     def test_disconnected_exactly_at_the_cutoff_is_stale(self):
         disconnected_at = NOW - timedelta(seconds=60)
 
-        self.assertTrue(is_stale('reconnecting', disconnected_at, CUTOFF))
-        self.assertTrue(is_stale('inactive', disconnected_at, CUTOFF))
+        self.assertTrue(
+            is_stale(GRACE, 'reconnecting', disconnected_at, NOW, CUTOFF)
+        )
+        self.assertTrue(is_stale(GRACE, 'inactive', disconnected_at, NOW, CUTOFF))
 
-    def test_connected_presence_is_never_stale(self):
-        disconnected_at = NOW - timedelta(hours=1)
+    def test_offline_at_the_cutoff_is_stale_and_a_fresh_update_is_kept(self):
+        self.assertTrue(is_stale(GRACE, 'offline', None, CUTOFF, CUTOFF))
+        self.assertTrue(
+            is_stale(GRACE, 'offline', None, CUTOFF - timedelta(seconds=1), CUTOFF)
+        )
+        self.assertFalse(
+            is_stale(
+                GRACE,
+                'offline',
+                None,
+                CUTOFF + timedelta(seconds=1),
+                CUTOFF,
+            )
+        )
 
-        self.assertFalse(is_stale('online', disconnected_at, CUTOFF))
-        self.assertFalse(is_stale('offline', disconnected_at, CUTOFF))
+    def test_online_presence_is_never_stale_under_grace(self):
+        old = NOW - timedelta(hours=1)
+
+        self.assertFalse(is_stale(GRACE, 'online', old, old, CUTOFF))
+        self.assertFalse(is_stale(GRACE, 'online', None, None, CUTOFF))
 
     def test_missing_disconnection_moment_is_never_stale(self):
-        self.assertFalse(is_stale('reconnecting', None, CUTOFF))
-        self.assertFalse(is_stale('inactive', None, CUTOFF))
+        self.assertFalse(is_stale(GRACE, 'reconnecting', None, NOW, CUTOFF))
+        self.assertFalse(is_stale(GRACE, 'inactive', None, NOW, CUTOFF))
+
+    def test_missing_update_moment_keeps_an_offline_row(self):
+        self.assertFalse(is_stale(GRACE, 'offline', None, None, CUTOFF))
+
+    def test_startup_policy_is_presence_agnostic(self):
+        for presence in ('online', 'offline', 'reconnecting', 'inactive'):
+            self.assertTrue(
+                is_stale(STARTUP, presence, None, None, CUTOFF),
+                f'{presence} must be stale under the startup policy',
+            )
 
     def test_reap_changes_clears_membership_and_readiness(self):
         self.assertEqual(
@@ -435,6 +557,7 @@ def _participant(
     room_id=12,
     presence='reconnecting',
     disconnected_at=NOW - timedelta(seconds=90),
+    updated_at=NOW - timedelta(seconds=90),
 ):
     return ReapableParticipant(
         id=participant_id,
@@ -442,4 +565,5 @@ def _participant(
         session_id=uuid4(),
         presence=presence,
         disconnected_at=disconnected_at,
+        updated_at=updated_at,
     )

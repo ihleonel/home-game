@@ -52,6 +52,12 @@ def inside_grace_moment():
     return timezone.now() - timedelta(seconds=RECONNECT_GRACE_SECONDS - 5)
 
 
+def age_participant(participant, *, updated_at):
+    Participant.objects.filter(pk=participant.pk).update(updated_at=updated_at)
+    participant.refresh_from_db()
+    return participant
+
+
 def run_command(*args):
     stdout = io.StringIO()
     call_command('reap_rooms', *args, stdout=stdout)
@@ -93,7 +99,7 @@ class ReapRoomsCommandTests(TestCase):
         self.assertIn('rooms touched: 1', output)
         self.assertIn('rooms deleted: 0', output)
 
-    def test_startup_run_ignores_the_grace_window(self):
+    def test_startup_run_reaps_every_non_left_membership_in_a_non_busy_room(self):
         room = create_room()
         inside = create_participant(
             room,
@@ -109,17 +115,71 @@ class ReapRoomsCommandTests(TestCase):
 
         output = run_command('--startup')
 
-        inside.refresh_from_db()
-        self.assertIsNotNone(inside.left_at)
-        self.assertEqual(inside.presence, Participant.Presence.OFFLINE)
-        self.assertIsNone(inside.disconnected_at)
-        self.assertFalse(inside.is_ready)
-        companion.refresh_from_db()
-        self.assertIsNone(companion.left_at)
-        self.assertTrue(Room.objects.filter(pk=room.pk).exists())
+        # The startup sweep is presence-agnostic, so even the online companion
+        # is a ghost; the emptied room and its members are gone.
+        self.assertFalse(Room.objects.filter(pk=room.pk).exists())
+        self.assertFalse(
+            Participant.objects.filter(pk__in=(inside.pk, companion.pk)).exists()
+        )
+        self.assertIn('Reaped participants: 2', output)
+        self.assertIn('rooms touched: 1', output)
+        self.assertIn('rooms deleted: 1', output)
+
+    def test_default_run_reaps_a_never_socketed_offline_membership(self):
+        # A membership posted over REST whose socket never opened is offline
+        # with disconnected_at=NULL; it must still age out on the grace window.
+        room = create_room()
+        offline = age_participant(
+            create_participant(room, presence=Participant.Presence.OFFLINE),
+            updated_at=stale_moment(),
+        )
+
+        output = run_command()
+
         self.assertIn('Reaped participants: 1', output)
         self.assertIn('rooms touched: 1', output)
-        self.assertIn('rooms deleted: 0', output)
+        self.assertIn('rooms deleted: 1', output)
+        self.assertFalse(Room.objects.filter(pk=room.pk).exists())
+        self.assertFalse(Participant.objects.filter(pk=offline.pk).exists())
+
+    def test_startup_run_reaps_a_presence_agnostic_membership_and_default_does_not(
+        self,
+    ):
+        room = create_room()
+        online = create_participant(
+            room,
+            presence=Participant.Presence.ONLINE,
+            display_name='Online',
+        )
+
+        default_output = run_command()
+        online.refresh_from_db()
+        self.assertIsNone(online.left_at)
+        self.assertTrue(Room.objects.filter(pk=room.pk).exists())
+        self.assertIn('Reaped participants: 0', default_output)
+
+        startup_output = run_command('--startup')
+        self.assertFalse(Room.objects.filter(pk=room.pk).exists())
+        self.assertFalse(Participant.objects.filter(pk=online.pk).exists())
+        self.assertIn('Reaped participants: 1', startup_output)
+        self.assertIn('rooms touched: 1', startup_output)
+        self.assertIn('rooms deleted: 1', startup_output)
+
+    def test_startup_run_is_idempotent_for_presence_agnostic_memberships(self):
+        room = create_room()
+        create_participant(
+            room,
+            presence=Participant.Presence.ONLINE,
+            display_name='Online',
+        )
+
+        first = run_command('--startup')
+        second = run_command('--startup')
+
+        self.assertIn('Reaped participants: 1', first)
+        self.assertIn('Reaped participants: 0', second)
+        self.assertIn('rooms deleted: 0', second)
+        self.assertFalse(Room.objects.filter(pk=room.pk).exists())
 
     def test_room_with_in_progress_match_keeps_its_participant_in_both_modes(self):
         room = create_room()
