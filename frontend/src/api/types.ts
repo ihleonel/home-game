@@ -1,5 +1,16 @@
 import type { MatchView } from '../games/registry'
 
+/**
+ * The presence of one seat of the running match.
+ *
+ * It is the runtime's public projection (S6): it never carries a pick or any
+ * other hidden play, only whether the seat's socket is still there.
+ */
+export type SeatPresence = {
+  index: number
+  presence: 'online' | 'reconnecting' | 'inactive'
+}
+
 export type Marker = { id: string; label: string }
 
 export type Game = {
@@ -96,4 +107,5 @@ export type ServerMessage = {
   seat_index?: number | null
   version?: number
   view?: MatchView
+  seats?: SeatPresence[]
 }

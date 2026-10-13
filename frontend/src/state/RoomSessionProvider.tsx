@@ -9,9 +9,11 @@ import type {
   Room,
   RoomEnvelope,
   RoomIntent,
+  SeatPresence,
   ServerMessage,
   VoteResponse,
 } from '../api/types'
+import { MatchPresenceContext, parseSeatPresence } from '../games/matchPresence'
 import { hasMatchRenderer } from '../games/registry'
 import type { MatchState } from '../games/registry'
 import { expulsionVoteMessage } from '../lib/format'
@@ -20,6 +22,12 @@ import { readStoredRoomSession, saveGuestSession } from '../lib/session'
 import type { GuestIdentity, RoomSession } from '../lib/session'
 import { RoomSessionContext } from './roomSessionContext'
 import type { CreateOrJoinOutcome, MatchCountdown, PendingAction } from './roomSessionContext'
+
+/**
+ * One stable empty value so a screen without presence does not get a fresh
+ * array on every render.
+ */
+const NO_SEAT_PRESENCE: SeatPresence[] = []
 
 /**
  * Owns the room session, the current match and the single WebSocket.
@@ -41,6 +49,13 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
   const [countdown, setCountdown] = useState<MatchCountdown | null>(null)
   const [countdownNotice, setCountdownNotice] = useState<string | null>(null)
   const [match, setMatch] = useState<MatchState | null>(null)
+  // Presence is keyed by match ref so a frame for another match can never
+  // annotate the one on screen, and a new match starts with none of the
+  // previous one's presence.
+  const [matchSeatPresence, setMatchSeatPresence] = useState<{
+    matchRef: string
+    seats: SeatPresence[]
+  } | null>(null)
 
   const isJoined = roomSession?.gameId === room?.game_id
   const currentParticipant = room?.participants.find(
@@ -64,6 +79,10 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
   const activeMatch = roomSession ? match : null
   const matchInProgress = Boolean(activeMatch && !activeMatch.view.finished)
   const matchRendererAvailable = room ? hasMatchRenderer(room.game_id) : false
+  const activeMatchPresence =
+    activeMatch && matchSeatPresence?.matchRef === activeMatch.matchRef
+      ? matchSeatPresence.seats
+      : NO_SEAT_PRESENCE
 
   async function refreshActiveRoom(gameId: string, sessionId?: string): Promise<void> {
     try {
@@ -125,6 +144,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       setRoom(response.room)
       setRoomSession(nextSession)
       setMatch(null)
+      setMatchSeatPresence(null)
       setConnectionError(null)
       setVoteNotice(null)
       return 'joined'
@@ -201,6 +221,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       setRoomSession(null)
       setRoom(null)
       setMatch(null)
+      setMatchSeatPresence(null)
       setConnectionError(null)
       setVoteNotice(null)
     } catch (error) {
@@ -210,6 +231,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
         setRoomSession(null)
         setRoom(null)
         setMatch(null)
+        setMatchSeatPresence(null)
         setConnectionError(null)
         setVoteNotice(null)
       } else if (error instanceof ApiError && error.status === 409) {
@@ -281,6 +303,9 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
           setMatch((current) => (current?.matchRef === matchRef ? null : current))
+          setMatchSeatPresence((current) =>
+            current?.matchRef === matchRef ? null : current,
+          )
           return
         }
         setActionError(
@@ -486,6 +511,15 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
               version: current && current.matchRef === matchRef ? current.version : null,
               view,
             }))
+            const snapshotPresence = parseSeatPresence(message.seats)
+            setMatchSeatPresence((current) => {
+              if (snapshotPresence === null) {
+                // No usable presence in this frame: keep what this match
+                // already had, but never carry it over to a new one.
+                return current?.matchRef === matchRef ? current : null
+              }
+              return { matchRef, seats: snapshotPresence }
+            })
             // The snapshot names the match and carries its view, but no
             // version. One resync read fills the version in; this is the
             // reload resume path, not a second way to discover a match.
@@ -501,6 +535,20 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
               typeof message.version === 'number' ? message.version : null
             setCountdown(null)
             setMatch((current) => mergeMatchEvent(current, matchRef, version, view))
+          } else if (
+            message.type === 'match.presence' &&
+            typeof message.match_ref === 'string'
+          ) {
+            // Presence only annotates the match already on screen. A frame
+            // for another match (or one that arrives before the snapshot) is
+            // dropped rather than starting a match from presence alone.
+            const matchRef = message.match_ref
+            const seats = parseSeatPresence(message.seats)
+            if (seats !== null) {
+              setMatchSeatPresence((current) =>
+                current?.matchRef === matchRef ? { matchRef, seats } : current,
+              )
+            }
           }
         }
 
@@ -587,7 +635,9 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
         setActionError,
       }}
     >
-      {children}
+      <MatchPresenceContext.Provider value={activeMatchPresence}>
+        {children}
+      </MatchPresenceContext.Provider>
     </RoomSessionContext.Provider>
   )
 }

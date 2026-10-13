@@ -32,6 +32,12 @@ export type MatchView = {
   reveal: MatchReveal | null
   winner: string | null
   finished: boolean
+  /**
+   * Set by the game when the finish came from a seat that did not return
+   * inside the reconnect grace (S3/S6). The client only renders it; it never
+   * derives the reason.
+   */
+  ended_by_abandon?: boolean
 }
 
 /**

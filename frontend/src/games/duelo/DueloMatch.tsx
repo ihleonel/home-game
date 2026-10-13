@@ -46,6 +46,9 @@ function outcomeMessage(view: MatchView): string {
  * choice. Every statement it makes is a field of ``view``. The pick buttons
  * are enabled only while the server says this session occupies a seat, has not
  * picked this round, the match is not finished and a version is known.
+ *
+ * A finish by abandonment is left to the match screen, which renders the
+ * runtime-level result; here the outcome line would only repeat it.
  */
 export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
   const { view } = match
@@ -73,7 +76,9 @@ export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
       </ul>
 
       {view.finished ? (
-        <p className="duelo-outcome" role="status">{outcomeMessage(view)}</p>
+        view.ended_by_abandon ? null : (
+          <p className="duelo-outcome" role="status">{outcomeMessage(view)}</p>
+        )
       ) : seated ? (
         <p className="duelo-progress" role="status">
           {picked ? `Tu jugada: ${pickLabel(view.your_pick ?? null)}.` : 'Todavía no has elegido.'}{' '}
