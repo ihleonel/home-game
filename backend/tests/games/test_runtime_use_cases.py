@@ -712,6 +712,21 @@ class AbandonSeatFinishedMatchTests(SimpleTestCase):
         self.assertEqual(self.projector.publishes, publishes_before)
         self.assertEqual(len(self.lifecycle.calls), 1)
 
+    def test_hook_failure_rolls_the_abandon_back(self):
+        """S5, S7: the finish and the room reset are one atomic outcome."""
+        before = self.store.records[self.record.match_ref]
+        actions_before = list(self.store.actions)
+        self.lifecycle.fail = RuntimeError('readiness reset failed')
+
+        with self.assertRaises(RuntimeError):
+            self._abandon()
+
+        after = self.store.records[self.record.match_ref]
+        self.assertEqual(after, before)
+        self.assertEqual(after.status, 'in_progress')
+        self.assertEqual(self.store.actions, actions_before)
+        self.assertEqual(self.projector.publishes, [])
+
 
 class ApplicationPackageTests(SimpleTestCase):
     def test_seat_views_is_imported_from_the_views_module(self):

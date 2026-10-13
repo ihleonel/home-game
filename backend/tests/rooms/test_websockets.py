@@ -744,6 +744,18 @@ class RoomWebSocketTests(TransactionTestCase):
         self.assertEqual(snapshots[0]['seat_index'], 1)
         self.assertEqual(snapshots[0]['view']['you'], 'seat-1')
         self.assertIsNone(snapshots[0]['view']['your_pick'])
+        # S6: a socket that arrives mid-match learns the table's presence from
+        # its own snapshot. The connecting socket is already online -- it was
+        # marked online before the snapshot was built -- while the other seat
+        # has no socket, so it reports as inactive rather than leaking the raw
+        # `offline` value.
+        self.assertEqual(
+            snapshots[0]['seats'],
+            [
+                {'index': 0, 'presence': 'inactive'},
+                {'index': 1, 'presence': 'online'},
+            ],
+        )
 
     def test_a_rematch_leaves_each_socket_in_exactly_one_match_group(self):
         """A socket holds one match group whatever sequence of matches runs.

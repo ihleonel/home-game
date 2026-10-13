@@ -565,9 +565,21 @@ class RoomApiTests(APITestCase):
             session_id=uuid.UUID(second_response.data['session_id'])
         )
         occupant.presence = Participant.Presence.ONLINE
-        occupant.save(update_fields=('presence', 'updated_at'))
+        occupant.is_ready = True
+        occupant.save(update_fields=('presence', 'is_ready', 'updated_at'))
         expired.presence = Participant.Presence.INACTIVE
-        expired.save(update_fields=('presence', 'updated_at'))
+        expired.disconnected_at = timezone.now() - timedelta(
+            seconds=RECONNECT_GRACE_SECONDS + 1
+        )
+        expired.is_ready = True
+        expired.save(
+            update_fields=(
+                'presence',
+                'disconnected_at',
+                'is_ready',
+                'updated_at',
+            )
+        )
         match = Match.objects.create(
             room=occupant.room,
             game_id='duelo',
@@ -589,6 +601,14 @@ class RoomApiTests(APITestCase):
         match.refresh_from_db()
         self.assertEqual(match.status, Match.Status.FINISHED)
         self.assertEqual(match.winner_seat, 'seat-0')
+        # Resolving the match is what unblocks the room for the reap of this
+        # very read, so the ghost membership is gone by the time the lookup
+        # answers, and the room is left ready for a rematch (S7).
+        expired.refresh_from_db()
+        self.assertIsNotNone(expired.left_at)
+        occupant.refresh_from_db()
+        self.assertIsNone(occupant.left_at)
+        self.assertFalse(occupant.is_ready)
 
     def test_join_after_a_ghost_room_answers_not_found_without_recreating_it(self):
         self.create_ghost_room()
