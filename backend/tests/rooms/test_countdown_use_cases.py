@@ -56,7 +56,9 @@ def _ports(
     arm_result=_UNSET,
     cancel_result=None,
     prepare=_UNSET,
+    prepare_error=None,
     start_error=None,
+    broadcast_error=None,
 ):
     """Recording fake for :class:`LobbyCountdownPorts`.
 
@@ -89,9 +91,17 @@ def _ports(
         'arm_countdown', _ARMED if arm_result is _UNSET else arm_result
     )
     ports.cancel_countdown.side_effect = sync('cancel_countdown', cancel_result)
-    ports.prepare_lobby.side_effect = async_op(
-        'prepare_lobby', None if prepare is _UNSET else prepare
-    )
+    if prepare_error is None:
+        ports.prepare_lobby.side_effect = async_op(
+            'prepare_lobby', None if prepare is _UNSET else prepare
+        )
+    else:
+
+        async def prepare_lobby(*args, **kwargs):
+            ports.timeline.append('prepare_lobby')
+            raise prepare_error
+
+        ports.prepare_lobby.side_effect = prepare_lobby
 
     if start_error is None:
         ports.start_match.side_effect = async_op('start_match', None)
@@ -106,6 +116,8 @@ def _ports(
     async def broadcast(room_id, event_name, snapshot, countdown):
         ports.timeline.append('broadcast')
         ports.broadcasts.append((room_id, event_name, snapshot, countdown))
+        if broadcast_error is not None:
+            raise broadcast_error
 
     ports.broadcast.side_effect = broadcast
     return ports
@@ -333,6 +345,28 @@ class ExpireLobbyCountdownTests(SimpleTestCase):
             ],
         )
 
+    def test_prepare_lobby_failure_is_logged_and_swallowed(self):
+        ports = _ports(prepare_error=RuntimeError('boom'))
+
+        with self.assertLogs(USE_CASE_LOGGER, level='ERROR'):
+            result = asyncio.run(expire_lobby_countdown(ports, 5))
+
+        self.assertIsNone(result)
+        ports.start_match.assert_not_called()
+        self.assertEqual(ports.broadcasts, [])
+
+    def test_not_seatable_broadcast_failure_is_logged_and_swallowed(self):
+        snapshot = _snapshot(True, False)
+        state = LobbyState(snapshot=snapshot, seatable=False)
+        ports = _ports(prepare=state, broadcast_error=RuntimeError('boom'))
+
+        with self.assertLogs(USE_CASE_LOGGER, level='ERROR'):
+            result = asyncio.run(expire_lobby_countdown(ports, 5))
+
+        self.assertIsNone(result)
+        ports.start_match.assert_not_called()
+        self.assertEqual(len(ports.broadcasts), 1)
+
 
 class AsyncioCountdownTimerTests(SimpleTestCase):
     def test_arm_returns_none_when_already_armed(self):
@@ -387,6 +421,28 @@ class AsyncioCountdownTimerTests(SimpleTestCase):
             await armed.task
             self.assertEqual(expired, [True])
             self.assertIsNone(timer.current(5))
+
+        asyncio.run(scenario())
+
+    def test_cancel_after_firing_does_not_cancel_the_running_expiry(self):
+        async def scenario():
+            timer = AsyncioCountdownTimer()
+            started = asyncio.Event()
+            release = asyncio.Event()
+            completed = []
+
+            async def on_expire():
+                started.set()
+                await release.wait()
+                completed.append(True)
+
+            armed = timer.arm(5, 0, on_expire)
+            await started.wait()
+            self.assertIsNone(timer.current(5))
+            self.assertIsNone(timer.cancel(5))
+            release.set()
+            await armed.task
+            self.assertEqual(completed, [True])
 
         asyncio.run(scenario())
 

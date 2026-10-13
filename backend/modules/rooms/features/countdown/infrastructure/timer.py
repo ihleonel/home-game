@@ -58,15 +58,29 @@ class AsyncioCountdownTimer:
         return armed
 
     async def _run(self, room_id, seconds, on_expire):
+        """Sleep, retire the entry, then run the expiry callback.
+
+        The entry is retired the moment the countdown fires and before
+        ``on_expire`` is awaited, so a later ``cancel`` finds nothing to cancel
+        and cannot inject ``CancelledError`` into an expiry that is already
+        running. A genuinely cancelled task still raises out of the ``except``
+        clause below; the ``finally`` cleanup remains the backstop for the
+        cancelled and failed paths that never reach the retirement step.
+        """
         try:
             await asyncio.sleep(seconds)
+            self._retire(room_id)
             await on_expire()
         except asyncio.CancelledError:
             raise
         finally:
-            armed = self._armed.get(room_id)
-            if armed is not None and armed.task is asyncio.current_task():
-                self._armed.pop(room_id, None)
+            self._retire(room_id)
+
+    def _retire(self, room_id):
+        """Drop the room's entry only while this task still owns it."""
+        armed = self._armed.get(room_id)
+        if armed is not None and armed.task is asyncio.current_task():
+            self._armed.pop(room_id, None)
 
 
 LOBBY_TIMER = AsyncioCountdownTimer()

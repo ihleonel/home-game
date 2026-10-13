@@ -69,31 +69,37 @@ async def sync_lobby_countdown(
 async def expire_lobby_countdown(ports: LobbyCountdownPorts, room_id) -> None:
     """Turn an expired countdown into a match start, or a cancellation.
 
-    The timer task calls this, so it must never raise. A concurrent starter
-    that already opened the match is not an error: the gateway swallows it and
-    returns normally. Any other failure is logged and broadcast as a
-    ``start_failed`` cancellation.
+    The timer task calls this, so it must never raise for ordinary failures.
+    A concurrent starter that already opened the match is not an error: the
+    gateway swallows it and returns normally. Any other failure is logged and
+    swallowed, and a failing ``start_match`` is additionally broadcast as a
+    ``start_failed`` cancellation. ``asyncio.CancelledError`` derives from
+    ``BaseException`` (not ``Exception``), so a genuinely cancelled task still
+    surfaces as cancelled instead of being mistaken for a plain failure.
     """
-    state = await ports.prepare_lobby(room_id)
-    if state is None:
-        return
-
-    if not state.seatable:
-        await ports.broadcast(
-            room_id,
-            COUNTDOWN_CANCELLED_EVENT,
-            state.snapshot,
-            cancelled_payload(CANCELLED_LOBBY_CHANGED),
-        )
-        return
-
     try:
-        await ports.start_match(room_id)
+        state = await ports.prepare_lobby(room_id)
+        if state is None:
+            return
+
+        if not state.seatable:
+            await ports.broadcast(
+                room_id,
+                COUNTDOWN_CANCELLED_EVENT,
+                state.snapshot,
+                cancelled_payload(CANCELLED_LOBBY_CHANGED),
+            )
+            return
+
+        try:
+            await ports.start_match(room_id)
+        except Exception:
+            logger.exception('Lobby countdown could not start the match.')
+            await ports.broadcast(
+                room_id,
+                COUNTDOWN_CANCELLED_EVENT,
+                state.snapshot,
+                cancelled_payload(CANCELLED_START_FAILED),
+            )
     except Exception:
-        logger.exception('Lobby countdown could not start the match.')
-        await ports.broadcast(
-            room_id,
-            COUNTDOWN_CANCELLED_EVENT,
-            state.snapshot,
-            cancelled_payload(CANCELLED_START_FAILED),
-        )
+        logger.exception('Lobby countdown expiry failed.')
