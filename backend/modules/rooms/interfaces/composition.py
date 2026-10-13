@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 
 from ..constants import RECONNECT_GRACE_SECONDS
+from ..features.countdown.infrastructure.django_gateway import (
+    DjangoLobbyCountdownGateway,
+)
 from ..features.expulsion_voting.application.cancellations import (
     ExpulsionVoteCancellation,
 )
@@ -26,20 +29,23 @@ class RoomDependencies:
     expulsion_voting: DjangoExpulsionVotingGateway
     vote_cancellation: ExpulsionVoteCancellation
     reaping: ReapingService
+    countdown: DjangoLobbyCountdownGateway
 
 
 def compose_room_dependencies():
     expulsion_voting = DjangoExpulsionVotingGateway()
     vote_cancellation = ExpulsionVoteCancellation(expulsion_voting)
+    reaping = ReapingService(
+        DjangoRoomReapingGateway(),
+        vote_cancellation,
+        grace_seconds=RECONNECT_GRACE_SECONDS,
+    )
     return RoomDependencies(
         membership=DjangoRoomMembershipGateway(),
         readiness=DjangoReadinessGateway(),
         presence=DjangoPresenceGateway(),
         expulsion_voting=expulsion_voting,
         vote_cancellation=vote_cancellation,
-        reaping=ReapingService(
-            DjangoRoomReapingGateway(),
-            vote_cancellation,
-            grace_seconds=RECONNECT_GRACE_SECONDS,
-        ),
+        reaping=reaping,
+        countdown=DjangoLobbyCountdownGateway(reaping=reaping),
     )

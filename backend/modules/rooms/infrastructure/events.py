@@ -13,7 +13,13 @@ def room_group_name(room_id):
     return f'room_{room_id}'
 
 
-def room_event_message(event_name, snapshot, departed_session_id=None, vote=None):
+def room_event_message(
+    event_name,
+    snapshot,
+    departed_session_id=None,
+    vote=None,
+    countdown=None,
+):
     message = {
         'type': 'room.event',
         'event': event_name,
@@ -23,6 +29,8 @@ def room_event_message(event_name, snapshot, departed_session_id=None, vote=None
         message['departed_session_id'] = str(departed_session_id)
     if vote is not None:
         message['vote'] = vote
+    if countdown is not None:
+        message['countdown'] = countdown
     return message
 
 
@@ -32,6 +40,7 @@ def broadcast_room_event(
     snapshot,
     departed_session_id=None,
     vote=None,
+    countdown=None,
 ):
     channel_layer = get_channel_layer()
     if channel_layer is None:
@@ -40,7 +49,9 @@ def broadcast_room_event(
     try:
         async_to_sync(channel_layer.group_send)(
             room_group_name(room_id),
-            room_event_message(event_name, snapshot, departed_session_id, vote),
+            room_event_message(
+                event_name, snapshot, departed_session_id, vote, countdown
+            ),
         )
     except Exception:
         logger.exception('Unable to broadcast a room event.')
@@ -52,6 +63,7 @@ def schedule_room_event(
     snapshot,
     departed_session_id=None,
     vote=None,
+    countdown=None,
 ):
     transaction.on_commit(
         lambda: broadcast_room_event(
@@ -60,5 +72,6 @@ def schedule_room_event(
             snapshot,
             departed_session_id,
             vote,
+            countdown=countdown,
         )
     )
