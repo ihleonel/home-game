@@ -33,3 +33,13 @@ Because the startup sweep is presence-agnostic, it empties every room without an
 The `--startup` sweep assumes a single backend replica: a replica joining the deployment would reap memberships that are live on its sibling. Scaling the backend out, or replacing the in-memory channel layer with Redis, therefore requires persisting a last-seen timestamp per participant instead.
 
 Until that timestamp exists, one residual remains accepted: an `online` row left behind by a process that died without running its disconnect handler survives until the next restart, because no lazy path can remove it — without a heartbeat, nothing distinguishes that row from a live socket. The presence-agnostic startup sweep is exactly what clears it at boot. A second, milder bound: writing readiness refreshes `updated_at`, so a socket-less client that keeps sending requests also keeps extending its own window.
+
+## Lobby countdown
+
+The lobby has no manual start button. A room starts its match automatically once its active roster is exactly the game's seat count (`min_seats <= participants <= max_seats`, 2 for Duelo) and every participant is ready. At that moment the room arms a 10 second countdown and announces it to every socket as `match_countdown`, with the total `seconds` and the `remaining_seconds` still on the clock; a socket that connects or reconnects while the countdown is running receives the same `remaining_seconds`, so a refresh does not reset the clock.
+
+The timer is in-process, like the reconnect grace timer, and carries the same single-replica assumption: scaling the backend out, or replacing the in-memory channel layer with Redis, requires moving the armed countdown into shared state.
+
+The countdown is cancelled and re-armed, never run twice. Any roster change that leaves the lobby no longer fully ready cancels the armed countdown and broadcasts `match_countdown_cancelled` with reason `lobby_changed`; once the roster is fully ready again, a fresh `match_countdown` is announced. When the countdown expires, the room opens the match and each socket receives its own `match.snapshot`.
+
+`POST /api/matches/` still accepts a manual start, but no client calls it: the countdown is the only start path the UI exposes.

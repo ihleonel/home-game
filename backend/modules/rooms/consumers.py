@@ -1,6 +1,6 @@
 """Compatibility exports for the room WebSocket interface adapter."""
 
-from .constants import RECONNECT_GRACE_SECONDS
+from .constants import LOBBY_COUNTDOWN_SECONDS, RECONNECT_GRACE_SECONDS
 from .events import room_event_message, room_group_name
 from .features.presence.infrastructure.grace_timer import (
     GRACE_TASKS as _GRACE_TASKS,
@@ -32,8 +32,12 @@ class RoomConsumer(_websocket.RoomConsumer):
     def reconnect_grace_seconds(self):
         return RECONNECT_GRACE_SECONDS
 
+    def lobby_countdown_seconds(self):
+        return LOBBY_COUNTDOWN_SECONDS
+
 
 __all__ = (
+    'LOBBY_COUNTDOWN_SECONDS',
     'RECONNECT_GRACE_SECONDS',
     'RoomConsumer',
     '_GRACE_TASKS',

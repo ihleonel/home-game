@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import parse_qs
 from uuid import UUID
 
@@ -5,9 +6,14 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from ...games.interfaces.match_lookup import resolve_seat_subscription
-from ..constants import RECONNECT_GRACE_SECONDS
+from ..constants import LOBBY_COUNTDOWN_SECONDS, RECONNECT_GRACE_SECONDS
 from ..infrastructure.connections import register_connection, unregister_connection
 from ..infrastructure.events import room_event_message, room_group_name
+from ..features.countdown.application.use_cases import (
+    expire_lobby_countdown,
+    sync_lobby_countdown,
+)
+from ..features.countdown.domain.rules import COUNTDOWN_EVENT
 from ..features.presence.application.use_cases import (
     find_active_membership,
     mark_inactive,
@@ -26,6 +32,15 @@ from ..features.presence.infrastructure.grace_timer import (
     schedule_grace_expiry,
 )
 from .composition import compose_room_dependencies
+
+logger = logging.getLogger(__name__)
+
+# One process-wide countdown gateway, built once at import. The in-memory timer
+# registry it wraps must be shared by every socket in a room: a gateway built
+# per consumer would arm a second countdown for the same room and each socket
+# would leak its own timer entry. Building it here performs no database access;
+# the registry itself is the module-level singleton in the timer module.
+LOBBY_GATEWAY = compose_room_dependencies().countdown
 
 
 def _session_id_from_scope(scope):
@@ -126,6 +141,9 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
     def reconnect_grace_seconds(self):
         return RECONNECT_GRACE_SECONDS
 
+    def lobby_countdown_seconds(self):
+        return LOBBY_COUNTDOWN_SECONDS
+
     async def connect(self):
         self.room_id = None
         self.session_id = _session_id_from_scope(self.scope)
@@ -175,6 +193,47 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         if subscription is not None:
             await self._join_match_group(subscription)
             await self.send_json(self._match_snapshot_message(subscription))
+
+        # A socket arriving while a countdown is already armed learns the
+        # remaining seconds from the shared timer; otherwise the arriving
+        # socket reconciles the lobby, so an already fully ready room arms its
+        # countdown on the first socket that reaches it.
+        armed = LOBBY_GATEWAY.current_countdown(self.room_id)
+        if armed is not None:
+            await self.send_json(
+                {
+                    'type': COUNTDOWN_EVENT,
+                    'room': snapshot,
+                    'countdown': armed.payload(),
+                }
+            )
+            return
+        await self.sync_lobby(self.room_id, snapshot)
+
+    async def sync_lobby(self, room_id, snapshot):
+        """Reconcile the room's lobby countdown against ``snapshot``.
+
+        The expire callback closes over the module-level gateway and the plain
+        integer room id only, never ``self``: an armed countdown must not keep
+        a disconnected consumer alive through its own timer.
+        """
+        gateway = LOBBY_GATEWAY
+
+        async def on_expire():
+            await expire_lobby_countdown(gateway, room_id)
+
+        try:
+            await sync_lobby_countdown(
+                gateway,
+                room_id,
+                snapshot,
+                seconds=self.lobby_countdown_seconds(),
+                on_expire=on_expire,
+            )
+        except Exception:
+            logger.exception(
+                'Unable to sync the lobby countdown for room %s.', room_id
+            )
 
     async def _join_match_group(self, subscription):
         """Join the single match group this socket is entitled to, once.
@@ -263,12 +322,17 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         client_event = {'type': event['event'], 'room': event['room']}
         if 'vote' in event:
             client_event['vote'] = event['vote']
+        if 'countdown' in event:
+            client_event['countdown'] = event['countdown']
         if event.get('departed_session_id') == self.session_id:
             cancel_grace_task(self.room_id, self.session_id)
             await self.send_json(client_event)
             await self.close(code=4001)
             return
         await self.send_json(client_event)
+        # The leaving socket returned above, so only the sockets that stay
+        # reconcile the lobby after this event.
+        await self.sync_lobby(self.room_id, event['room'])
 
     async def disconnect(self, close_code):
         if self.room_group is not None:
