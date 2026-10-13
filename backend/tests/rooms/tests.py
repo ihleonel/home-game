@@ -10,6 +10,8 @@ from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.test import APIClient, APITestCase
 
+from modules.games.duelo import rules
+from modules.games.models import Match, MatchSeat
 from modules.rooms.constants import RECONNECT_GRACE_SECONDS
 from modules.rooms.models import Participant, Room
 from tests.games.support import SCOPING_TEST_GAMES, SCOPING_TEST_REGISTRY
@@ -549,6 +551,44 @@ class RoomApiTests(APITestCase):
         participant.refresh_from_db()
         self.assertIsNone(participant.left_at)
         self.assertEqual(participant.presence, Participant.Presence.RECONNECTING)
+
+    def test_active_room_lookup_finishes_a_match_with_an_expired_seat(self):
+        first_response = self.create_room()
+        second_response = self.create_room(
+            display_name='Guest Two',
+            game_marker=self.game['markers'][1]['id'],
+        )
+        occupant = Participant.objects.get(
+            session_id=uuid.UUID(first_response.data['session_id'])
+        )
+        expired = Participant.objects.get(
+            session_id=uuid.UUID(second_response.data['session_id'])
+        )
+        occupant.presence = Participant.Presence.ONLINE
+        occupant.save(update_fields=('presence', 'updated_at'))
+        expired.presence = Participant.Presence.INACTIVE
+        expired.save(update_fields=('presence', 'updated_at'))
+        match = Match.objects.create(
+            room=occupant.room,
+            game_id='duelo',
+            status=Match.Status.IN_PROGRESS,
+            state=rules.initial_state(['seat-0', 'seat-1']),
+        )
+        MatchSeat.objects.create(
+            match=match, index=0, seat_id='seat-0', participant=occupant
+        )
+        MatchSeat.objects.create(
+            match=match, index=1, seat_id='seat-1', participant=expired
+        )
+
+        response = self.client.get(
+            '/api/rooms/active/', {'game_id': self.game['id']}
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        match.refresh_from_db()
+        self.assertEqual(match.status, Match.Status.FINISHED)
+        self.assertEqual(match.winner_seat, 'seat-0')
 
     def test_join_after_a_ghost_room_answers_not_found_without_recreating_it(self):
         self.create_ghost_room()

@@ -8,6 +8,7 @@ from rest_framework.exceptions import (
 )
 from rest_framework.response import Response
 
+from ...games.interfaces.match_abandon import abandon_expired_seats
 from ..features.expulsion_voting.application.use_cases import cast_ballot, start_vote
 from ..features.expulsion_voting.domain.errors import (
     VotingConflict,
@@ -89,6 +90,11 @@ def active_room(request):
     data = serializer.validated_data
     dependencies = compose_room_dependencies()
     try:
+        # Resolve seats whose grace already elapsed before reaping, so the
+        # reap of this same read gets to clean the ghost membership the sweep
+        # just unblocked. Running it after the reap would leave that ghost
+        # alive until the next read.
+        abandon_expired_seats()
         # Reap first so an emptied ghost room is gone before the lookup runs,
         # and the lookup then answers "no active room" instead of a dead one.
         dependencies.reaping.reap()

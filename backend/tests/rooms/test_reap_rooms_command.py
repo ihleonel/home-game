@@ -13,7 +13,8 @@ from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
-from modules.games.models import Match
+from modules.games.duelo import rules
+from modules.games.models import Match, MatchSeat
 from modules.rooms.constants import RECONNECT_GRACE_SECONDS
 from modules.rooms.models import Participant, Room
 
@@ -271,6 +272,34 @@ class ReapRoomsCommandTests(TestCase):
         self.assertIn('rooms touched: 0', second)
         self.assertIn('rooms deleted: 0', second)
         self.assertFalse(Room.objects.filter(pk=room.pk).exists())
+
+    def test_default_run_resolves_a_seat_expired_in_a_running_match(self):
+        room = create_room()
+        occupant = create_participant(
+            room, presence=Participant.Presence.ONLINE, display_name='Occupant'
+        )
+        expired = create_participant(
+            room, presence=Participant.Presence.INACTIVE, display_name='Expired'
+        )
+        match = Match.objects.create(
+            room=room,
+            game_id='duelo',
+            status=Match.Status.IN_PROGRESS,
+            state=rules.initial_state(['seat-0', 'seat-1']),
+        )
+        MatchSeat.objects.create(
+            match=match, index=0, seat_id='seat-0', participant=occupant
+        )
+        MatchSeat.objects.create(
+            match=match, index=1, seat_id='seat-1', participant=expired
+        )
+
+        output = run_command()
+
+        match.refresh_from_db()
+        self.assertEqual(match.status, Match.Status.FINISHED)
+        self.assertEqual(match.winner_seat, 'seat-0')
+        self.assertIn('abandoned seats: 1', output)
 
     def test_summary_reports_the_counts_of_the_run(self):
         first_room = create_room('juego-uno')

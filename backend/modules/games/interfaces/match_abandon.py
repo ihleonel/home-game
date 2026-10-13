@@ -15,12 +15,99 @@ no participant, and a participant that occupies no seat all return ``None``
 without reaching the use case. Reaching the use case with nothing to do would
 still be harmless (it is idempotent), but the resolution is what lets a caller
 distinguish "nothing to abandon" from "the seat was resolved".
+
+The reconnect grace timer lives in the process, so a restart in the middle of
+the window loses the trigger and the match would hang again. The lazy sweep
+(:func:`abandon_expired_seats`) is the second trigger: the read paths that
+already reap ask for every already-expired seat before reaping, and it reuses
+:func:`abandon_seat_for_session` so there is still one translation and one
+runtime call, never a second resolution path.
 """
 
+from dataclasses import dataclass
+
+from django.utils import timezone
+
+from ...rooms.constants import RECONNECT_GRACE_SECONDS
+from ...rooms.features.presence.domain.rules import grace_expired
 from ...rooms.models import Participant
 from ..models import Match, MatchSeat
 from ..runtime.application.abandon_seat import abandon_seat
 from .composition import compose_match_dependencies
+
+
+@dataclass(frozen=True)
+class AbandonSweepOutcome:
+    """What one lazy sweep did, small enough for a caller to log or assert."""
+
+    seats_resolved: int
+
+
+def _seat_is_expired(participant, now):
+    """Return whether ``participant``'s seat will never reconnect (S2).
+
+    Membership already removed (``left_at``), an explicit ``inactive``, and a
+    ``reconnecting`` whose grace elapsed are all expired. ``offline`` is
+    deliberately excluded: a row that never held a socket is pre-existing
+    product slack (an arrival posted over REST whose socket never opened), not
+    the mid-match disconnect this feature resolves, so sweeping it here would
+    change unrelated behaviour. The grace criterion itself is imported from the
+    rooms rule rather than re-implemented, so this reader and the presence
+    projection cannot drift.
+    """
+    if participant.left_at is not None:
+        return True
+    if participant.presence == Participant.Presence.INACTIVE:
+        return True
+    if participant.presence == Participant.Presence.RECONNECTING:
+        return grace_expired(
+            participant.disconnected_at, now, RECONNECT_GRACE_SECONDS
+        )
+    return False
+
+
+def abandon_expired_seats(room_id=None):
+    """Resolve every already-expired seat of a running match (S2, S7).
+
+    Total and deterministic. Every room with an in-progress match is walked in
+    ``room_id`` order and each match's seats in ``index`` order, so the same
+    rows always resolve in the same sequence; a ``room_id`` restricts the walk
+    to one room. A room with no in-progress match, a match with no expired
+    seat, and a second call after everything is resolved all return a
+    zero-count summary instead of failing.
+
+    The unit of work stays the use case's: this sweep opens no transaction and
+    holds no lock. It reads which seats are expired and then makes one
+    idempotent :func:`abandon_seat_for_session` call per seat, so a repeated
+    trigger is harmless. Callers that also reap must run this first, because
+    finishing the match is what unblocks the room for the reap of the very
+    same read.
+    """
+    matches = Match.objects.filter(status=Match.Status.IN_PROGRESS)
+    if room_id is not None:
+        matches = matches.filter(room_id=room_id)
+    matches = matches.order_by('room_id', 'public_id')
+
+    now = timezone.now()
+    seats_resolved = 0
+    for match in matches:
+        seats = (
+            MatchSeat.objects.filter(match=match)
+            .select_related('participant')
+            .order_by('index')
+        )
+        for seat in seats:
+            if not _seat_is_expired(seat.participant, now):
+                continue
+            resolved = abandon_seat_for_session(
+                match.room_id, seat.participant.session_id
+            )
+            # ``None`` means the seat no longer had anything to resolve -- the
+            # use case already ran for it, or finishing an earlier seat kept
+            # this one from being a running match any more.
+            if resolved is not None:
+                seats_resolved += 1
+    return AbandonSweepOutcome(seats_resolved=seats_resolved)
 
 
 def abandon_seat_for_session(room_id, session_id):
