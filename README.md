@@ -42,4 +42,4 @@ The timer is in-process, like the reconnect grace timer, and carries the same si
 
 The countdown is cancelled and re-armed, never run twice. Any roster change that leaves the lobby no longer fully ready cancels the armed countdown and broadcasts `match_countdown_cancelled` with reason `lobby_changed`; once the roster is fully ready again, a fresh `match_countdown` is announced. When the countdown expires, the room opens the match and each socket receives its own `match.snapshot`.
 
-`POST /api/matches/` still accepts a manual start, but no client calls it: the countdown is the only start path the UI exposes.
+The countdown is the only way a match starts on every path: the API serves no manual start route, so the room owns the start decision and no single participant can open a match alone. `GET /api/matches/<match_ref>/` (resync) and `POST /api/matches/<match_ref>/actions/` remain the only match endpoints.
