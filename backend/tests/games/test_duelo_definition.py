@@ -5,6 +5,7 @@ framework-free contract and assert the privacy guarantees of emitted facts and
 seat views.
 """
 
+import copy
 import json
 
 from django.test import SimpleTestCase
@@ -62,6 +63,7 @@ class DueloDefinitionTests(SimpleTestCase):
                 'picks': {'seat-0': None, 'seat-1': None},
                 'reveal': None,
                 'winner': None,
+                'abandoned_seat': None,
                 'history': (),
             },
         )
@@ -206,3 +208,79 @@ class DueloDefinitionTests(SimpleTestCase):
 
         with self.assertRaises(ValueError):
             self._pick(final, 'seat-0', 'rock')
+
+    def test_abandon_finishes_the_match_for_the_remaining_seat(self):
+        """Expelling a seat in a two-seat game hands the match to the other one."""
+        state = self.definition.start(self.seats, None)
+
+        transition = self.definition.abandon(state, 'seat-1', None)
+
+        self.assertTrue(self.definition.is_finished(transition.state))
+        self.assertEqual(self.definition.active_seats(transition.state), ())
+        outcome = self.definition.outcome(transition.state)
+        self.assertEqual(outcome.winner_seat, 'seat-0')
+        self.assertEqual(outcome.reason, 'win_by_abandon')
+
+    def test_abandon_emits_seat_abandoned_and_match_finished_facts(self):
+        """The expulsion and the resulting finish are both observable facts."""
+        state = self.definition.start(self.seats, None)
+
+        transition = self.definition.abandon(state, 'seat-1', None)
+
+        self.assertEqual(
+            transition.facts,
+            (
+                Fact(name='seat_abandoned', seat='seat-1', detail={}),
+                Fact(name='match_finished', detail={'winner': 'seat-0'}),
+            ),
+        )
+
+    def test_abandon_does_not_mutate_the_input_state(self):
+        """The definition delegates to a pure transform of the previous state."""
+        state = self.definition.start(self.seats, None)
+        original = copy.deepcopy(state)
+
+        self.definition.abandon(state, 'seat-1', None)
+
+        self.assertEqual(state, original)
+
+    def test_views_flag_ended_by_abandon_after_an_abandonment(self):
+        """A snapshot alone must tell an abandonment finish from a normal one."""
+        state = self.definition.start(self.seats, None)
+        transition = self.definition.abandon(state, 'seat-1', None)
+
+        for seat in ('seat-0', 'seat-1', None):
+            with self.subTest(seat=seat):
+                self.assertTrue(
+                    self.definition.view(transition.state, seat)['ended_by_abandon']
+                )
+
+    def test_views_report_not_ended_by_abandon_for_a_normal_finish(self):
+        """A best-of-three finish is not flagged as an abandonment finish."""
+        final = self._finished_state()
+
+        for seat in ('seat-0', 'seat-1', None):
+            with self.subTest(seat=seat):
+                self.assertFalse(
+                    self.definition.view(final, seat)['ended_by_abandon']
+                )
+
+    def test_views_report_not_ended_by_abandon_while_the_match_runs(self):
+        """A live match is never flagged as an abandonment finish."""
+        state = self.definition.start(self.seats, None)
+
+        for seat in ('seat-0', 'seat-1', None):
+            with self.subTest(seat=seat):
+                self.assertFalse(
+                    self.definition.view(state, seat)['ended_by_abandon']
+                )
+
+    def test_abandon_rejects_a_finished_match_and_an_unknown_seat(self):
+        """Abandonment traps repeat resolutions and unknown seats loudly."""
+        with self.assertRaises(ValueError):
+            self.definition.abandon(self._finished_state(), 'seat-0', None)
+
+        with self.assertRaises(ValueError):
+            self.definition.abandon(
+                self.definition.start(self.seats, None), 'seat-9', None
+            )

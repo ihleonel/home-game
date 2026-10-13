@@ -23,6 +23,7 @@ def initial_state(seat_ids: Iterable[str]) -> dict:
         'picks': {seat_id: None for seat_id in seat_ids},
         'reveal': None,
         'winner': None,
+        'abandoned_seat': None,
         'history': (),
     }
 
@@ -132,13 +133,50 @@ def winner(state: Mapping) -> str | None:
     return state['winner']
 
 
+def abandon(state: Mapping, seat: str) -> dict:
+    """Return a new state resolving ``seat``'s expulsion for the other seat.
+
+    The input state is never mutated. ``duelo`` has exactly two seats, so the
+    seat that stays wins the match outright: the new state records ``seat`` in
+    ``abandoned_seat`` and names the other seat as ``winner``. The match is
+    frozen from there on, and :func:`outcome` reports the abandonment reason.
+
+    Raises ``ValueError`` if the match is already finished. A finished match
+    keeps its own winner, and resolving an abandonment on top of it would
+    silently re-point ``winner`` and rewrite an outcome that was already
+    recorded and broadcast. This is a programming-error trap and is reported
+    loudly rather than swallowed.
+
+    Raises ``ValueError`` if ``seat`` is not one of the match's seats, before
+    any new state is built. An unknown seat has no opponent to promote, so the
+    alternative would be a ``StopIteration`` from the lookup or a corrupt
+    ``abandoned_seat`` on a state that never held that seat.
+    """
+    if state['winner'] is not None:
+        raise ValueError('cannot abandon a finished match')
+
+    if seat not in state['picks']:
+        raise ValueError(f'unknown seat: {seat!r}')
+
+    remaining = next(other for other in state['picks'] if other != seat)
+    return {**state, 'winner': remaining, 'abandoned_seat': seat}
+
+
 def is_finished(state: Mapping) -> bool:
     """Return whether the match already has a winner."""
     return state['winner'] is not None
 
 
 def outcome(state: Mapping) -> Outcome | None:
-    """Return the final outcome once the match is finished, else ``None``."""
+    """Return the final outcome once the match is finished, else ``None``.
+
+    A match resolved by expulsion reports ``win_by_abandon``; every other
+    finished match reports ``best_of_three``. The reason is read off the
+    ``abandoned_seat`` marker, so a client can tell the two endings apart from
+    the persisted state alone.
+    """
     if state['winner'] is None:
         return None
+    if state.get('abandoned_seat') is not None:
+        return Outcome(winner_seat=state['winner'], reason='win_by_abandon')
     return Outcome(winner_seat=state['winner'], reason='best_of_three')

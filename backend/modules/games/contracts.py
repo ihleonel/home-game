@@ -118,6 +118,40 @@ class GameDefinition(Protocol):
         """
         ...
 
+    def abandon(
+        self,
+        state: Mapping,
+        seat: SeatId,
+        rng: RandomSource | None,
+    ) -> Transition:
+        """Resolve the match after ``seat`` is expelled for not reconnecting.
+
+        The runtime calls this exactly once, immediately after it removes
+        ``seat`` from the match, inside the same transaction that persists the
+        resulting state (S5): a seat is never already out while the match has
+        not yet processed it. Defining what the expulsion does is the game's
+        own decision (S3). A definition may end the match here (for example
+        ``duelo`` awards the win to the seat that stayed) or return a state in
+        which the remaining seats keep playing with the abandoned seat's turns,
+        points or resources folded back in (S4).
+
+        Like every other method in this protocol this is a pure function: it
+        never mutates ``state`` and returns a brand-new state plus the facts
+        the expulsion emits. It deliberately does **not** decide whether the
+        match is over: the runtime still calls :meth:`is_finished` and
+        :meth:`outcome` on the returned state, exactly as it does after
+        :meth:`apply`. A definition whose match continues must therefore return
+        a state that reflects that, instead of a finished-flags-clear state
+        that silently still looks over (S4).
+
+        Raises ``ValueError`` if ``seat`` is not one of the match's seats, or
+        if the match is already finished. Both are programming errors -- the
+        runtime only ever abandons a live seat of an unfinished match -- and
+        accepting them would silently corrupt an already-resolved match. This
+        mirrors the loud-failure convention of ``duelo.rules.apply_pick``.
+        """
+        ...
+
     def view(self, state: Mapping, seat: SeatId | None) -> Mapping: ...
 
     def is_finished(self, state: Mapping) -> bool: ...

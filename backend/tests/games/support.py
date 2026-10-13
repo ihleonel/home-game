@@ -209,6 +209,19 @@ class FakeDefinition:
             ),
         )
 
+    def abandon(self, state, seat, rng):
+        """Drop an abandoned seat and its bid so the match can still close."""
+        if seat not in state['seat_ids']:
+            raise ValueError(f'unknown seat: {seat!r}')
+        return Transition(
+            state={
+                **state,
+                'seat_ids': tuple(s for s in state['seat_ids'] if s != seat),
+                'bids': {s: v for s, v in state['bids'].items() if s != seat},
+            },
+            facts=(Fact(name='seat_abandoned', seat=seat, detail={}),),
+        )
+
     def view(self, state, seat):
         return {'seat': seat, 'bids': dict(state['bids'])}
 

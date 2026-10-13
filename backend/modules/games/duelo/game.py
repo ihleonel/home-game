@@ -99,8 +99,11 @@ class DueloDefinition:
 
         A seat never sees the opponent's pending pick: it only learns whether
         the opponent has picked. Both picks become public through ``reveal``
-        once the round resolves.
+        once the round resolves. ``ended_by_abandon`` is public in every view so
+        a client that only receives a snapshot can tell an abandonment finish
+        from a normal one.
         """
+        ended_by_abandon = state.get('abandoned_seat') is not None
         if seat is None:
             return {
                 'round': state['round'],
@@ -111,6 +114,7 @@ class DueloDefinition:
                 'reveal': state['reveal'],
                 'winner': state['winner'],
                 'finished': rules.is_finished(state),
+                'ended_by_abandon': ended_by_abandon,
             }
 
         opponent = next(
@@ -127,7 +131,27 @@ class DueloDefinition:
             'reveal': state['reveal'],
             'winner': state['winner'],
             'finished': rules.is_finished(state),
+            'ended_by_abandon': ended_by_abandon,
         }
+
+    def abandon(self, state: Mapping, seat: str, rng) -> Transition:
+        """Resolve the match after ``seat`` is expelled for not reconnecting.
+
+        Delegates to the pure rules. ``duelo`` has two seats, so the seat that
+        stays wins by abandonment and the match is frozen; the emitted facts
+        record the expulsion and, since the match always ends here, its result.
+        ``rng`` is accepted for contract compatibility and ignored, like
+        ``start``.
+        """
+        new_state = rules.abandon(state, seat)
+        facts = [Fact(name='seat_abandoned', seat=seat, detail={})]
+
+        if rules.is_finished(new_state):
+            facts.append(
+                Fact(name='match_finished', detail={'winner': new_state['winner']})
+            )
+
+        return Transition(state=new_state, facts=tuple(facts))
 
     def is_finished(self, state: Mapping) -> bool:
         """Delegate to the pure rules."""

@@ -8,6 +8,7 @@ import copy
 
 from django.test import SimpleTestCase
 
+from modules.games.contracts import Outcome
 from modules.games.duelo import rules
 
 
@@ -52,6 +53,7 @@ class DueloRulesTests(SimpleTestCase):
                 'picks': {'seat-0': None, 'seat-1': None},
                 'reveal': None,
                 'winner': None,
+                'abandoned_seat': None,
                 'history': (),
             },
         )
@@ -219,3 +221,70 @@ class DueloRulesTests(SimpleTestCase):
         self.assertIsNotNone(outcome)
         self.assertEqual(outcome.winner_seat, 'seat-0')
         self.assertEqual(outcome.reason, 'best_of_three')
+
+    def test_abandon_awards_the_win_to_the_remaining_seat(self):
+        """An abandoned seat loses: the seat that stays wins by abandonment."""
+        state = rules.abandon(self._open_match(), 'seat-0')
+
+        self.assertEqual(state['abandoned_seat'], 'seat-0')
+        self.assertEqual(rules.winner(state), 'seat-1')
+        self.assertTrue(rules.is_finished(state))
+        self.assertEqual(
+            rules.outcome(state),
+            Outcome(winner_seat='seat-1', reason='win_by_abandon'),
+        )
+
+    def test_abandon_does_not_mutate_the_input_state(self):
+        """Abandoning a seat is a pure transform of the previous state."""
+        state = self._open_match()
+        original = copy.deepcopy(state)
+
+        new_state = rules.abandon(state, 'seat-0')
+
+        self.assertIsNot(new_state, state)
+        self.assertEqual(state, original)
+        self.assertIsNone(state['abandoned_seat'])
+        self.assertIsNone(state['winner'])
+
+    def test_abandon_rejects_a_second_abandon_on_a_finished_match(self):
+        """A match already resolved by abandonment cannot be resolved again."""
+        state = rules.abandon(self._open_match(), 'seat-0')
+        before = copy.deepcopy(state)
+
+        with self.assertRaises(ValueError):
+            rules.abandon(state, 'seat-1')
+
+        self.assertEqual(state, before)
+
+    def test_abandon_rejects_a_normally_finished_match(self):
+        """A match finished by play cannot be reopened by an abandon."""
+        state = self._resolve_round(self._open_match(), 'rock', 'scissors')
+        state = self._resolve_round(state, 'paper', 'rock')
+        self.assertTrue(rules.is_finished(state))
+        before = copy.deepcopy(state)
+
+        with self.assertRaises(ValueError):
+            rules.abandon(state, 'seat-0')
+
+        self.assertEqual(state, before)
+
+    def test_abandon_rejects_an_unknown_seat_and_leaves_state_untouched(self):
+        """An unknown seat is a loud error, not a silent third-key corruption."""
+        state = self._open_match()
+        before = copy.deepcopy(state)
+
+        with self.assertRaises(ValueError):
+            rules.abandon(state, 'seat-9')
+
+        self.assertEqual(state, before)
+        self.assertEqual(set(state['picks']), {'seat-0', 'seat-1'})
+
+    def test_normal_win_keeps_the_best_of_three_reason(self):
+        """Only an abandonment changes the outcome reason."""
+        state = self._resolve_round(self._open_match(), 'rock', 'scissors')
+        state = self._resolve_round(state, 'paper', 'rock')
+
+        self.assertEqual(
+            rules.outcome(state),
+            Outcome(winner_seat='seat-0', reason='best_of_three'),
+        )
