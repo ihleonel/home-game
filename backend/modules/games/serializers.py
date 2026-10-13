@@ -32,12 +32,6 @@ class StrictSerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
 
-class StartMatchSerializer(StrictSerializer):
-    """``POST /api/matches/`` body: only the caller's session."""
-
-    session_id = serializers.UUIDField()
-
-
 class SubmitActionSerializer(StrictSerializer):
     """``POST /api/matches/<match_ref>/actions/`` body."""
 

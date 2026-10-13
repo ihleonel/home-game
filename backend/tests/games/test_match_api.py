@@ -72,17 +72,10 @@ class MatchApiTestCase(APITestCase):
         participant.save(update_fields=('presence', 'disconnected_at'))
         return participant
 
-    def start_match(self, participant=None):
-        return self.client.post(
-            '/api/matches/',
-            {'session_id': str((participant or self.first).session_id)},
-            format='json',
-        )
-
     def open_match(self, *, reaping=None):
         """Open a match for ``self.room`` through the shared interface gateway.
 
-        This is the non-HTTP analogue of ``start_match``: it drives
+        This is the non-HTTP start every non-start test uses: it drives
         ``open_match_for_room`` with the production dependencies, so the
         reap-before-seats rule is exercised where the lobby countdown also
         exercises it. The reaping service is injectable so a test can prove
@@ -128,112 +121,6 @@ class MatchApiTestCase(APITestCase):
         self.assertEqual(response.data['code'], code)
         if contains is not None:
             self.assertIn(contains, response.data['detail'])
-
-
-class StartMatchApiTests(MatchApiTestCase):
-    def test_starts_a_match_from_the_rooms_ready_participants(self):
-        response = self.start_match()
-
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        match = Match.objects.get()
-        self.assertEqual(response.data['match_ref'], str(match.public_id))
-        self.assertEqual(response.data['version'], 0)
-        self.assertEqual(response.data['status'], 'in_progress')
-        self.assertEqual(response.data['seat_index'], 0)
-        self.assertEqual(response.data['view']['you'], 'seat-0')
-        self.assertIsNone(response.data['view']['your_pick'])
-        self.assertEqual(
-            response.data['seats'],
-            [
-                {
-                    'seat_index': 0,
-                    'participant_ref': str(self.first.public_id),
-                    'display_name': 'Guest One',
-                },
-                {
-                    'seat_index': 1,
-                    'participant_ref': str(self.second.public_id),
-                    'display_name': 'Guest Two',
-                },
-            ],
-        )
-        # The seats are the room's own ready participants, not anything the
-        # request could have supplied.
-        self.assertEqual(
-            set(match.seats.values_list('participant__public_id', flat=True)),
-            {self.first.public_id, self.second.public_id},
-        )
-
-    def test_not_ready_participant_is_not_a_seat_and_sees_the_public_view(self):
-        third = self.create_participant(
-            'Guest Three', 'guante-verde', is_ready=False
-        )
-
-        response = self.start_match(third)
-
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertIsNone(response.data['seat_index'])
-        self.assertNotIn('you', response.data['view'])
-        seat_refs = {seat['participant_ref'] for seat in response.data['seats']}
-        self.assertNotIn(str(third.public_id), seat_refs)
-
-    def test_client_supplied_participant_reference_and_game_id_are_rejected(self):
-        response = self.client.post(
-            '/api/matches/',
-            {
-                'session_id': str(self.first.session_id),
-                'game_id': 'mystery-game',
-                'participant_ref': str(uuid.uuid4()),
-                'seats': [
-                    {'seat_index': 0, 'participant_ref': str(uuid.uuid4())},
-                ],
-            },
-            format='json',
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(Match.objects.exists())
-
-    def test_seat_count_outside_the_definition_range_names_the_range(self):
-        self.second.is_ready = False
-        self.second.save(update_fields=('is_ready',))
-
-        response = self.start_match()
-
-        self.assert_error(response, status.HTTP_409_CONFLICT, 'wrong_seat_count')
-        self.assertIn('2', str(response.data['detail']))
-        self.assertIn('1', str(response.data['detail']))
-        self.assertFalse(Match.objects.exists())
-
-    def test_unknown_game_in_the_room_is_rejected(self):
-        room = Room.objects.create(game_id='mystery-game')
-        session_id = uuid.uuid4()
-        self.create_participant('Mystery One', 'token', room=room, session_id=session_id)
-        self.create_participant('Mystery Two', 'token', room=room)
-
-        response = self.client.post(
-            '/api/matches/', {'session_id': str(session_id)}, format='json'
-        )
-
-        self.assert_error(response, status.HTTP_409_CONFLICT, 'unknown_game')
-
-    def test_match_already_in_progress_is_rejected_with_its_own_code(self):
-        first = self.start_match()
-        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
-
-        response = self.start_match()
-
-        self.assert_error(
-            response, status.HTTP_409_CONFLICT, 'match_already_in_progress'
-        )
-        self.assertEqual(Match.objects.count(), 1)
-
-    def test_start_without_an_active_room_is_not_found(self):
-        response = self.client.post(
-            '/api/matches/', {'session_id': str(uuid.uuid4())}, format='json'
-        )
-
-        self.assert_error(response, status.HTTP_404_NOT_FOUND, 'active_room_not_found')
 
 
 class GhostReadyParticipantApiTests(MatchApiTestCase):
@@ -504,3 +391,14 @@ class NoPickLeakTests(MatchApiTestCase):
         public = self.resync(match_ref, spectator)
         self.assertEqual(public.status_code, status.HTTP_200_OK)
         self.assertNotIn(b'rock', public.content)
+
+
+class ManualStartRetiredApiTests(MatchApiTestCase):
+    """The room owns the start decision, so no manual start endpoint is served."""
+
+    def test_the_manual_start_endpoint_is_not_served(self):
+        response = self.client.post(
+            '/api/matches/', {'session_id': str(self.first.session_id)}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(Match.objects.exists())

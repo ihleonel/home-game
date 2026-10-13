@@ -1,6 +1,6 @@
 """REST interface of the match runtime (FRG-06).
 
-The three endpoints are thin transport adapters: they validate the request,
+The two endpoints are thin transport adapters: they validate the request,
 resolve the caller's room through the existing rooms machinery, and hand the
 work to the framework-free use cases through the composition root in
 ``interfaces/composition.py``. The use cases own every rule; this module only
@@ -22,16 +22,11 @@ from ..rooms.features.presence.application.use_cases import find_active_membersh
 from ..rooms.models import Participant, Room
 from .contracts import seat_id
 from .interfaces.composition import compose_match_dependencies
-from .interfaces.match_start import (
-    MatchAlreadyInProgress,
-    open_match_for_room,
-)
 from .models import Match, MatchSeat
 from .runtime.application.submit_action import submit_action
 from .runtime.domain import errors as match_errors
 from .serializers import (
     MatchResyncSerializer,
-    StartMatchSerializer,
     SubmitActionSerializer,
 )
 
@@ -54,22 +49,10 @@ class MatchAPIError(APIException):
         self.detail.update(extra)
 
 
-class ActiveRoomNotFoundProblem(MatchAPIError):
-    status_code = status.HTTP_404_NOT_FOUND
-    default_code = 'active_room_not_found'
-    default_detail = 'No hay ninguna sala activa para esta sesión.'
-
-
 class MatchNotFoundProblem(MatchAPIError):
     status_code = status.HTTP_404_NOT_FOUND
     default_code = 'match_not_found'
     default_detail = 'No existe la partida solicitada.'
-
-
-class MatchInProgressProblem(MatchAPIError):
-    status_code = status.HTTP_409_CONFLICT
-    default_code = 'match_already_in_progress'
-    default_detail = 'La sala ya tiene una partida en curso.'
 
 
 class UnknownGameProblem(MatchAPIError):
@@ -108,19 +91,14 @@ class IllegalActionProblem(MatchAPIError):
     default_detail = 'La jugada no es válida.'
 
 
-class WrongSeatCountProblem(MatchAPIError):
-    status_code = status.HTTP_409_CONFLICT
-    default_code = 'wrong_seat_count'
-    default_detail = 'La cantidad de participantes listos no es válida.'
-
-
 def translate_match_error(error):
     """Raise the HTTP problem matching a runtime rejection.
 
-    Every ``MatchError`` gets its own status code and ``default_code`` so the
-    frontend can distinguish a resync (``stale_version``) from an illegal
-    action (``illegal_action``) without parsing prose. ``StaleVersion`` carries
-    the current version in the body so the client can resync.
+    Every ``MatchError`` the surviving endpoints can raise gets its own status
+    code and ``default_code`` so the frontend can distinguish a resync
+    (``stale_version``) from an illegal action (``illegal_action``) without
+    parsing prose. ``StaleVersion`` carries the current version in the body so
+    the client can resync.
     """
     if isinstance(error, match_errors.MatchNotFound):
         raise MatchNotFoundProblem()
@@ -136,11 +114,6 @@ def translate_match_error(error):
         raise NotYourTurnProblem()
     if isinstance(error, match_errors.IllegalAction):
         raise IllegalActionProblem()
-    if isinstance(error, match_errors.WrongSeatCount):
-        raise WrongSeatCountProblem(
-            f'Se necesitan entre {error.min_seats} y {error.max_seats} '
-            f'participantes listos y hay {error.count}.'
-        )
     raise error
 
 
@@ -193,79 +166,6 @@ def _participant_payload(record, definition, seat_index):
         'seat_index': seat_index,
         'view': _view_for(definition, record.state, seat_index),
     }
-
-
-@api_view(['POST'])
-def start_match_view(request):
-    """Start a match in the caller's room from its ready participants.
-
-    This view owns the transport concerns only: it resolves the caller's room
-    from the session, and it maps the opening sequence's rejections to HTTP
-    problems. The reap/guard/seat sequence itself lives in
-    :func:`interfaces.match_start.open_match_for_room`, shared with the in-
-    process lobby countdown.
-    """
-    data = _validated(StartMatchSerializer, request.data)
-    dependencies = compose_match_dependencies()
-    room = _active_room(dependencies.presence, data['session_id'])
-    if room is None:
-        raise ActiveRoomNotFoundProblem()
-
-    try:
-        # The reap/guard/seat sequence and the runtime call live in the
-        # interface module, unchanged, so the lobby countdown can open a match
-        # the same way without duplicating it.
-        opened = open_match_for_room(
-            room=room,
-            reaping=dependencies.reaping,
-            store=dependencies.store,
-            registry=dependencies.registry,
-            projector=dependencies.projector,
-        )
-    except MatchAlreadyInProgress:
-        raise MatchInProgressProblem()
-    except (match_errors.UnknownGame, match_errors.WrongSeatCount) as error:
-        translate_match_error(error)
-
-    record = opened.record
-    participants = opened.participants
-    requester = _request_participant(room.id, data['session_id'])
-
-    definition = dependencies.registry.get(record.game_id)
-    if definition is None:
-        raise UnknownGameProblem()
-
-    requester_ref = str(requester.public_id) if requester is not None else None
-    seat_index = next(
-        (
-            seat.index
-            for seat in record.seats
-            if seat.participant_ref == requester_ref
-        ),
-        None,
-    )
-    display_names = {
-        str(participant.public_id): participant.display_name
-        for participant in participants
-    }
-    return Response(
-        {
-            'match_ref': record.match_ref,
-            'version': record.version,
-            'status': record.status,
-            'seat_index': seat_index,
-            'view': _view_for(definition, record.state, seat_index),
-            'seats': [
-                {
-                    'seat_index': seat.index,
-                    'participant_ref': seat.participant_ref,
-                    'display_name': display_names.get(seat.participant_ref, ''),
-                }
-                for seat in record.seats
-            ],
-        },
-        status=status.HTTP_201_CREATED,
-    )
 
 
 @api_view(['POST'])
