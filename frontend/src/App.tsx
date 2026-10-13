@@ -13,9 +13,16 @@ import type {
   ServerMessage,
   VoteResponse,
 } from './api/types'
+import { AppMessages } from './components/AppMessages'
+import { CountdownOverlay } from './components/CountdownOverlay'
+import { ExpulsionVotePanel } from './components/ExpulsionVotePanel'
+import { GameCatalog } from './components/GameCatalog'
+import { IdentityForm } from './components/IdentityForm'
+import { Roster } from './components/Roster'
+import { YourRoomActions } from './components/YourRoomActions'
 import { hasMatchRenderer, renderMatchScreen } from './games/registry'
 import type { MatchState } from './games/registry'
-import { expulsionVoteMessage, markerLabel, presenceLabel, voteChoiceLabel } from './lib/format'
+import { expulsionVoteMessage, markerLabel } from './lib/format'
 import { mergeMatch, mergeMatchEvent } from './lib/match'
 import { readStoredIdentity, readStoredRoomSession, saveGuestSession } from './lib/session'
 import type { GuestIdentity, RoomSession } from './lib/session'
@@ -35,83 +42,6 @@ type MatchCountdown = {
   runId: number
   seconds: number
   remainingSeconds: number
-}
-
-type IdentityFormProps = {
-  game: Game
-  intent: RoomIntent
-  identity: GuestIdentity
-  busy: boolean
-  onChange: (identity: GuestIdentity) => void
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  onCancel: () => void
-}
-
-function IdentityForm({
-  game,
-  intent,
-  identity,
-  busy,
-  onChange,
-  onSubmit,
-  onCancel,
-}: IdentityFormProps) {
-  const prefix = intent === 'create' ? 'create' : 'join'
-
-  return (
-    <form className="identity-form" onSubmit={onSubmit}>
-      <div className="form-heading">
-        <div>
-          <p className="eyebrow">Tu ficha</p>
-          <h3 id={`identity-form-title-${prefix}`}>{game.label}</h3>
-        </div>
-        <p className="form-note">Tu ficha te identifica visualmente en esta sala.</p>
-      </div>
-      <div className="form-fields">
-        <label className="form-field" htmlFor={`${prefix}-display-name`}>
-          <span>Nombre visible</span>
-          <input
-            id={`${prefix}-display-name`}
-            autoComplete="nickname"
-            maxLength={80}
-            required
-            value={identity.displayName}
-            onChange={(event) =>
-              onChange({ ...identity, displayName: event.currentTarget.value })
-            }
-          />
-        </label>
-        <label className="form-field" htmlFor={`${prefix}-game-marker`}>
-          <span>Ficha del juego</span>
-          <select
-            id={`${prefix}-game-marker`}
-            required
-            value={identity.gameMarker}
-            onChange={(event) =>
-              onChange({ ...identity, gameMarker: event.currentTarget.value })
-            }
-          >
-            <option value="" disabled>
-              Elige una ficha
-            </option>
-            {game.markers.map((marker) => (
-              <option key={marker.id} value={marker.id}>
-                {marker.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="form-actions">
-        <button className="button button-primary" disabled={busy} type="submit">
-          {busy ? 'Conectando…' : 'Entrar en la sala'}
-        </button>
-        <button className="button button-quiet" disabled={busy} onClick={onCancel} type="button">
-          Cancelar
-        </button>
-      </div>
-    </form>
-  )
 }
 
 function App() {
@@ -741,10 +671,12 @@ function App() {
         </div>
       </header>
 
-      {actionError && <p className="message message-error" role="alert">{actionError}</p>}
-      {connectionError && <p className="message message-error" role="status">{connectionError}</p>}
-      {voteNotice && <p className="message message-info" role="status">{voteNotice}</p>}
-      {countdownNotice && <p className="message message-info" role="status">{countdownNotice}</p>}
+      <AppMessages
+        actionError={actionError}
+        connectionError={connectionError}
+        countdownNotice={countdownNotice}
+        voteNotice={voteNotice}
+      />
 
       {isLoading ? (
         <p className="loading-message" role="status">Cargando juegos…</p>
@@ -781,94 +713,29 @@ function App() {
               : `${room.participants.length} ${room.participants.length === 1 ? 'jugador' : 'jugadores'} en la sala`}
           </div>
 
-          <section className="roster-section" aria-labelledby="roster-title">
-            <div className="section-heading">
-              <h3 id="roster-title">Jugadores</h3>
-              <span>{room.participants.length}</span>
-            </div>
-            {room.participants.length > 0 ? (
-              <ul className="roster-list">
-                {room.participants.map((participant, index) => (
-                  <li className="roster-item" key={`${participant.joined_at}-${index}`}>
-                    <span className="marker-chip">
-                      {markerLabel(activeGame, participant.game_marker)}
-                    </span>
-                    <span className="player-name">{participant.display_name}</span>
-                    <span className={participant.is_ready ? 'ready-badge is-ready' : 'ready-badge'}>
-                      {participant.is_ready ? 'Listo' : 'No está listo'}
-                    </span>
-                    <span className={`presence-badge presence-${participant.presence}`}>
-                      {presenceLabel(participant.presence)}
-                    </span>
-                    {!activeExpulsionVote &&
-                      isJoined &&
-                      roomSession &&
-                      currentParticipant?.presence === 'online' &&
-                      participant.presence === 'inactive' &&
-                      participant.participant_ref !== roomSession.participantRef && (
-                        <button
-                          className="button button-quiet vote-start-button"
-                          disabled={busy}
-                          onClick={() => void startExpulsionVote(participant.participant_ref)}
-                          type="button"
-                        >
-                          Iniciar votación de expulsión
-                        </button>
-                      )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="quiet-copy">La sala espera a su primer jugador.</p>
-            )}
-          </section>
+          <Roster
+            busy={busy}
+            canStartExpulsionVote={(participant) =>
+              !activeExpulsionVote &&
+              isJoined &&
+              roomSession !== null &&
+              currentParticipant?.presence === 'online' &&
+              participant.presence === 'inactive' &&
+              participant.participant_ref !== roomSession.participantRef}
+            game={activeGame}
+            onStartExpulsionVote={(participantRef) => void startExpulsionVote(participantRef)}
+            participants={room.participants}
+          />
 
           {activeExpulsionVote && (
-            <section className="vote-panel" aria-labelledby="vote-title">
-              <div className="vote-heading">
-                <div>
-                  <p className="eyebrow">Votación unánime de expulsión</p>
-                  <h3 id="vote-title">{activeExpulsionVote.target_display_name}</h3>
-                </div>
-                <span className="vote-count">
-                  {activeExpulsionVote.yes_count} / {activeExpulsionVote.eligible_count} a favor
-                </span>
-              </div>
-              <ul className="vote-ballots">
-                {activeExpulsionVote.ballots.map((ballot) => (
-                  <li key={ballot.participant_ref}>
-                    <span>{ballot.display_name}</span>
-                    <strong>{ballot.choice ? `Voto: ${voteChoiceLabel(ballot.choice)}` : 'Pendiente de voto'}</strong>
-                  </li>
-                ))}
-              </ul>
-              {roomSession?.participantRef === activeExpulsionVote.target_ref ? (
-                <p className="quiet-copy">Eres la persona propuesta para la expulsión y no puedes votar.</p>
-              ) : currentBallot?.choice ? (
-                <p className="quiet-copy">Has votado: {voteChoiceLabel(currentBallot.choice)}.</p>
-              ) : currentBallot && currentParticipant?.presence === 'online' ? (
-                <div className="vote-actions">
-                  <button
-                    className="button button-primary"
-                    disabled={busy}
-                    onClick={() => void castExpulsionBallot(activeExpulsionVote.vote_ref, 'yes')}
-                    type="button"
-                  >
-                    Votar a favor
-                  </button>
-                  <button
-                    className="button button-quiet"
-                    disabled={busy}
-                    onClick={() => void castExpulsionBallot(activeExpulsionVote.vote_ref, 'no')}
-                    type="button"
-                  >
-                    Votar en contra
-                  </button>
-                </div>
-              ) : (
-                <p className="quiet-copy">Solo pueden votar los participantes que estaban conectados cuando comenzó la votación.</p>
-              )}
-            </section>
+            <ExpulsionVotePanel
+              busy={busy}
+              canVote={Boolean(currentBallot) && currentParticipant?.presence === 'online'}
+              isTarget={roomSession?.participantRef === activeExpulsionVote.target_ref}
+              onCast={(choice) => void castExpulsionBallot(activeExpulsionVote.vote_ref, choice)}
+              ownBallot={currentBallot}
+              vote={activeExpulsionVote}
+            />
           )}
 
           {isJoined && (matchRendererAvailable ? (
@@ -889,40 +756,16 @@ function App() {
           ))}
 
           {isJoined && roomSession ? (
-            <section className="your-room-actions" aria-labelledby="your-status-title">
-              <div className="your-identity">
-                <p className="eyebrow" id="your-status-title">Tu estado en la sala</p>
-                <p>
-                  {roomSession.displayName}
-                  <span className="marker-chip your-marker">
-                    {markerLabel(activeGame, roomSession.gameMarker)}
-                  </span>
-                </p>
-              </div>
-              <div className="action-buttons">
-                <button
-                  aria-pressed={ownReady}
-                  className={ownReady ? 'button button-ready is-ready' : 'button button-ready'}
-                  disabled={busy}
-                  onClick={() => void toggleReady()}
-                  type="button"
-                >
-                  {pendingAction === 'ready'
-                    ? 'Actualizando…'
-                    : ownReady
-                      ? 'Marcar como no listo'
-                      : 'Marcar como listo'}
-                </button>
-                <button
-                  className="button button-quiet"
-                  disabled={busy || ownReady}
-                  onClick={() => void leaveRoom()}
-                  type="button"
-                >
-                  {pendingAction === 'leave' ? 'Saliendo…' : 'Salir de la sala'}
-                </button>
-              </div>
-            </section>
+            <YourRoomActions
+              busy={busy}
+              displayName={roomSession.displayName}
+              leavePending={pendingAction === 'leave'}
+              markerLabel={markerLabel(activeGame, roomSession.gameMarker)}
+              onLeave={() => void leaveRoom()}
+              onToggleReady={() => void toggleReady()}
+              ownReady={ownReady}
+              readyPending={pendingAction === 'ready'}
+            />
           ) : intent === 'join' && activeGame ? (
             <IdentityForm
               busy={busy}
@@ -949,47 +792,12 @@ function App() {
         </section>
       )}
         {!room && (
-        <section className="catalog-section" aria-labelledby="catalog-title">
-          <div className="section-intro">
-            <p className="eyebrow">Catálogo de juegos</p>
-            <h2 id="catalog-title">Elige a qué jugar</h2>
-            <p>
-              {roomSession
-                ? 'Sal de la sala actual antes de elegir otro juego.'
-                : 'Al elegir un juego, entras en la sala de ese juego.'}
-            </p>
-          </div>
-
-          {games.length > 0 ? (
-            <div className="game-grid">
-              {games.map((game) => (
-                <article className="game-card" key={game.id}>
-                  <div className="game-card-symbol" aria-hidden="true">
-                    {game.label.slice(0, 1)}
-                  </div>
-                  <h3>{game.label}</h3>
-                  <p>{game.description}</p>
-                  <div className="marker-options" aria-label={`Fichas de ${game.label}`}>
-                    {game.markers.map((marker) => (
-                      <span className="marker-chip" key={marker.id}>{marker.label}</span>
-                    ))}
-                  </div>
-                  <button
-                    className="button button-primary"
-                    disabled={busy || Boolean(roomSession)}
-                    onClick={() => selectGame(game)}
-                    type="button"
-                  >
-                    Elegir juego
-                  </button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p className="quiet-copy">No hay juegos disponibles en este momento.</p>
-          )}
-
-        </section>
+          <GameCatalog
+            busy={busy}
+            games={games}
+            hasSession={Boolean(roomSession)}
+            onSelectGame={selectGame}
+          />
         )}
         </>
       )}
@@ -1021,19 +829,10 @@ function App() {
       )}
 
       {isJoined && countdown && !matchInProgress && (
-        <div className="countdown-overlay">
-          <div className="countdown-card">
-            <p className="eyebrow">La sala está lista</p>
-            <p className="countdown-number" aria-hidden="true">
-              {countdown.remainingSeconds > 0 ? countdown.remainingSeconds : '¡Ya!'}
-            </p>
-            <p className="countdown-message" role="status" aria-live="polite">
-              {countdown.remainingSeconds > 0
-                ? `La partida comienza en ${countdown.seconds} segundos.`
-                : 'Iniciando la partida…'}
-            </p>
-          </div>
-        </div>
+        <CountdownOverlay
+          remainingSeconds={countdown.remainingSeconds}
+          seconds={countdown.seconds}
+        />
       )}
 
       <footer className="site-footer">Un espacio acogedor para disfrutar de una buena noche de juegos.</footer>
