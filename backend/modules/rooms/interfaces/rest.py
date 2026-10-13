@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import (
@@ -44,6 +46,8 @@ from ..serializers import (
     StartExpulsionVoteSerializer,
 )
 from .composition import compose_room_dependencies
+
+logger = logging.getLogger(__name__)
 
 
 class ActiveRoomGameConflict(APIException):
@@ -93,8 +97,16 @@ def active_room(request):
         # Resolve seats whose grace already elapsed before reaping, so the
         # reap of this same read gets to clean the ghost membership the sweep
         # just unblocked. Running it after the reap would leave that ghost
-        # alive until the next read.
-        abandon_expired_seats()
+        # alive until the next read. Recovery is best effort: a failure here --
+        # a projection error raised after the match was already persisted, for
+        # example -- must not fail a lookup that has nothing else to do with
+        # it, exactly as the socket path treats the same publish.
+        try:
+            abandon_expired_seats()
+        except Exception:
+            logger.exception(
+                'Unable to resolve the expired seats before reaping.'
+            )
         # Reap first so an emptied ghost room is gone before the lookup runs,
         # and the lookup then answers "no active room" instead of a dead one.
         dependencies.reaping.reap()
