@@ -545,6 +545,46 @@
   margin: 0;
 }
 
+.countdown-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgb(27 25 38 / 55%);
+  animation: appear 180ms ease-out;
+}
+
+.countdown-card {
+  width: min(100%, 24rem);
+  padding: clamp(1.5rem, 5vw, 2.5rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  background: var(--surface);
+  box-shadow: 0 1.5rem 4rem rgb(37 35 52 / 22%);
+  text-align: center;
+}
+
+.countdown-number {
+  margin: 0;
+  color: var(--accent-dark);
+  font-size: clamp(3.5rem, 18vw, 6rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.countdown-message {
+  margin: 0;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+
 .site-footer {
   margin-top: auto;
   padding-top: 1rem;

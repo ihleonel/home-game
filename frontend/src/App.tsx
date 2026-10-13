@@ -62,7 +62,7 @@ type RoomSession = GuestIdentity & {
   isReady: boolean
 }
 type StoredRoomSession = Pick<RoomSession, 'gameId' | 'sessionId' | 'isReady'>
-type PendingAction = RoomIntent | 'ready' | 'leave' | 'vote' | 'pick' | 'start' | null
+type PendingAction = RoomIntent | 'ready' | 'leave' | 'vote' | 'pick' | null
 
 type MatchEnvelope = {
   match_ref: string
@@ -70,6 +70,33 @@ type MatchEnvelope = {
   status: string
   seat_index: number | null
   view: MatchView
+}
+
+/**
+ * The shared lobby countdown this client is currently ticking.
+ *
+ * ``runId`` identifies the run this state belongs to, so a tick scheduled by
+ * an older run can never decrement a newer one. The live sentence is announced
+ * from ``seconds`` (the stable total), never from the decrementing
+ * ``remainingSeconds``, so assistive tech is not told the whole sentence every
+ * second.
+ */
+type MatchCountdown = {
+  runId: number
+  seconds: number
+  remainingSeconds: number
+}
+
+/**
+ * The ``countdown`` payload shared by both countdown frames.
+ *
+ * ``match_countdown`` carries the total and remaining seconds;
+ * ``match_countdown_cancelled`` carries only a reason.
+ */
+type CountdownFrame = {
+  seconds?: number
+  remaining_seconds?: number
+  reason?: string
 }
 
 /**
@@ -83,6 +110,7 @@ type ServerMessage = {
   type?: string
   room?: Room
   vote?: ExpulsionVote
+  countdown?: CountdownFrame
   match_ref?: string
   seat_index?: number | null
   version?: number
@@ -395,6 +423,8 @@ function App() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [voteNotice, setVoteNotice] = useState<string | null>(null)
+  const [countdown, setCountdown] = useState<MatchCountdown | null>(null)
+  const [countdownNotice, setCountdownNotice] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -726,28 +756,6 @@ function App() {
     [],
   )
 
-  async function startMatch(): Promise<void> {
-    if (!roomSession) return
-    setPendingAction('start')
-    setActionError(null)
-    try {
-      const response = await requestJson<MatchEnvelope>('/api/matches/', {
-        method: 'POST',
-        body: JSON.stringify({ session_id: roomSession.sessionId }),
-      })
-      setMatch({
-        matchRef: response.match_ref,
-        seatIndex: response.seat_index,
-        version: response.version,
-        view: response.view,
-      })
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'No se ha podido iniciar la partida.')
-    } finally {
-      setPendingAction(null)
-    }
-  }
-
   async function submitPick(value: string): Promise<void> {
     if (!roomSession || !match || match.version === null) return
     const { matchRef, version } = match
@@ -906,6 +914,27 @@ function App() {
             setRoom(message.room)
           }
           if (message.vote) setVoteNotice(expulsionVoteMessage(message.vote))
+          const countdownFrame = message.countdown
+          if (
+            message.type === 'match_countdown' &&
+            countdownFrame &&
+            typeof countdownFrame.seconds === 'number' &&
+            typeof countdownFrame.remaining_seconds === 'number'
+          ) {
+            setCountdown({
+              runId: Date.now(),
+              seconds: countdownFrame.seconds,
+              remainingSeconds: countdownFrame.remaining_seconds,
+            })
+            setCountdownNotice(null)
+          } else if (message.type === 'match_countdown_cancelled') {
+            setCountdown(null)
+            setCountdownNotice(
+              countdownFrame?.reason === 'start_failed'
+                ? 'La partida no ha podido comenzar. Vuelve a marcar que estás listo para intentarlo de nuevo.'
+                : 'La cuenta regresiva se ha cancelado porque la sala ha cambiado.',
+            )
+          }
           if (
             message.type === 'match.snapshot' &&
             typeof message.match_ref === 'string' &&
@@ -915,6 +944,7 @@ function App() {
             const view = message.view
             const seatIndex =
               typeof message.seat_index === 'number' ? message.seat_index : null
+            setCountdown(null)
             setMatch((current) => ({
               matchRef,
               seatIndex,
@@ -934,6 +964,7 @@ function App() {
             const view = message.view
             const version =
               typeof message.version === 'number' ? message.version : null
+            setCountdown(null)
             setMatch((current) => mergeMatchEvent(current, matchRef, version, view))
           }
         }
@@ -974,6 +1005,22 @@ function App() {
     }
   }, [resyncMatch, sessionDisplayName, sessionGameId, sessionGameMarker, sessionId])
 
+  // Tick locally from the received remaining seconds. Each tick schedules the
+  // next one and the cleanup clears it, so the countdown stops the moment it is
+  // cancelled, the match opens, or the component unmounts. The run id guards
+  // against a stale tick decrementing a freshly armed run.
+  useEffect(() => {
+    if (!countdown || countdown.remainingSeconds <= 0) return
+    const timeout = window.setTimeout(() => {
+      setCountdown((current) =>
+        current && current.runId === countdown.runId && current.remainingSeconds > 0
+          ? { ...current, remainingSeconds: current.remainingSeconds - 1 }
+          : current,
+      )
+    }, 1000)
+    return () => window.clearTimeout(timeout)
+  }, [countdown])
+
   const busy = pendingAction !== null
 
   return (
@@ -989,6 +1036,7 @@ function App() {
       {actionError && <p className="message message-error" role="alert">{actionError}</p>}
       {connectionError && <p className="message message-error" role="status">{connectionError}</p>}
       {voteNotice && <p className="message message-info" role="status">{voteNotice}</p>}
+      {countdownNotice && <p className="message message-info" role="status">{countdownNotice}</p>}
 
       {isLoading ? (
         <p className="loading-message" role="status">Cargando juegos…</p>
@@ -1144,24 +1192,6 @@ function App() {
                 </p>
               </div>
               <div className="action-buttons">
-                {!matchInProgress && (
-                  <>
-                    <button
-                      aria-describedby={!ownReady ? 'start-match-requires-ready' : undefined}
-                      className="button button-primary"
-                      disabled={busy || !ownReady}
-                      onClick={() => void startMatch()}
-                      type="button"
-                    >
-                      {pendingAction === 'start' ? 'Iniciando…' : 'Iniciar partida'}
-                    </button>
-                    {!ownReady && (
-                      <span className="quiet-copy" id="start-match-requires-ready">
-                        Marca que estás listo para iniciar la partida.
-                      </span>
-                    )}
-                  </>
-                )}
                 <button
                   aria-pressed={ownReady}
                   className={ownReady ? 'button button-ready is-ready' : 'button button-ready'}
@@ -1280,6 +1310,22 @@ function App() {
             onSubmit={submitIdentity}
           />
         </dialog>
+      )}
+
+      {isJoined && countdown && !matchInProgress && (
+        <div className="countdown-overlay">
+          <div className="countdown-card">
+            <p className="eyebrow">La sala está lista</p>
+            <p className="countdown-number" aria-hidden="true">
+              {countdown.remainingSeconds > 0 ? countdown.remainingSeconds : '¡Ya!'}
+            </p>
+            <p className="countdown-message" role="status" aria-live="polite">
+              {countdown.remainingSeconds > 0
+                ? `La partida comienza en ${countdown.seconds} segundos.`
+                : 'Iniciando la partida…'}
+            </p>
+          </div>
+        </div>
       )}
 
       <footer className="site-footer">Un espacio acogedor para disfrutar de una buena noche de juegos.</footer>
