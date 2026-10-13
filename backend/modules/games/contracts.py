@@ -149,6 +149,15 @@ class GameDefinition(Protocol):
         runtime only ever abandons a live seat of an unfinished match -- and
         accepting them would silently corrupt an already-resolved match. This
         mirrors the loud-failure convention of ``duelo.rules.apply_pick``.
+
+        A trigger can repeat. The runtime is idempotent for a match it has
+        already resolved and never calls this on a finished match, but two
+        independent triggers of the same absence (the reconnect grace timer
+        and the sweep that recovers seats left expired by a restart) can both
+        reach a match that is still running. A definition whose ``abandon``
+        leaves the match alive must therefore tolerate a repeated call for the
+        same seat: return a state equivalent to the one it already produced,
+        instead of raising or folding the same seat's points in twice.
         """
         ...
 

@@ -9,8 +9,10 @@ import json
 
 from django.test import SimpleTestCase
 
+from modules.games.contracts import Action
 from modules.games.duelo.game import DueloDefinition
 from modules.games.registry import GameRegistry
+from modules.games.runtime.application.abandon_seat import abandon_seat
 from modules.games.runtime.application.ports import MatchHeader, SeatRecord
 from modules.games.runtime.application.start_match import start_match
 from modules.games.runtime.application.submit_action import submit_action
@@ -497,6 +499,218 @@ class SubmitActionTests(SimpleTestCase):
         self.assertEqual(after, before)
         self.assertEqual(after.status, 'in_progress')
         self.assertEqual(self.store.actions, actions_before)
+
+
+class AbandonSeatTests(SimpleTestCase):
+    """``abandon_seat`` resolves an expelled seat without imposing a result."""
+
+    def setUp(self):
+        self.definition = FakeDefinition()
+        self.registry = GameRegistry((self.definition,))
+        self.log = CallLog()
+        self.store = FakeStore(self.log)
+        self.projector = FakeProjector(self.log)
+        self.lifecycle = FakeLifecycle(self.log)
+        self.record = start_match(
+            room_id=7,
+            game_id='fake-game',
+            seats=((0, 'p0', 'red'), (1, 'p1', 'blue')),
+            store=self.store,
+            registry=self.registry,
+            projector=self.projector,
+        )
+        self.projector.publishes.clear()
+
+    def _abandon(self, **overrides):
+        kwargs = {
+            'match_ref': self.record.match_ref,
+            'participant_ref': 'p0',
+            'store': self.store,
+            'registry': self.registry,
+            'projector': self.projector,
+            'lifecycle': self.lifecycle,
+        }
+        kwargs.update(overrides)
+        return abandon_seat(**kwargs)
+
+    def test_abandon_that_leaves_the_match_alive_keeps_it_in_progress(self):
+        """S4: the game may keep playing and the runtime must not end it."""
+        next_record = self._abandon(participant_ref='p0')
+
+        self.assertEqual(next_record.version, 1)
+        self.assertEqual(next_record.status, 'in_progress')
+        self.assertIsNone(next_record.winner_seat)
+        self.assertEqual(next_record.state['seat_ids'], ('seat-1',))
+        self.assertEqual(self.projector.publishes[-1]['event'], 'seat_abandoned')
+        self.assertEqual(self.lifecycle.calls, [])
+
+    def test_abandon_appends_the_seat_and_action_to_the_audit_log(self):
+        self._abandon(participant_ref='p0')
+
+        self.assertEqual(len(self.store.actions), 1)
+        appended = self.store.actions[0]
+        self.assertEqual(appended['seat_id'], 'seat-0')
+        self.assertEqual(appended['action'], Action(name='abandon', value=None))
+        self.assertEqual(
+            appended['facts'],
+            ({'name': 'seat_abandoned', 'seat': 'seat-0', 'detail': {}},),
+        )
+
+    def test_a_missing_match_is_a_no_op(self):
+        before = self.store.uow_entries
+        self.projector.publishes.clear()
+
+        self.assertIsNone(self._abandon(match_ref='missing'))
+
+        self.assertEqual(self.store.actions, [])
+        self.assertEqual(self.projector.publishes, [])
+        self.assertEqual(self.lifecycle.calls, [])
+        # The lookup still runs inside the transaction the adapter serializes on.
+        self.assertEqual(self.store.uow_entries, before + 1)
+
+    def test_a_participant_without_a_seat_is_a_no_op(self):
+        before = self.store.records[self.record.match_ref]
+
+        self.assertIsNone(self._abandon(participant_ref='stranger'))
+
+        self.assertEqual(self.store.records[self.record.match_ref], before)
+        self.assertEqual(self.store.actions, [])
+        self.assertEqual(self.projector.publishes, [])
+        self.assertEqual(self.lifecycle.calls, [])
+
+    def test_abandon_runs_the_load_save_and_audit_in_one_unit_of_work(self):
+        self.store.calls.clear()
+
+        self._abandon(participant_ref='p0')
+
+        names = [name for name, _ in self.store.calls]
+        uow_index = names.index('unit_of_work')
+        self.assertLess(uow_index, names.index('load'))
+        inside = [name for name, depth in self.store.calls if depth == 1]
+        self.assertIn('save', inside)
+        self.assertIn('append_action', inside)
+        # The event is published only for a transition that committed.
+        exit_index = names.index('uow_exit')
+        publish_index = names.index('publish:seat_abandoned')
+        self.assertLess(exit_index, publish_index)
+        self.assertEqual(self.store.calls[publish_index][1], 0)
+
+    def test_explicit_none_lifecycle_is_rejected_before_any_read(self):
+        """``None`` would silently skip the reset, so it must fail loudly."""
+        before = self.store.records[self.record.match_ref]
+        uow_before = self.store.uow_entries
+        self.store.calls.clear()
+
+        with self.assertRaises(TypeError):
+            self._abandon(lifecycle=None)
+
+        self.assertEqual(self.store.calls, [])
+        self.assertEqual(self.store.records[self.record.match_ref], before)
+        self.assertEqual(self.store.actions, [])
+        self.assertEqual(self.store.uow_entries, uow_before)
+        self.assertEqual(self.projector.publishes, [])
+        self.assertEqual(self.lifecycle.calls, [])
+
+    def test_omitting_lifecycle_is_rejected_at_the_call_site(self):
+        kwargs = {
+            'match_ref': self.record.match_ref,
+            'participant_ref': 'p0',
+            'store': self.store,
+            'registry': self.registry,
+            'projector': self.projector,
+        }
+
+        with self.assertRaises(TypeError):
+            abandon_seat(**kwargs)
+
+
+class AbandonSeatFinishedMatchTests(SimpleTestCase):
+    """An abandonment that ends the match goes through the finish path."""
+
+    def setUp(self):
+        self.definition = DueloDefinition()
+        self.registry = GameRegistry((self.definition,))
+        self.log = CallLog()
+        self.store = FakeStore(self.log)
+        self.projector = FakeProjector(self.log)
+        self.lifecycle = FakeLifecycle(self.log)
+        self.record = start_match(
+            room_id=3,
+            game_id='duelo',
+            seats=((0, 'p0', 'guante-rojo'), (1, 'p1', 'guante-azul')),
+            store=self.store,
+            registry=self.registry,
+            projector=self.projector,
+        )
+        self.projector.publishes.clear()
+
+    def _abandon(self, **overrides):
+        kwargs = {
+            'match_ref': self.record.match_ref,
+            'participant_ref': 'p1',
+            'store': self.store,
+            'registry': self.registry,
+            'projector': self.projector,
+            'lifecycle': self.lifecycle,
+        }
+        kwargs.update(overrides)
+        return abandon_seat(**kwargs)
+
+    def test_expelling_a_seat_finishes_the_match_for_the_other_seat(self):
+        next_record = self._abandon()
+
+        self.assertEqual(next_record.version, 1)
+        self.assertEqual(next_record.status, 'finished')
+        self.assertEqual(next_record.winner_seat, 'seat-0')
+        self.assertTrue(self.definition.is_finished(next_record.state))
+        self.assertEqual(
+            self.definition.outcome(next_record.state).reason, 'win_by_abandon'
+        )
+
+    def test_finishing_abandon_publishes_the_final_views_per_seat_and_public(self):
+        self._abandon()
+
+        self.assertEqual(len(self.projector.publishes), 1)
+        published = self.projector.publishes[0]
+        self.assertEqual(published['event'], 'match_finished')
+        self.assertEqual(published['header'].status, 'finished')
+        self.assertEqual(published['header'].winner_seat, 'seat-0')
+        self.assertEqual(set(published['views']), {'seat-0', 'seat-1', None})
+        for view in published['views'].values():
+            self.assertTrue(view['ended_by_abandon'])
+        self.assertEqual(
+            published['facts'],
+            (
+                {'name': 'seat_abandoned', 'seat': 'seat-1', 'detail': {}},
+                {'name': 'match_finished', 'seat': None, 'detail': {'winner': 'seat-0'}},
+            ),
+        )
+
+    def test_finishing_abandon_calls_the_lifecycle_hook_once_in_the_uow(self):
+        self.store.calls.clear()
+
+        self._abandon()
+
+        self.assertEqual(
+            self.lifecycle.calls,
+            [{'match_ref': self.record.match_ref, 'room_id': 3}],
+        )
+        names = [name for name, _ in self.store.calls]
+        hook_index = names.index('on_match_finished')
+        self.assertLess(hook_index, names.index('uow_exit'))
+        self.assertEqual(self.store.calls[hook_index][1], 1)
+
+    def test_a_second_abandon_of_the_resolved_match_is_a_no_op(self):
+        finished = self._abandon()
+        publishes_before = list(self.projector.publishes)
+        actions_before = list(self.store.actions)
+
+        self.assertIsNone(self._abandon())
+
+        self.assertEqual(self.store.records[self.record.match_ref], finished)
+        self.assertEqual(self.store.actions, actions_before)
+        self.assertEqual(self.projector.publishes, publishes_before)
+        self.assertEqual(len(self.lifecycle.calls), 1)
 
 
 class ApplicationPackageTests(SimpleTestCase):
