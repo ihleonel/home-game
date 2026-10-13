@@ -1,8 +1,9 @@
 """Reap memberships and rooms that nobody is coming back to.
 
-Staleness is decided from the persisted ``presence`` and ``disconnected_at``
-columns rather than from the in-process connection registry, so this sweep is
-correct from any process and survives a restart. Two rules carry the weight:
+Staleness is decided from the persisted ``presence``, ``disconnected_at`` and
+``updated_at`` columns rather than from the in-process connection registry, so
+this sweep is correct from any process and survives a restart. Two rules carry
+the weight:
 
 - a room holding an in-progress match is skipped entirely, because its seats
   belong to players who may still reconnect into the running match;
