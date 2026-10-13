@@ -5,7 +5,12 @@ from uuid import UUID
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from ...games.interfaces.match_abandon import abandon_seat_for_session
 from ...games.interfaces.match_lookup import resolve_seat_subscription
+from ...games.interfaces.match_presence import (
+    publish_match_presence,
+    resolve_match_presence,
+)
 from ..constants import LOBBY_COUNTDOWN_SECONDS, RECONNECT_GRACE_SECONDS
 from ..infrastructure.connections import register_connection, unregister_connection
 from ..infrastructure.events import room_event_message, room_group_name
@@ -109,10 +114,65 @@ def _mark_inactive(room_id, session_id, disconnected_at):
     return event.snapshot if event is not None else None
 
 
+@database_sync_to_async
+def _broadcast_match_presence(room_id):
+    return publish_match_presence(room_id)
+
+
+@database_sync_to_async
+def _resolve_room_match_presence(room_id):
+    return resolve_match_presence(room_id)
+
+
+@database_sync_to_async
+def _abandon_expired_seat(room_id, session_id):
+    return abandon_seat_for_session(room_id, session_id)
+
+
+async def _publish_presence_safely(room_id):
+    """Publish the room's match presence without ever raising.
+
+    Presence is a side channel of the socket's own presence path: a transport
+    failure here must never abort the presence transition that triggered it nor
+    the grace timer that called it. It is logged and swallowed, exactly like
+    ``RoomConsumer.sync_lobby``.
+    """
+    try:
+        await _broadcast_match_presence(room_id)
+    except Exception:
+        logger.exception(
+            'Unable to publish the match presence of room %s.', room_id
+        )
+
+
+async def _abandon_expired_seat_safely(room_id, session_id):
+    """Resolve an expired seat without letting a failure kill the grace timer.
+
+    The use case is idempotent, so a trigger with nothing to abandon is a
+    harmless no-op; an unexpected failure is logged and swallowed for the same
+    reason as the presence publish above.
+    """
+    try:
+        await _abandon_expired_seat(room_id, session_id)
+    except Exception:
+        logger.exception(
+            'Unable to abandon the expired seat of session %s in room %s.',
+            session_id,
+            room_id,
+        )
+
+
 async def _expire_presence(room_id, session_id, disconnected_at, grace_seconds):
-    return await _mark_inactive_event(
+    presence_event = await _mark_inactive_event(
         room_id, session_id, disconnected_at, grace_seconds
     )
+    if presence_event is not None:
+        # The participant is now inactive. Announce the new seat presence and
+        # resolve the seat with the game, in that order, so the remaining
+        # seats see the expulsion before the match outcome it produced (S2).
+        await _publish_presence_safely(room_id)
+        await _abandon_expired_seat_safely(room_id, session_id)
+    return presence_event
 
 
 # The match resolver runs only plain ORM queries, but it is still a database
@@ -187,12 +247,20 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
                 vote=event.vote,
             )
 
+        # Announce this seat's arrival before it joins its own match group, so
+        # it learns the table's presence from the snapshot below and the seats
+        # already in the match see it online without receiving it twice.
+        await _publish_presence_safely(self.room_id)
+
         subscription = await _resolve_seat_subscription(
             self.room_id, self.session_id
         )
         if subscription is not None:
             await self._join_match_group(subscription)
-            await self.send_json(self._match_snapshot_message(subscription))
+            presence = await _resolve_room_match_presence(self.room_id)
+            await self.send_json(
+                self._match_snapshot_message(subscription, presence)
+            )
 
         # A socket arriving while a countdown is already armed learns the
         # remaining seconds from the shared timer; otherwise the arriving
@@ -272,12 +340,19 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         self.match_ref = subscription.match_ref
 
     @staticmethod
-    def _match_snapshot_message(subscription):
+    def _match_snapshot_message(subscription, presence):
+        """Build the opening snapshot, carrying the resolved seat presence.
+
+        ``presence`` is resolved by the caller because the snapshot is a pure
+        formatter: the seat presence belongs to the match, not to the socket's
+        own seat, so it is the same list for every socket of the match (S6).
+        """
         return {
             'type': 'match.snapshot',
             'match_ref': subscription.match_ref,
             'seat_index': subscription.seat_index,
             'view': subscription.view,
+            'seats': presence.payload() if presence is not None else [],
         }
 
     async def match_started(self, event):
@@ -295,7 +370,25 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
         if subscription is None:
             return
         await self._join_match_group(subscription)
-        await self.send_json(self._match_snapshot_message(subscription))
+        presence = await _resolve_room_match_presence(self.room_id)
+        await self.send_json(
+            self._match_snapshot_message(subscription, presence)
+        )
+
+    async def game_presence(self, event):
+        """Forward the match's seat presence to this socket (S1, S6).
+
+        The frame is already state-free and public: it carries only indexes and
+        presence values, never a play, so a seat and a spectator receive the
+        same thing and no seat's view can leak through this path.
+        """
+        await self.send_json(
+            {
+                'type': 'match.presence',
+                'match_ref': event['match_ref'],
+                'seats': event['seats'],
+            }
+        )
 
     async def game_event(self, event):
         """Forward a match event to this socket's single subscription.
@@ -360,6 +453,10 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
                 event.snapshot,
                 vote=event.vote,
             )
+
+        # The seat is reconnecting now: the remaining seats must learn it in
+        # the match's own messages, not only in the room's presence.
+        await _publish_presence_safely(self.room_id)
 
         schedule_grace_expiry(
             self.room_id,

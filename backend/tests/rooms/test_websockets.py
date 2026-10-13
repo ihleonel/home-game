@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from config.asgi import application
 from modules.games.interfaces.match_lookup import GAME_REGISTRY
+from modules.games.models import Match
 from modules.games.runtime.application.start_match import start_match
 from modules.games.runtime.application.submit_action import submit_action
 from modules.games.runtime.infrastructure.channel_projector import (
@@ -888,3 +889,106 @@ class RoomWebSocketTests(TransactionTestCase):
         self.assertEqual(rematch_first_events[0]['type'], 'match.event')
         self.assertEqual(rematch_second_events[0]['type'], 'match.event')
         self.assertEqual(rematch_first_events[0]['match_ref'], second_match_ref)
+
+    def test_a_disconnect_announces_the_rival_seat_as_reconnecting(self):
+        room, participants = self.create_room_with_guests(
+            'Guest One', 'Guest Two'
+        )
+        first, second = participants
+
+        async def exchange():
+            (
+                first_socket,
+                second_socket,
+                match,
+                _,
+                _,
+            ) = await self.connect_two_guests_in_a_match(room, participants)
+
+            await second_socket.disconnect()
+
+            messages = []
+            while True:
+                message = await first_socket.receive_json_from(timeout=2)
+                messages.append(message)
+                if message['type'] == 'match.presence':
+                    break
+
+            await first_socket.disconnect()
+            return match, messages
+
+        match, messages = async_to_sync(exchange)()
+
+        presence = next(
+            message
+            for message in messages
+            if message['type'] == 'match.presence'
+        )
+        self.assertEqual(presence['match_ref'], match.match_ref)
+        self.assertEqual(
+            {seat['index']: seat['presence'] for seat in presence['seats']},
+            {0: 'online', 1: 'reconnecting'},
+        )
+
+    def test_grace_expiry_resolves_the_match_for_the_remaining_seat(self):
+        room, participants = self.create_room_with_guests(
+            'Guest One', 'Guest Two'
+        )
+        first, second = participants
+
+        async def exchange():
+            (
+                first_socket,
+                second_socket,
+                match,
+                _,
+                _,
+            ) = await self.connect_two_guests_in_a_match(room, participants)
+
+            await second_socket.disconnect()
+
+            messages = []
+            while True:
+                message = await first_socket.receive_json_from(timeout=2)
+                messages.append(message)
+                if (
+                    message['type'] == 'match.event'
+                    and message['event'] == 'match_finished'
+                ):
+                    break
+
+            await first_socket.disconnect()
+            return match, messages
+
+        with patch('modules.rooms.consumers.RECONNECT_GRACE_SECONDS', 0):
+            match, messages = async_to_sync(exchange)()
+
+        # The expired seat is announced as inactive before the outcome reaches
+        # the remaining seat, so it can tell "not coming back" from "gone".
+        presences = [
+            message
+            for message in messages
+            if message['type'] == 'match.presence'
+        ]
+        self.assertTrue(presences)
+        self.assertEqual(
+            {
+                seat['index']: seat['presence']
+                for seat in presences[-1]['seats']
+            },
+            {0: 'online', 1: 'inactive'},
+        )
+
+        finished_event = next(
+            message
+            for message in messages
+            if message['type'] == 'match.event'
+            and message['event'] == 'match_finished'
+        )
+        self.assertEqual(finished_event['match_ref'], match.match_ref)
+        self.assertTrue(finished_event['view']['ended_by_abandon'])
+        self.assertEqual(finished_event['view']['winner'], 'seat-0')
+
+        finished = Match.objects.get(public_id=match.match_ref)
+        self.assertEqual(finished.status, Match.Status.FINISHED)
+        self.assertEqual(finished.winner_seat, 'seat-0')
