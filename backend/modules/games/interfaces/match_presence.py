@@ -17,9 +17,17 @@ already applies: a ``reconnecting`` participant whose reconnect grace has
 elapsed is reported as ``inactive`` (they did not come back in time). The
 grace rule itself is imported rather than re-implemented, so the two readers
 cannot drift on what "expired" means.
+
+Each seat also carries ``remaining_seconds``: the whole seconds left before a
+``reconnecting`` seat's grace window closes (S8). The server computes that
+number so the match screen never has to derive it from the browser's clock,
+which may be skewed (D6). ``None`` means the seat is not counting down, and a
+``0`` means the window has already ended -- it does not promise that the seat
+was expelled at that very instant, only that no reconnect time is left.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 import logging
 
 from asgiref.sync import async_to_sync
@@ -40,10 +48,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SeatPresence:
-    """The presence of one seat, keyed by the seat's stable ``index``."""
+    """The presence of one seat, keyed by the seat's stable ``index``.
+
+    ``remaining_seconds`` is the server-computed reconnect countdown, present
+    for every seat and ``None`` unless the seat is ``reconnecting`` inside its
+    window (S8).
+    """
 
     index: int
     presence: str
+    remaining_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -56,7 +70,11 @@ class MatchPresence:
     def payload(self):
         """Return the ``seats`` list as the client message carries it."""
         return [
-            {'index': seat.index, 'presence': seat.presence}
+            {
+                'index': seat.index,
+                'presence': seat.presence,
+                'remaining_seconds': seat.remaining_seconds,
+            }
             for seat in self.seats
         ]
 
@@ -79,6 +97,30 @@ def seat_presence(participant, now):
     if presence == Participant.Presence.OFFLINE:
         return Participant.Presence.INACTIVE
     return presence
+
+
+def seat_remaining_seconds(participant, now):
+    """Return the whole seconds left in a seat's reconnect window, or ``None``.
+
+    Only a ``reconnecting`` participant still inside its window counts down;
+    an ``online``, ``inactive`` or expired seat has no window left, and an
+    inconsistent ``reconnecting`` row without ``disconnected_at`` has nothing
+    to measure from (it is reported as-is, never a crash). The value floors
+    with ``int`` and clamps at 0 so it is never negative and never promises
+    more time than is left (S8, D6).
+    """
+    if participant.presence != Participant.Presence.RECONNECTING:
+        return None
+    if participant.disconnected_at is None:
+        return None
+    if grace_expired(
+        participant.disconnected_at, now, RECONNECT_GRACE_SECONDS
+    ):
+        return None
+    deadline = participant.disconnected_at + timedelta(
+        seconds=RECONNECT_GRACE_SECONDS
+    )
+    return max(0, int((deadline - now).total_seconds()))
 
 
 def resolve_match_presence(room_id):
@@ -105,6 +147,7 @@ def resolve_match_presence(room_id):
             SeatPresence(
                 index=seat.index,
                 presence=seat_presence(seat.participant, now),
+                remaining_seconds=seat_remaining_seconds(seat.participant, now),
             )
             for seat in seats
         ),

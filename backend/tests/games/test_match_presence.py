@@ -97,8 +97,8 @@ class ResolveMatchPresenceTests(MatchPresenceTestCase):
         self.assertEqual(
             presence.payload(),
             [
-                {'index': 0, 'presence': 'online'},
-                {'index': 1, 'presence': 'online'},
+                {'index': 0, 'presence': 'online', 'remaining_seconds': None},
+                {'index': 1, 'presence': 'online', 'remaining_seconds': None},
             ],
         )
 
@@ -117,10 +117,63 @@ class ResolveMatchPresenceTests(MatchPresenceTestCase):
         self.assertEqual(
             presence.payload(),
             [
-                {'index': 0, 'presence': 'online'},
-                {'index': 1, 'presence': 'inactive'},
+                {'index': 0, 'presence': 'online', 'remaining_seconds': None},
+                {'index': 1, 'presence': 'inactive', 'remaining_seconds': None},
             ],
         )
+
+    def test_a_reconnecting_seat_inside_the_grace_carries_the_rest(self):
+        self.second.presence = Participant.Presence.RECONNECTING
+        self.second.disconnected_at = timezone.now() - timedelta(seconds=20)
+        self.second.save(
+            update_fields=('presence', 'disconnected_at', 'updated_at')
+        )
+        self.create_match()
+
+        seats = resolve_match_presence(self.room.id).payload()
+
+        self.assertEqual(
+            seats[0],
+            {'index': 0, 'presence': 'online', 'remaining_seconds': None},
+        )
+        self.assertEqual(seats[1]['presence'], 'reconnecting')
+        remaining = seats[1]['remaining_seconds']
+        self.assertIsNotNone(remaining)
+        # Disconnected 20 s ago with a 60 s window leaves around 40 s, and the
+        # value is the countdown, never the full window nor a missing value.
+        self.assertIn(remaining, (39, 40))
+        self.assertLess(remaining, RECONNECT_GRACE_SECONDS)
+
+    def test_a_reconnecting_seat_without_a_disconnect_time_has_no_rest(self):
+        # An inconsistent row (reconnecting with no disconnected_at) must not
+        # crash the resolver: it simply has no window to count down.
+        self.second.presence = Participant.Presence.RECONNECTING
+        self.second.disconnected_at = None
+        self.second.save(
+            update_fields=('presence', 'disconnected_at', 'updated_at')
+        )
+        self.create_match()
+
+        seats = resolve_match_presence(self.room.id).payload()
+
+        self.assertEqual(seats[1]['presence'], 'reconnecting')
+        self.assertIsNone(seats[1]['remaining_seconds'])
+
+    def test_the_remaining_window_never_goes_negative(self):
+        self.second.presence = Participant.Presence.RECONNECTING
+        self.second.disconnected_at = timezone.now() - timedelta(
+            seconds=RECONNECT_GRACE_SECONDS - 0.5
+        )
+        self.second.save(
+            update_fields=('presence', 'disconnected_at', 'updated_at')
+        )
+        self.create_match()
+
+        remaining = resolve_match_presence(self.room.id).payload()[1][
+            'remaining_seconds'
+        ]
+
+        self.assertIn(remaining, (0, 1))
 
     def test_a_reconnecting_seat_inside_the_grace_stays_reconnecting(self):
         self.second.presence = Participant.Presence.RECONNECTING
@@ -132,12 +185,14 @@ class ResolveMatchPresenceTests(MatchPresenceTestCase):
 
         presence = resolve_match_presence(self.room.id)
 
-        self.assertEqual(
-            presence.payload(),
-            [
-                {'index': 0, 'presence': 'online'},
-                {'index': 1, 'presence': 'reconnecting'},
-            ],
+        seats = presence.payload()
+
+        self.assertEqual(seats[0]['presence'], 'online')
+        self.assertIsNone(seats[0]['remaining_seconds'])
+        self.assertEqual(seats[1]['presence'], 'reconnecting')
+        self.assertIn(
+            seats[1]['remaining_seconds'],
+            (RECONNECT_GRACE_SECONDS - 1, RECONNECT_GRACE_SECONDS),
         )
 
     def test_a_seat_that_never_held_a_socket_is_not_present(self):
@@ -147,7 +202,10 @@ class ResolveMatchPresenceTests(MatchPresenceTestCase):
 
         presence = resolve_match_presence(self.room.id)
 
-        self.assertEqual(presence.payload()[0]['presence'], 'inactive')
+        self.assertEqual(
+            presence.payload()[0],
+            {'index': 0, 'presence': 'inactive', 'remaining_seconds': None},
+        )
 
     def test_a_room_without_an_in_progress_match_resolves_to_none(self):
         self.create_match(status=Match.Status.FINISHED)
@@ -181,8 +239,8 @@ class PublishMatchPresenceTests(MatchPresenceTestCase):
             'type': 'game.presence',
             'match_ref': match_ref,
             'seats': [
-                {'index': 0, 'presence': 'online'},
-                {'index': 1, 'presence': 'online'},
+                {'index': 0, 'presence': 'online', 'remaining_seconds': None},
+                {'index': 1, 'presence': 'online', 'remaining_seconds': None},
             ],
         }
         expected_groups = {
