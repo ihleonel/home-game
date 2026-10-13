@@ -55,10 +55,10 @@ tree and one WebSocket per session:
 | `/rooms/:gameId` | The waiting room: roster, readiness, expulsion vote and the lobby countdown. |
 | `/games/:gameId/match` | The game screen: the running (or finished) match and nothing else. |
 
-Navigation is client-side only. `App` mounts `BrowserRouter` inside
-`CatalogProvider` and `RoomSessionProvider`, so the room session, the match
-state and the socket live above the routes and moving between pages never
-remounts them. The views are guard-driven: a room hands the view to its lobby,
+Navigation is client-side only. `App` mounts `BrowserRouter` around
+`CatalogProvider` and `RoomSessionProvider`, which in turn wrap the routes, so
+the room session, the match state and the socket live above them and moving
+between pages never remounts the providers or closes the socket. The views are guard-driven: a room hands the view to its lobby,
 a lobby with a live match hands it to the game screen, the game screen returns
 to its room when there is no match, and any unknown path returns to the
 catalog. A game without a renderer keeps its "vista de partida no disponible"

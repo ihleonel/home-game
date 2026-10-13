@@ -78,6 +78,13 @@ export function LobbyPage() {
     if (outcome !== 'rejected') setJoining(false)
   }
 
+  function cancelJoining(): void {
+    setJoining(false)
+    // Cancelling the draft also dismisses the rejection that opened it, the
+    // same way the single identity form did before the split.
+    setActionError(null)
+  }
+
   return (
     <>
       <section className="room-panel" aria-labelledby="active-room-title">
@@ -149,7 +156,7 @@ export function LobbyPage() {
             game={activeGame}
             identity={identity}
             intent="join"
-            onCancel={() => setJoining(false)}
+            onCancel={cancelJoining}
             onChange={setIdentity}
             onSubmit={submitIdentity}
           />
