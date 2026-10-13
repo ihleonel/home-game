@@ -43,3 +43,38 @@ The timer is in-process, like the reconnect grace timer, and carries the same si
 The countdown is cancelled and re-armed, never run twice. Any roster change that leaves the lobby no longer fully ready cancels the armed countdown and broadcasts `match_countdown_cancelled` with reason `lobby_changed`; once the roster is fully ready again, a fresh `match_countdown` is announced. When the countdown expires, the room opens the match and each socket receives its own `match.snapshot`.
 
 The countdown is the only way a match starts on every path: the API serves no manual start route, so the room owns the start decision and no single participant can open a match alone. `GET /api/matches/<match_ref>/` (resync) and `POST /api/matches/<match_ref>/actions/` remain the only match endpoints.
+
+## Frontend
+
+The frontend is a single-page app with three routes, all served by one React
+tree and one WebSocket per session:
+
+| Route | View |
+| --- | --- |
+| `/` | The game catalog. Choosing a game creates or joins its room. |
+| `/rooms/:gameId` | The waiting room: roster, readiness, expulsion vote and the lobby countdown. |
+| `/games/:gameId/match` | The game screen: the running (or finished) match and nothing else. |
+
+Navigation is client-side only. `App` mounts `BrowserRouter` inside
+`CatalogProvider` and `RoomSessionProvider`, so the room session, the match
+state and the socket live above the routes and moving between pages never
+remounts them. The views are guard-driven: a room hands the view to its lobby,
+a lobby with a live match hands it to the game screen, the game screen returns
+to its room when there is no match, and any unknown path returns to the
+catalog. A game without a renderer keeps its "vista de partida no disponible"
+notice in the lobby instead, so a match can never trap a player on a screen the
+app cannot draw.
+
+### Adding a game's screen
+
+A game's screen is a component registered in `src/games/registry.ts` under its
+`game_id`, plus its own stylesheet. The registry is the only place that maps a
+game to its renderer, and an unregistered game falls back to the notice above
+instead of crashing the page.
+
+Per-game CSS shares one global stylesheet once Vite bundles it, so a game must
+prefix every class it owns with its own id (`.duelo-panel`, `.duelo-heading`,
+…) and reuse the theme tokens from `src/index.css` (`--surface`, `--ink`,
+`--accent`, …) rather than redefining colors. The game screen itself is styled
+by `.match-screen` in `src/App.css`; a game only styles the panel it renders
+inside it.

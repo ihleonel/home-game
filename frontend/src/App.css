@@ -585,6 +585,42 @@
   font-weight: 700;
 }
 
+/*
+ * The game screen is the one view outside the site shell: it takes the whole
+ * viewport and leaves the shared chrome (header, catalog, footer) behind. A
+ * game's own stylesheet only has to style the panel it renders here.
+ */
+.match-screen {
+  min-height: 100svh;
+  padding: clamp(1rem, 3vw, 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.match-screen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.match-screen-header h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(1.25rem, 4vw, 1.75rem);
+  letter-spacing: -0.03em;
+}
+
+.match-screen-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+}
+
 .site-footer {
   margin-top: auto;
   padding-top: 1rem;
