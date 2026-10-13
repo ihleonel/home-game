@@ -13,7 +13,6 @@ which demands an open transaction.
 """
 
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import APIException
@@ -23,8 +22,11 @@ from ..rooms.features.presence.application.use_cases import find_active_membersh
 from ..rooms.models import Participant, Room
 from .contracts import seat_id
 from .interfaces.composition import compose_match_dependencies
+from .interfaces.match_start import (
+    MatchAlreadyInProgress,
+    open_match_for_room,
+)
 from .models import Match, MatchSeat
-from .runtime.application.start_match import start_match
 from .runtime.application.submit_action import submit_action
 from .runtime.domain import errors as match_errors
 from .serializers import (
@@ -197,58 +199,37 @@ def _participant_payload(record, definition, seat_index):
 def start_match_view(request):
     """Start a match in the caller's room from its ready participants.
 
-    The room is reaped before the seats are resolved, inside the same atomic
-    block as the seat read, so a ready participant who disconnected past the
-    grace window cannot occupy a seat. The runtime's own transaction starts
-    only after this block closes, so it is never nested here.
+    This view owns the transport concerns only: it resolves the caller's room
+    from the session, and it maps the opening sequence's rejections to HTTP
+    problems. The reap/guard/seat sequence itself lives in
+    :func:`interfaces.match_start.open_match_for_room`, shared with the in-
+    process lobby countdown.
     """
     data = _validated(StartMatchSerializer, request.data)
     dependencies = compose_match_dependencies()
-    with transaction.atomic():
-        room = _active_room(dependencies.presence, data['session_id'])
-        if room is None:
-            raise ActiveRoomNotFoundProblem()
-
-        # Reap first: the seat query below must read post-reap state, so a
-        # ghost-ready membership is gone before seats are enumerated.
-        dependencies.reaping.reap(room_id=room.id)
-
-        if Match.objects.filter(
-            room_id=room.id, status=Match.Status.IN_PROGRESS
-        ).exists():
-            raise MatchInProgressProblem()
-
-        # The seats are the room's own active participants that are ready,
-        # ordered by join time. Nothing is taken from the request body, so an
-        # unvalidated participant reference can never reach
-        # ``DjangoMatchStore.create``.
-        participants = list(
-            Participant.objects.filter(
-                room_id=room.id, left_at__isnull=True, is_ready=True
-            ).order_by('joined_at', 'pk')
-        )
-        requester = _request_participant(room.id, data['session_id'])
-        seats = [
-            (index, str(participant.public_id), participant.game_marker)
-            for index, participant in enumerate(participants)
-        ]
+    room = _active_room(dependencies.presence, data['session_id'])
+    if room is None:
+        raise ActiveRoomNotFoundProblem()
 
     try:
-        record = start_match(
-            room_id=room.id,
-            game_id=room.game_id,
-            seats=seats,
+        # The reap/guard/seat sequence and the runtime call live in the
+        # interface module, unchanged, so the lobby countdown can open a match
+        # the same way without duplicating it.
+        opened = open_match_for_room(
+            room=room,
+            reaping=dependencies.reaping,
             store=dependencies.store,
             registry=dependencies.registry,
             projector=dependencies.projector,
         )
+    except MatchAlreadyInProgress:
+        raise MatchInProgressProblem()
     except (match_errors.UnknownGame, match_errors.WrongSeatCount) as error:
         translate_match_error(error)
-    except IntegrityError:
-        # ``one_active_match_per_room`` is the only integrity error the check
-        # above cannot fully rule out: two concurrent starts can both pass it
-        # before either commits. Map the constraint to the same clean 409.
-        raise MatchInProgressProblem()
+
+    record = opened.record
+    participants = opened.participants
+    requester = _request_participant(room.id, data['session_id'])
 
     definition = dependencies.registry.get(record.game_id)
     if definition is None:
