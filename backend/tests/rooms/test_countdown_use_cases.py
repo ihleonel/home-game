@@ -367,6 +367,16 @@ class ExpireLobbyCountdownTests(SimpleTestCase):
         ports.start_match.assert_not_called()
         self.assertEqual(len(ports.broadcasts), 1)
 
+    def test_cancelled_error_propagates_and_is_not_logged(self):
+        ports = _ports(prepare_error=asyncio.CancelledError())
+
+        with self.assertNoLogs(USE_CASE_LOGGER, level='ERROR'):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(expire_lobby_countdown(ports, 5))
+
+        ports.start_match.assert_not_called()
+        self.assertEqual(ports.broadcasts, [])
+
 
 class AsyncioCountdownTimerTests(SimpleTestCase):
     def test_arm_returns_none_when_already_armed(self):
@@ -405,6 +415,67 @@ class AsyncioCountdownTimerTests(SimpleTestCase):
             self.assertIsNone(timer.cancel(5))
             with self.assertRaises(asyncio.CancelledError):
                 await armed.task
+
+        asyncio.run(scenario())
+
+    def test_arm_is_refused_while_the_expiry_is_running(self):
+        async def scenario():
+            timer = AsyncioCountdownTimer()
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def on_expire():
+                started.set()
+                await release.wait()
+
+            armed = timer.arm(5, 0, on_expire)
+            await started.wait()
+            self.assertIsNone(timer.current(5))
+            self.assertIsNone(timer.arm(5, 10, on_expire))
+
+            release.set()
+            await armed.task
+
+            rearmed = timer.arm(5, 10, on_expire)
+            self.assertIsNotNone(rearmed)
+            try:
+                timer.cancel(5)
+                with self.assertRaises(asyncio.CancelledError):
+                    await rearmed.task
+            finally:
+                timer.cancel(5)
+
+        asyncio.run(scenario())
+
+    def test_failed_expiry_clears_the_expiring_mark(self):
+        async def scenario():
+            timer = AsyncioCountdownTimer()
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def failing_expire():
+                started.set()
+                await release.wait()
+                raise RuntimeError('boom')
+
+            armed = timer.arm(5, 0, failing_expire)
+            await started.wait()
+            self.assertIsNone(timer.arm(5, 10, failing_expire))
+            release.set()
+            with self.assertRaises(RuntimeError):
+                await armed.task
+
+            async def on_expire():
+                return None
+
+            rearmed = timer.arm(5, 10, on_expire)
+            self.assertIsNotNone(rearmed)
+            try:
+                timer.cancel(5)
+                with self.assertRaises(asyncio.CancelledError):
+                    await rearmed.task
+            finally:
+                timer.cancel(5)
 
         asyncio.run(scenario())
 

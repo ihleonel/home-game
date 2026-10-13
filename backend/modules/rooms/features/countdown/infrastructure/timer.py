@@ -30,18 +30,24 @@ class ArmedCountdown:
 class AsyncioCountdownTimer:
     def __init__(self):
         self._armed: dict[int, ArmedCountdown] = {}
+        self._expiring: set[int] = set()
 
     def current(self, room_id):
         return self._armed.get(room_id)
 
     def arm(self, room_id, seconds, on_expire):
-        """Arm a countdown unless one is already armed.
+        """Arm a countdown unless one is already armed or expiring.
 
         Returns the new :class:`ArmedCountdown`, or ``None`` when a countdown
         was already armed. The return value is the single arbiter of the race
         between concurrent sync callers.
+
+        A room whose countdown already fired is still deciding the match while
+        its expiry callback runs, so a fresh countdown is refused (``None``)
+        during that window: arming one would announce a start that is already
+        in flight.
         """
-        if room_id in self._armed:
+        if room_id in self._armed or room_id in self._expiring:
             return None
         deadline = time.monotonic() + seconds
         task = asyncio.create_task(self._run(room_id, seconds, on_expire))
@@ -58,22 +64,27 @@ class AsyncioCountdownTimer:
         return armed
 
     async def _run(self, room_id, seconds, on_expire):
-        """Sleep, retire the entry, then run the expiry callback.
+        """Sleep, retire the entry, mark the room expiring, run the callback.
 
         The entry is retired the moment the countdown fires and before
         ``on_expire`` is awaited, so a later ``cancel`` finds nothing to cancel
         and cannot inject ``CancelledError`` into an expiry that is already
-        running. A genuinely cancelled task still raises out of the ``except``
-        clause below; the ``finally`` cleanup remains the backstop for the
-        cancelled and failed paths that never reach the retirement step.
+        running. The room is marked expiring for the same window so an ``arm``
+        racing the expiry is refused instead of announcing a duplicate start.
+        A genuinely cancelled task still raises out of the ``except`` clause
+        below; the ``finally`` cleanup remains the backstop for the cancelled
+        and failed paths that never reach the retirement step, and it always
+        clears the expiring mark so a failed expiry cannot leak it.
         """
         try:
             await asyncio.sleep(seconds)
             self._retire(room_id)
+            self._expiring.add(room_id)
             await on_expire()
         except asyncio.CancelledError:
             raise
         finally:
+            self._expiring.discard(room_id)
             self._retire(room_id)
 
     def _retire(self, room_id):
