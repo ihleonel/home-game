@@ -1,13 +1,16 @@
 """API tests for the match REST endpoints (FRG-06).
 
-The suite runs against real Postgres because the endpoints persist a match
-through ``DjangoMatchStore`` and resolve seats from the room's own
+The suite runs against real Postgres because the start path persists a match
+through ``DjangoMatchStore`` and resolves seats from the room's own
 ``Participant`` rows. The channel layer is the in-memory default, so the
 projector's fan-out is a local no-op with no connected socket.
 
-Every assertion about a rejection checks the machine-readable ``code`` carried
-by the body, so the frontend can tell a resync-worthy conflict from an illegal
-action without parsing the Spanish prose.
+Start fixtures drive ``open_match_for_room`` directly, the same interface
+gateway the lobby countdown calls, because the reap-before-seats rule lives
+there and not in the REST view. Rejection assertions on the HTTP path check
+the machine-readable ``code`` carried by the body, so the frontend can tell a
+resync-worthy conflict from an illegal action without parsing the Spanish
+prose; the relocated start tests assert on the domain error instead.
 """
 
 import uuid
@@ -18,7 +21,10 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from modules.games.duelo import rules
+from modules.games.interfaces.composition import compose_match_dependencies
+from modules.games.interfaces.match_start import open_match_for_room
 from modules.games.models import Match, MatchSeat
+from modules.games.runtime.domain.errors import WrongSeatCount
 from modules.rooms.models import Participant, Room
 
 
@@ -71,6 +77,24 @@ class MatchApiTestCase(APITestCase):
             '/api/matches/',
             {'session_id': str((participant or self.first).session_id)},
             format='json',
+        )
+
+    def open_match(self, *, reaping=None):
+        """Open a match for ``self.room`` through the shared interface gateway.
+
+        This is the non-HTTP analogue of ``start_match``: it drives
+        ``open_match_for_room`` with the production dependencies, so the
+        reap-before-seats rule is exercised where the lobby countdown also
+        exercises it. The reaping service is injectable so a test can prove
+        that rule is load-bearing rather than incidental.
+        """
+        dependencies = compose_match_dependencies()
+        return open_match_for_room(
+            room=self.room,
+            reaping=dependencies.reaping if reaping is None else reaping,
+            store=dependencies.store,
+            registry=dependencies.registry,
+            projector=dependencies.projector,
         )
 
     def submit_action(
@@ -217,8 +241,9 @@ class GhostReadyParticipantApiTests(MatchApiTestCase):
 
     Seats come from ``left_at IS NULL AND is_ready=True``, and ``disconnect``
     never clears readiness, so a stale ready row used to be seated from index
-    0. The reaping pass inside ``start_match_view`` must remove it before the
-    seats are resolved.
+    0. The reaping pass inside ``open_match_for_room``, the shared interface
+    gateway the lobby countdown also calls, must remove it before the seats
+    are resolved.
     """
 
     def test_a_ghost_ready_participant_leaves_only_the_live_player_ready(self):
@@ -227,12 +252,10 @@ class GhostReadyParticipantApiTests(MatchApiTestCase):
         # instead of seating a phantom.
         self.disconnect(self.second)
 
-        response = self.start_match(self.first)
+        with self.assertRaises(WrongSeatCount):
+            self.open_match()
 
-        self.assert_error(
-            response, status.HTTP_409_CONFLICT, 'wrong_seat_count', contains='1'
-        )
-        self.assertIn('2', str(response.data['detail']))
+        # The prose assertion moved out with the HTTP transport.
         self.assertFalse(Match.objects.exists())
         self.assertFalse(MatchSeat.objects.exists())
         self.second.refresh_from_db()
@@ -243,10 +266,9 @@ class GhostReadyParticipantApiTests(MatchApiTestCase):
         ghost = self.create_participant('Ghost', 'guante-fantasma')
         self.disconnect(ghost, presence=Participant.Presence.RECONNECTING)
 
-        response = self.start_match(self.first)
+        opened = self.open_match()
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        seat_refs = [seat['participant_ref'] for seat in response.data['seats']]
+        seat_refs = [seat.participant_ref for seat in opened.record.seats]
         self.assertEqual(
             seat_refs,
             [str(self.first.public_id), str(self.second.public_id)],
@@ -264,11 +286,12 @@ class GhostReadyParticipantApiTests(MatchApiTestCase):
         inside = self.create_participant('Inside', 'guante-ambar')
         self.disconnect(inside, seconds_ago=30)
 
-        response = self.start_match(self.first)
-
         # Three ready rows still reach the seat check, so the existing honest
         # count rejection is unchanged for a participant inside the grace.
-        self.assert_error(response, status.HTTP_409_CONFLICT, 'wrong_seat_count')
+        with self.assertRaises(WrongSeatCount):
+            self.open_match()
+
+        # The prose assertion moved out with the HTTP transport.
         self.assertFalse(Match.objects.exists())
         inside.refresh_from_db()
         self.assertIsNotNone(inside.disconnected_at)
@@ -287,11 +310,10 @@ class GhostFirstSeatOrderApiTests(MatchApiTestCase):
         self.second = self.create_participant('Guest Two', 'guante-azul')
 
     def test_the_reaped_ghost_does_not_push_the_live_players_off_seat_zero(self):
-        response = self.start_match(self.first)
+        opened = self.open_match()
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(
-            [seat['participant_ref'] for seat in response.data['seats']],
+            [seat.participant_ref for seat in opened.record.seats],
             [str(self.first.public_id), str(self.second.public_id)],
         )
         self.assertFalse(
@@ -305,7 +327,7 @@ class GhostFirstSeatOrderApiTests(MatchApiTestCase):
 class SubmitActionApiTests(MatchApiTestCase):
     def setUp(self):
         super().setUp()
-        self.match_ref = self.start_match().data['match_ref']
+        self.match_ref = self.open_match().record.match_ref
 
     def test_seat_owner_applies_an_action_and_receives_its_own_view(self):
         response = self.submit_action(self.match_ref, self.first, value='rock', version=0)
@@ -386,7 +408,7 @@ class SubmitActionApiTests(MatchApiTestCase):
 
 class MatchFinishResetsReadinessApiTests(MatchApiTestCase):
     def test_finishing_a_match_resets_readiness_and_unblocks_leaving(self):
-        match_ref = self.start_match().data['match_ref']
+        match_ref = self.open_match().record.match_ref
 
         # The dead end this unit closes: while both seats are ready, leaving
         # the room is refused with 409.
@@ -430,7 +452,7 @@ class MatchFinishResetsReadinessApiTests(MatchApiTestCase):
 class ResyncApiTests(MatchApiTestCase):
     def setUp(self):
         super().setUp()
-        self.match_ref = self.start_match().data['match_ref']
+        self.match_ref = self.open_match().record.match_ref
 
     def test_seat_owner_resyncs_to_its_own_view(self):
         response = self.resync(self.match_ref, self.first)
@@ -462,7 +484,7 @@ class ResyncApiTests(MatchApiTestCase):
 
 class NoPickLeakTests(MatchApiTestCase):
     def test_other_seats_pending_pick_is_never_in_a_response_body(self):
-        match_ref = self.start_match().data['match_ref']
+        match_ref = self.open_match().record.match_ref
         acted = self.submit_action(match_ref, self.first, value='rock', version=0)
 
         # The acting seat's own view carries its own pick...
