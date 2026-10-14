@@ -63,6 +63,16 @@ The countdown is cancelled and re-armed, never run twice. Any roster change that
 
 The countdown is the only way a match starts on every path: the API serves no manual start route, so the room owns the start decision and no single participant can open a match alone. `GET /api/matches/<match_ref>/` (resync) and `POST /api/matches/<match_ref>/actions/` remain the only match endpoints.
 
+## Full rooms and spectators
+
+A room that already holds the game's `max_seats` players, or whose match is already in progress, does not turn a late arrival away and does not let it break the lobby: the new session joins as a **spectator**. The same policy answers both cases, and it is derived from the game contract (`GameDefinition.min_seats`/`max_seats`) plus the room's match state, so every registered game resolves entry the same way. Entry order is: an explicit `as_spectator` request, an in-progress match, a full player roster, otherwise a player. A session that already has a membership keeps the role it was given; the only role change is an explicit promotion.
+
+A spectator is a member of the room with no seat, not a separate connection path. It cannot be marked ready (`PATCH /api/rooms/ready/` answers `409`, `Estás como espectador: no puedes marcarte como listo.`), it is not an expulsion-vote target and never joins the electorate, and it never occupies a seat: `open_match_for_room` builds seats only from ready players. It does see the running match — `resolve_seat_subscription` already projects the public view to a participant with no seat — and it leaves through the ordinary `POST /api/rooms/leave/`.
+
+A spectator can ask for a seat with `POST /api/rooms/play/` (`{'session_id': ...}`). The request is granted only in a lobby: never while a match is `in_progress`, because the seats are fixed when the match opens, and never when the player roster is already at `max_seats`. Otherwise the role becomes `player`, readiness stays `false`, and the room broadcasts `player_promoted`. The room snapshot carries `participants[].role` and a top-level `seat_limits` (`{'min_seats', 'max_seats'}`, or `null` for an unknown game), both on the REST read and on the socket, so the lobby can offer the action only when it can succeed.
+
+On screen, a spectator sees the lobby read-only with the notice `Estás como espectador.` and a `Quiero jugar` button that is enabled only while a seat is free, with the exact reason otherwise; the identity form offers `Entrar como espectador` from both the catalog and the lobby, and the game screen labels a seatless viewer for every game.
+
 ## Frontend
 
 The frontend is a single-page app with three routes, all served by one React
