@@ -20,6 +20,15 @@ make test-frontend # Run the frontend tests in the running frontend container
 
 The backend startup command already applies migrations before starting Daphne. Run `make migrate` to apply migrations explicitly; `make migrate` and `make test` require the backend container to be running, and `make test-frontend` requires the frontend container to be running. The frontend suite runs on Vitest in a Node environment against `react-dom/server`, so it needs no browser and no DOM library.
 
+## Registered games
+
+The catalog is served from the game registry, so a game exists in HomeGame exactly when its `GameDefinition` is wired into `GAME_REGISTRY` in `backend/modules/games/composition.py`; the frontend catalog endpoint and the room entry policy both derive from it. Two games are registered:
+
+- **`duelo`** — rock-paper-scissors, best of three, two seats.
+- **`ta-te-ti`** — three in a row on a 3x3 board, two seats. The first seat plays `X` and the second plays `O`; the ficha a player chose in the room is identity only and never reaches the board. The opening turn is chosen at random per match, which is why the match composition root threads a real `RandomSource` into `start_match`; a definition whose `start` needs randomness fails loudly instead of defaulting to a fixed seat when it is missing. A full board with no line ends the match as a draw (`finished` with no `winner`), and its `abandon` resolution is the same as `duelo`'s: the seat that stayed wins by abandonment.
+
+A finished match reports one of `three_in_a_row`, `draw` or `win_by_abandon` as its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`).
+
 ## Ghost rooms and ghost memberships
 
 A participant that disconnects is not removed immediately: the WebSocket path marks it `reconnecting` and only `inactive` once the 60 second reconnect grace expires, so a page refresh or a short network drop does not cost a player its seat. A membership created over REST does not open its socket in the same request, so it can also sit at `offline` with no disconnection moment. Those rows still hold their room open, so the system reaps them:
