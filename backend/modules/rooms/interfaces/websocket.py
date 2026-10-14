@@ -341,11 +341,13 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
 
     @staticmethod
     def _match_snapshot_message(subscription, presence):
-        """Build the opening snapshot, carrying the resolved seat presence.
+        """Build the opening snapshot, carrying identity and seat presence.
 
         ``presence`` is resolved by the caller because the snapshot is a pure
         formatter: the seat presence belongs to the match, not to the socket's
         own seat, so it is the same list for every socket of the match (S6).
+        ``roster`` is the additive public identity list (S1/S2): a sibling of
+        ``seats``, never an extension of the presence payload.
         """
         return {
             'type': 'match.snapshot',
@@ -353,6 +355,7 @@ class RoomConsumer(AsyncJsonWebsocketConsumer):
             'seat_index': subscription.seat_index,
             'view': subscription.view,
             'seats': presence.payload() if presence is not None else [],
+            'roster': list(subscription.roster),
         }
 
     async def match_started(self, event):

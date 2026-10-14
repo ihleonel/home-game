@@ -22,6 +22,7 @@ from ..rooms.features.presence.application.use_cases import find_active_membersh
 from ..rooms.models import Participant, Room
 from .contracts import seat_id
 from .interfaces.composition import compose_match_dependencies
+from .interfaces.match_roster import resolve_match_roster
 from .models import Match, MatchSeat
 from .runtime.application.submit_action import submit_action
 from .runtime.domain import errors as match_errors
@@ -158,13 +159,20 @@ def _view_for(definition, state, seat_index):
     )
 
 
-def _participant_payload(record, definition, seat_index):
+def _match_envelope(match, definition, *, state, version, status, seat_index):
+    """Build the shared REST envelope of a match for one seat or spectator.
+
+    Both the action and the resync response carry the same shape: the seat's
+    scoped ``view`` plus the additive public ``roster`` (S2). Building it in one
+    place keeps the two endpoints from drifting as the shape evolves.
+    """
     return {
-        'match_ref': record.match_ref,
-        'version': record.version,
-        'status': record.status,
+        'match_ref': str(match.public_id),
+        'version': version,
+        'status': status,
         'seat_index': seat_index,
-        'view': _view_for(definition, record.state, seat_index),
+        'view': _view_for(definition, state, seat_index),
+        'roster': list(resolve_match_roster(match)),
     }
 
 
@@ -203,8 +211,13 @@ def submit_action_view(request, match_ref):
     definition = dependencies.registry.get(record.game_id)
     seat = record.seat_for(str(participant.public_id))
     return Response(
-        _participant_payload(
-            record, definition, seat.index if seat is not None else None
+        _match_envelope(
+            match,
+            definition,
+            state=record.state,
+            version=record.version,
+            status=record.status,
+            seat_index=seat.index if seat is not None else None,
         ),
         status=status.HTTP_200_OK,
     )
@@ -238,12 +251,13 @@ def match_detail_view(request, match_ref):
         ).first()
     seat_index = seat.index if seat is not None else None
     return Response(
-        {
-            'match_ref': str(match.public_id),
-            'version': match.version,
-            'status': match.status,
-            'seat_index': seat_index,
-            'view': _view_for(definition, match.state, seat_index),
-        },
+        _match_envelope(
+            match,
+            definition,
+            state=match.state,
+            version=match.version,
+            status=match.status,
+            seat_index=seat_index,
+        ),
         status=status.HTTP_200_OK,
     )

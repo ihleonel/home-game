@@ -819,6 +819,36 @@ class RoomWebSocketTests(TransactionTestCase):
                 {'index': 1, 'presence': 'online', 'remaining_seconds': None},
             ],
         )
+        # S1/S2: the snapshot also carries the additive public ``roster``. It is
+        # a sibling of the presence payload, which is asserted unchanged above.
+        self.assertEqual(
+            [
+                {
+                    'seat_id': entry['seat_id'],
+                    'index': entry['index'],
+                    'display_name': entry['display_name'],
+                    'game_marker': entry['game_marker'],
+                    'game_marker_label': entry['game_marker_label'],
+                }
+                for entry in snapshots[0]['roster']
+            ],
+            [
+                {
+                    'seat_id': 'seat-0',
+                    'index': 0,
+                    'display_name': 'Guest One',
+                    'game_marker': 'guante-rojo',
+                    'game_marker_label': 'Guante rojo',
+                },
+                {
+                    'seat_id': 'seat-1',
+                    'index': 1,
+                    'display_name': 'Guest Two',
+                    'game_marker': 'guante-rojo',
+                    'game_marker_label': 'Guante rojo',
+                },
+            ],
+        )
 
     def test_a_rematch_leaves_each_socket_in_exactly_one_match_group(self):
         """A socket holds one match group whatever sequence of matches runs.

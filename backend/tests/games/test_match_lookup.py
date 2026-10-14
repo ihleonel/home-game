@@ -179,6 +179,34 @@ class OwnSeatSubscriptionTests(MatchLookupTestCase):
             subscription.group, match_seat_group_name(match_ref, 0)
         )
 
+    def test_seat_subscription_carries_the_public_roster(self):
+        self.create_match()
+
+        subscription = resolve_seat_subscription(
+            self.room.id, self.first.session_id
+        )
+
+        self.assertIsNotNone(subscription)
+        self.assertEqual(
+            subscription.roster,
+            (
+                {
+                    'seat_id': 'seat-0',
+                    'index': 0,
+                    'display_name': 'Guest One',
+                    'game_marker': 'guante-rojo',
+                    'game_marker_label': 'Guante rojo',
+                },
+                {
+                    'seat_id': 'seat-1',
+                    'index': 1,
+                    'display_name': 'Guest Two',
+                    'game_marker': 'guante-azul',
+                    'game_marker_label': 'Guante azul',
+                },
+            ),
+        )
+
 
 class SpectatorSubscriptionTests(MatchLookupTestCase):
     def test_participant_without_a_seat_is_a_spectator_of_the_public_view(self):
@@ -212,6 +240,34 @@ class SpectatorSubscriptionTests(MatchLookupTestCase):
         self.assertNotIn('you', subscription.view)
         self.assertNotIn('your_pick', subscription.view)
         self.assertNotIn('rock', json.dumps(subscription.view))
+
+    def test_spectator_subscription_carries_the_same_public_roster(self):
+        match = self.create_match()
+        match_ref = str(match.public_id)
+        spectator = Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name='Guest Three',
+            game_marker='guante-verde',
+        )
+
+        seated = resolve_seat_subscription(
+            self.room.id, self.first.session_id, match_ref
+        )
+        spectating = resolve_seat_subscription(
+            self.room.id, spectator.session_id
+        )
+
+        self.assertIsNotNone(seated)
+        self.assertIsNotNone(spectating)
+        self.assertIsNone(spectating.seat_index)
+        # The identity list is public, so a seat and a spectator get the same
+        # one; only the ``view`` is scoped.
+        self.assertEqual(spectating.roster, seated.roster)
+        self.assertEqual(
+            [entry['display_name'] for entry in spectating.roster],
+            ['Guest One', 'Guest Two'],
+        )
 
 
 class CompositionRegistryTests(TestCase):

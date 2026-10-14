@@ -278,6 +278,32 @@ class SubmitActionApiTests(MatchApiTestCase):
         self.assertEqual(response.data['view']['your_pick'], 'rock')
         self.assertEqual(Match.objects.get(public_id=self.match_ref).version, 1)
 
+    def test_action_response_carries_the_public_roster(self):
+        response = self.submit_action(
+            self.match_ref, self.first, value='rock', version=0
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data['roster'],
+            [
+                {
+                    'seat_id': 'seat-0',
+                    'index': 0,
+                    'display_name': 'Guest One',
+                    'game_marker': 'guante-rojo',
+                    'game_marker_label': 'Guante rojo',
+                },
+                {
+                    'seat_id': 'seat-1',
+                    'index': 1,
+                    'display_name': 'Guest Two',
+                    'game_marker': 'guante-azul',
+                    'game_marker_label': 'Guante azul',
+                },
+            ],
+        )
+
     def test_unknown_match_is_not_found(self):
         response = self.submit_action(str(uuid.uuid4()), self.first)
 
@@ -401,6 +427,19 @@ class ResyncApiTests(MatchApiTestCase):
         self.assertEqual(response.data['status'], 'in_progress')
         self.assertEqual(response.data['seat_index'], 0)
         self.assertEqual(response.data['view']['you'], 'seat-0')
+
+    def test_resync_response_carries_the_public_roster(self):
+        response = self.resync(self.match_ref, self.first)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [entry['display_name'] for entry in response.data['roster']],
+            ['Guest One', 'Guest Two'],
+        )
+        self.assertEqual(
+            [entry['game_marker_label'] for entry in response.data['roster']],
+            ['Guante rojo', 'Guante azul'],
+        )
 
     def test_spectator_resyncs_to_the_public_view(self):
         spectator = self.create_participant(
