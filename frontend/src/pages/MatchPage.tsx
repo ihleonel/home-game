@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AppMessages } from '../components/AppMessages'
 import { CatalogGate } from '../components/CatalogGate'
 import { useMatchPresence } from '../games/matchPresence'
 import { renderMatchScreen } from '../games/registry'
 import type { MatchView } from '../games/registry'
+import { useReconnectCountdown } from '../lib/reconnectCountdown'
 import { useCatalog } from '../state/catalogContext'
 import { useRoomSession } from '../state/roomSessionContext'
 
@@ -44,46 +44,6 @@ function reconnectNotice(label: string, seconds: number | null): string {
     return `${label} se ha desconectado. La ventana de reconexión ha terminado: la partida se resolverá por abandono.`
   }
   return `${label} se ha desconectado. Está dentro de la ventana de reconexión: si no vuelve a tiempo, la partida se resolverá por abandono.`
-}
-
-type ReconnectCountdown = {
-  remainingSeconds: number
-}
-
-/**
- * Count the reconnect window down locally, once a second.
- *
- * The server owns the deadline and sends ``remaining_seconds`` (S8); the
- * screen only replays it, so the number moves without waiting for a new frame.
- * A new server value re-arms the count during render and a null clears it, so
- * the latest value always wins. Each value arms a fresh countdown object, and a
- * tick carries the object it belongs to as its run id, so a tick left over from
- * a previous value can never decrement a freshly armed one -- the same guard the
- * lobby countdown draws from its run id.
- */
-function useReconnectCountdown(remainingSeconds: number | null): number | null {
-  const [countdown, setCountdown] = useState<ReconnectCountdown | null>(null)
-  const [armedFor, setArmedFor] = useState<number | null>(null)
-
-  if (remainingSeconds !== armedFor) {
-    setArmedFor(remainingSeconds)
-    setCountdown(typeof remainingSeconds === 'number' ? { remainingSeconds } : null)
-  }
-
-  useEffect(() => {
-    if (!countdown || countdown.remainingSeconds <= 0) return
-    const armed = countdown
-    const timeout = window.setTimeout(() => {
-      setCountdown((current) =>
-        current === armed && current.remainingSeconds > 0
-          ? { remainingSeconds: current.remainingSeconds - 1 }
-          : current,
-      )
-    }, 1000)
-    return () => window.clearTimeout(timeout)
-  }, [countdown])
-
-  return countdown ? countdown.remainingSeconds : null
 }
 
 /**

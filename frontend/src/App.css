@@ -345,6 +345,14 @@
   text-transform: capitalize;
 }
 
+/* The ticking number of a reconnect window. It is a separate flex item so the
+   badge can hold the label and the number without the label re-rendering, and
+   it restores the lowercase ``s`` that `text-transform` would capitalize. */
+.presence-countdown {
+  margin-left: 0.35rem;
+  text-transform: none;
+}
+
 .presence-online {
   color: var(--success-ink);
   background: var(--success-bg);

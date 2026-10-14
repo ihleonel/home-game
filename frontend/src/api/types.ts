@@ -32,6 +32,13 @@ export type Participant = {
   game_marker: string
   is_ready: boolean
   presence: 'offline' | 'online' | 'reconnecting' | 'inactive'
+  /**
+   * The reconnect window the server still grants this participant, in whole
+   * seconds. The server computes it so the roster never depends on the browser
+   * clock (S8); ``null`` for a participant that is not reconnecting inside its
+   * window, and also when the server sent no usable value.
+   */
+  remaining_seconds: number | null
   disconnected_at: string | null
   joined_at: string
 }
