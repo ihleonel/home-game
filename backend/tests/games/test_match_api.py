@@ -571,3 +571,84 @@ class TaTeTiStartApiTests(APITestCase):
 
         match = Match.objects.get(public_id=opened.record.match_ref)
         self.assertIn(match.state['turn'], ('seat-0', 'seat-1'))
+
+
+class TaTeTiDrawApiTests(APITestCase):
+    """A full ta-te-ti draw driven end to end through the real REST path.
+
+    The draw is ta-te-ti's novel ending (duelo has none), so it is exercised
+    through the real action endpoint and the real ``DjangoMatchStore`` rather
+    than a fake: the round-trip that matters is that a finished match with no
+    winner persists ``winner_seat=''`` and reads back as ``None`` instead of
+    failing on the model's non-null char column.
+    """
+
+    def setUp(self):
+        self.room = Room.objects.create(game_id='ta-te-ti')
+        self.first = self._participant('Guest One', 'sol')
+        self.second = self._participant('Guest Two', 'luna')
+
+    def _participant(self, display_name, marker):
+        return Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name=display_name,
+            game_marker=marker,
+            is_ready=True,
+        )
+
+    def _open(self):
+        dependencies = compose_match_dependencies()
+        # seat-0 opens the match, so the draw sequence below alternates from it.
+        return open_match_for_room(
+            room=self.room,
+            reaping=dependencies.reaping,
+            store=dependencies.store,
+            registry=dependencies.registry,
+            projector=dependencies.projector,
+            rng=_FixedRng(('seat-0', 'seat-1')),
+        )
+
+    def test_a_full_board_without_a_line_persists_a_draw(self):
+        opened = self._open()
+        match_ref = opened.record.match_ref
+        moves = (
+            (self.first, '0'),
+            (self.second, '4'),
+            (self.first, '1'),
+            (self.second, '2'),
+            (self.first, '6'),
+            (self.second, '3'),
+            (self.first, '5'),
+            (self.second, '7'),
+            (self.first, '8'),
+        )
+        response = None
+        for version, (participant, cell) in enumerate(moves):
+            response = self.client.post(
+                f'/api/matches/{match_ref}/actions/',
+                {
+                    'session_id': str(participant.session_id),
+                    'action_name': 'pick',
+                    'action_value': cell,
+                    'expected_version': version,
+                },
+                format='json',
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+        self.assertEqual(response.data['status'], 'finished')
+        self.assertTrue(response.data['view']['finished'])
+        self.assertIsNone(response.data['view']['winner'])
+
+        stored = Match.objects.get(public_id=match_ref)
+        self.assertEqual(stored.status, Match.Status.FINISHED)
+        self.assertFalse(stored.winner_seat)
+
+        resync = self.client.get(
+            f'/api/matches/{match_ref}/',
+            {'session_id': str(self.first.session_id)},
+        )
+        self.assertEqual(resync.status_code, status.HTTP_200_OK)
+        self.assertTrue(resync.data['view']['finished'])
+        self.assertIsNone(resync.data['view']['winner'])
