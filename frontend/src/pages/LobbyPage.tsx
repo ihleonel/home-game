@@ -7,7 +7,7 @@ import { IdentityForm } from '../components/IdentityForm'
 import { Roster } from '../components/Roster'
 import { SpectatorActions } from '../components/SpectatorActions'
 import { YourRoomActions } from '../components/YourRoomActions'
-import { markerLabel } from '../lib/format'
+import { markerLabel, roomSummary, splitRoomParticipants } from '../lib/format'
 import { readStoredIdentity } from '../lib/session'
 import type { GuestIdentity } from '../lib/session'
 import { useCatalog } from '../state/catalogContext'
@@ -64,11 +64,9 @@ export function LobbyPage() {
   // A spectator may request a seat only while the room still has one and no
   // match has started (S5/S8). The reason mirrors the exact server copy so the
   // disabled button never leaves the spectator guessing.
-  const playerCount = room.participants.filter(
-    (participant) => participant.role === 'player',
-  ).length
+  const { players, spectators } = splitRoomParticipants(room.participants)
   const seatLimits = room.seat_limits ?? null
-  const roomFull = seatLimits !== null && playerCount >= seatLimits.max_seats
+  const roomFull = seatLimits !== null && players.length >= seatLimits.max_seats
   const canRequestSeat = !matchInProgress && seatLimits !== null && !roomFull
   const spectatorSeatReason = matchInProgress
     ? 'La partida ya ha comenzado.'
@@ -125,7 +123,7 @@ export function LobbyPage() {
         <div className={allReady ? 'ready-summary is-all-ready' : 'ready-summary'} role="status">
           {allReady
             ? 'Todos los jugadores de la sala están listos.'
-            : `${room.participants.length} ${room.participants.length === 1 ? 'jugador' : 'jugadores'} en la sala`}
+            : roomSummary(players.length, spectators.length)}
         </div>
 
         <Roster

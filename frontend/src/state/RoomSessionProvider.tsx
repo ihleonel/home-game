@@ -16,7 +16,7 @@ import type {
 import { MatchPresenceContext, parseSeatPresence } from '../games/matchPresence'
 import { hasMatchRenderer } from '../games/registry'
 import type { MatchState } from '../games/registry'
-import { expulsionVoteMessage } from '../lib/format'
+import { expulsionVoteMessage, splitRoomParticipants } from '../lib/format'
 import { mergeMatch, mergeMatchEvent } from '../lib/match'
 import { readStoredRoomSession, saveGuestSession } from '../lib/session'
 import type { GuestIdentity, RoomSession } from '../lib/session'
@@ -65,8 +65,12 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
   const currentBallot = activeExpulsionVote?.ballots.find(
     (ballot) => ballot.participant_ref === roomSession?.participantRef,
   )
+  // Only players can be ready: a spectator has no seat to confirm (S3), so
+  // counting it here would keep the lobby from ever reporting a fully ready
+  // room, exactly as ``lobby_is_ready`` ignores spectators on the server.
+  const readyPlayers = splitRoomParticipants(room?.participants ?? []).players
   const allReady = Boolean(
-    room?.participants.length && room.participants.every((participant) => participant.is_ready),
+    readyPlayers.length && readyPlayers.every((participant) => participant.is_ready),
   )
   // Readiness is rendered from the room snapshot, not from this session's
   // stored copy: the backend resets every participant when a match finishes,

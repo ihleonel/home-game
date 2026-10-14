@@ -84,7 +84,7 @@ export function Roster({
   return (
     <section className="roster-section" aria-labelledby="roster-title">
       <div className="section-heading">
-        <h3 id="roster-title">Jugadores</h3>
+        <h3 id="roster-title">En la sala</h3>
         <span>{participants.length}</span>
       </div>
       {participants.length > 0 ? (
