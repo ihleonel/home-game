@@ -54,6 +54,28 @@
   text-align: right;
 }
 
+/* A seat named from the server roster (S3): the player's name followed by the
+   marker chip the room already uses for the ficha. A seat the roster does not
+   name keeps the neutral "Jugador" text and shows no chip. */
+.duelo-seat {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.duelo-seat-name {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.duelo-seat .duelo-seat-marker {
+  border-color: var(--accent-border);
+  color: var(--accent-dark);
+  background: var(--surface);
+}
+
 .duelo-progress {
   margin: 0.5rem 0;
   color: var(--ink-soft);

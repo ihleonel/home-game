@@ -1,4 +1,6 @@
-import type { MatchRendererProps, MatchView } from '../registry'
+import type { ReactElement } from 'react'
+import type { MatchSeatRosterEntry } from '../matchRoster'
+import type { MatchRendererProps, MatchState, MatchView } from '../registry'
 import './duelo.css'
 
 /**
@@ -21,21 +23,47 @@ function pickLabel(value: string | null): string {
 }
 
 /**
- * A human label for a seat id.
+ * One seat named from the server roster.
  *
- * ``duelo`` names its seats ``seat-<index>``; every other id is shown as it
- * comes. The own seat is marked so a player can read the score list.
+ * The name and the marker label are the fields the server sent (S4): the
+ * client never maps a ``game_marker`` to a label and never crosses the room
+ * roster with the match seats. A seat the roster does not name reads
+ * ``Jugador``, never a fabricated seat number (S3), and the only comparison
+ * allowed is the own-seat ``(tú)`` suffix against ``view.you``.
  */
-function seatLabel(seatId: string, view: MatchView): string {
-  const numbered = /^seat-(\d+)$/.exec(seatId)
-  const label = numbered ? `Asiento ${Number(numbered[1]) + 1}` : seatId
-  return seatId === view.you ? `${label} (tú)` : label
+function seatLabel(seatId: string, match: MatchState): ReactElement {
+  const entry = match.roster.find((seat) => seat.seat_id === seatId)
+  const name = entry ? entry.display_name : 'Jugador'
+  const suffix = seatId === match.view.you ? ' (tú)' : ''
+  return (
+    <span className="duelo-seat">
+      <span className="duelo-seat-name">{`${name}${suffix}`}</span>
+      {entry && (
+        <span className="marker-chip duelo-seat-marker">{entry.game_marker_label}</span>
+      )}
+    </span>
+  )
 }
 
-function outcomeMessage(view: MatchView): string {
+/**
+ * The same seat as plain prose, for sentences: ``display_name (label)``.
+ *
+ * It uses only the server fields and the neutral ``Jugador`` fallback, so a
+ * sentence can never read a seat number either.
+ */
+function seatProse(
+  seatId: string,
+  roster: MatchSeatRosterEntry[],
+): string {
+  const entry = roster.find((seat) => seat.seat_id === seatId)
+  if (!entry) return 'Jugador'
+  return `${entry.display_name} (${entry.game_marker_label})`
+}
+
+function outcomeMessage(view: MatchView, roster: MatchSeatRosterEntry[]): string {
   if (!view.winner) return 'La partida ha terminado.'
   if (view.winner === view.you) return 'Has ganado la partida.'
-  return `Ha ganado ${seatLabel(view.winner, view)}.`
+  return `Ha ganado ${seatProse(view.winner, roster)}.`
 }
 
 /**
@@ -69,7 +97,7 @@ export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
       <ul className="duelo-scores">
         {Object.entries(view.scores).map(([seatId, score]) => (
           <li key={seatId}>
-            <span>{seatLabel(seatId, view)}</span>
+            {seatLabel(seatId, match)}
             <strong>{score}</strong>
           </li>
         ))}
@@ -77,7 +105,7 @@ export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
 
       {view.finished ? (
         view.ended_by_abandon ? null : (
-          <p className="duelo-outcome" role="status">{outcomeMessage(view)}</p>
+          <p className="duelo-outcome" role="status">{outcomeMessage(view, match.roster)}</p>
         )
       ) : seated ? (
         <p className="duelo-progress" role="status">
@@ -102,14 +130,14 @@ export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
           <ul>
             {Object.entries(view.reveal.picks).map(([seatId, pick]) => (
               <li key={seatId}>
-                <span>{seatLabel(seatId, view)}</span>
+                {seatLabel(seatId, match)}
                 <strong>{pickLabel(pick)}</strong>
               </li>
             ))}
           </ul>
           <p className="duelo-reveal-winner">
             {view.reveal.winner
-              ? `Ganó ${seatLabel(view.reveal.winner, view)}.`
+              ? `Ganó ${seatProse(view.reveal.winner, match.roster)}.`
               : 'La ronda terminó en empate.'}
           </p>
         </div>

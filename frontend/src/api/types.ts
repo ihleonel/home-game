@@ -1,4 +1,5 @@
 import type { MatchView } from '../games/registry'
+import type { MatchSeatRosterEntry } from '../games/matchRoster'
 
 /**
  * The presence of one seat of the running match.
@@ -101,6 +102,12 @@ export type MatchEnvelope = {
   version: number
   status: string
   seat_index: number | null
+  /**
+   * The public seat identity the server resolves for the match (S1/S2). It is
+   * additive: a response that does not carry it leaves the on-screen roster
+   * untouched. The client only renders it (S4).
+   */
+  roster?: MatchSeatRosterEntry[]
   view: MatchView
 }
 
@@ -133,4 +140,10 @@ export type ServerMessage = {
   version?: number
   view?: MatchView
   seats?: SeatPresence[]
+  /**
+   * The public seat identity of a ``match.snapshot`` frame (S2). It is
+   * additive and optional: frames that do not carry it keep whatever roster
+   * the match already had.
+   */
+  roster?: MatchSeatRosterEntry[]
 }

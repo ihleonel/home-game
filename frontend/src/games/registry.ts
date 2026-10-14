@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import type { ComponentType, ReactElement } from 'react'
 import { DueloMatch } from './duelo/DueloMatch'
+import type { MatchSeatRosterEntry } from './matchRoster'
 
 /**
  * One resolved round exactly as the server reports it.
@@ -52,6 +53,12 @@ export type MatchState = {
   matchRef: string
   seatIndex: number | null
   version: number | null
+  /**
+   * The public identity of every seat as the server projected it (S1/S3).
+   * The client renders it and never derives it: an empty array is a valid
+   * match whose screen falls back to the neutral seat label.
+   */
+  roster: MatchSeatRosterEntry[]
   view: MatchView
 }
 

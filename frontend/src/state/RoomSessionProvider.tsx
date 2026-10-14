@@ -14,6 +14,7 @@ import type {
   VoteResponse,
 } from '../api/types'
 import { MatchPresenceContext, parseSeatPresence } from '../games/matchPresence'
+import { parseMatchRoster } from '../games/matchRoster'
 import { hasMatchRenderer } from '../games/registry'
 import type { MatchState } from '../games/registry'
 import { expulsionVoteMessage, splitRoomParticipants } from '../lib/format'
@@ -539,6 +540,10 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
               matchRef,
               seatIndex,
               version: current && current.matchRef === matchRef ? current.version : null,
+              // A frame that carries no usable roster projects an explicitly
+              // empty one: the screen then falls back to the neutral label
+              // rather than naming a seat from a stale list (S3/S5).
+              roster: parseMatchRoster(message.roster) ?? [],
               view,
             }))
             const snapshotPresence = parseSeatPresence(message.seats)
@@ -564,7 +569,9 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
             const version =
               typeof message.version === 'number' ? message.version : null
             setCountdown(null)
-            setMatch((current) => mergeMatchEvent(current, matchRef, version, view))
+            setMatch((current) =>
+              mergeMatchEvent(current, matchRef, version, view, message.roster),
+            )
           } else if (
             message.type === 'match.presence' &&
             typeof message.match_ref === 'string'
