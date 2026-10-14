@@ -22,7 +22,10 @@ from modules.rooms.features.membership.domain.errors import (
 from modules.rooms.features.readiness.application.ports import ReadinessPorts
 from modules.rooms.features.readiness.application.use_cases import set_ready_state
 from modules.rooms.features.readiness.domain.entities import ReadinessParticipant
-from modules.rooms.features.readiness.domain.errors import ActiveRoomNotFound
+from modules.rooms.features.readiness.domain.errors import (
+    ActiveRoomNotFound,
+    SpectatorCannotBeReady,
+)
 from tests.games.support import SCOPING_GAME_ID
 
 from .support import ports_fake
@@ -474,6 +477,25 @@ class ReadinessUseCaseTests(SimpleTestCase):
 
         self.assertEqual(ports.timeline, ['begin', 'active_room_for_update', 'rollback'])
         ports.active_participant_for_session_for_update.assert_not_called()
+
+    def test_a_spectator_cannot_be_marked_ready_whatever_the_requested_value(self):
+        for requested in (True, False):
+            with self.subTest(requested=requested):
+                participant = ReadinessParticipant(
+                    id=24, is_ready=False, role='spectator'
+                )
+                ports = _ports(
+                    active_room_for_update=12,
+                    active_participant_for_session_for_update=participant,
+                )
+
+                with self.assertRaises(SpectatorCannotBeReady):
+                    set_ready_state(
+                        ports, {'session_id': uuid4(), 'is_ready': requested}
+                    )
+
+                ports.save_readiness.assert_not_called()
+                ports.schedule_room_event.assert_not_called()
 
 
 def _ports(**results):

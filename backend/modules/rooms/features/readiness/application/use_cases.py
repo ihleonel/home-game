@@ -1,4 +1,9 @@
-from ..domain.errors import ActiveParticipantNotFound, ActiveRoomNotFound
+from ...membership.domain.rules import SPECTATOR_ROLE
+from ..domain.errors import (
+    ActiveParticipantNotFound,
+    ActiveRoomNotFound,
+    SpectatorCannotBeReady,
+)
 from ..domain.rules import readiness_change
 from .ports import ReadinessPorts
 
@@ -13,6 +18,10 @@ def set_ready_state(ports: ReadinessPorts, data):
         )
         if participant is None:
             raise ActiveParticipantNotFound()
+        if participant.role == SPECTATOR_ROLE:
+            # The spectator has no seat, so the requested value is irrelevant:
+            # the roster and the snapshot stay exactly as they were.
+            raise SpectatorCannotBeReady()
 
         change = readiness_change(participant.is_ready, data['is_ready'])
         requested_value = change.value if change.changed else participant.is_ready

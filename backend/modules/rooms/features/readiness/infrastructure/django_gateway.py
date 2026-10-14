@@ -36,7 +36,11 @@ class DjangoReadinessGateway:
         ).first()
         if participant is None:
             return None
-        return ReadinessParticipant(id=participant.pk, is_ready=participant.is_ready)
+        return ReadinessParticipant(
+            id=participant.pk,
+            is_ready=participant.is_ready,
+            role=participant.role,
+        )
 
     def save_readiness(self, participant_id, is_ready):
         participant = Participant.objects.select_for_update().get(pk=participant_id)

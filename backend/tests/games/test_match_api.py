@@ -213,6 +213,30 @@ class ReadySeatsOnlyApiTests(MatchApiTestCase):
         )
 
 
+class SpectatorSeatExclusionApiTests(MatchApiTestCase):
+    """A spectator never occupies a seat, even with a stray ``is_ready``."""
+
+    def test_a_ready_spectator_is_not_seated(self):
+        spectator = self.create_participant('Guest Three', 'guante-verde')
+        spectator.role = Participant.Role.SPECTATOR
+        # Pin the query filter: readiness alone must not buy a seat.
+        spectator.is_ready = True
+        spectator.save(update_fields=('role', 'is_ready'))
+
+        opened = self.open_match()
+
+        seat_refs = [seat.participant_ref for seat in opened.record.seats]
+        self.assertEqual(
+            seat_refs,
+            [str(self.first.public_id), str(self.second.public_id)],
+        )
+        self.assertNotIn(str(spectator.public_id), seat_refs)
+        match = Match.objects.get()
+        self.assertFalse(
+            MatchSeat.objects.filter(match=match, participant=spectator).exists()
+        )
+
+
 class GhostFirstSeatOrderApiTests(MatchApiTestCase):
     """The ghost that joined first would otherwise occupy seat 0."""
 

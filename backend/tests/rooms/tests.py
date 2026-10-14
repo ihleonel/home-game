@@ -340,6 +340,45 @@ class RoomApiTests(APITestCase):
         participant.refresh_from_db()
         self.assertIsNotNone(participant.left_at)
 
+    def test_a_spectator_cannot_be_marked_ready_and_the_roster_is_unchanged(self):
+        self.create_room(display_name='Guest One')
+        self.create_room(
+            display_name='Guest Two',
+            game_marker=self.game['markers'][1]['id'],
+        )
+        spectator = self.create_room(
+            display_name='Guest Three',
+            game_marker=self.game['markers'][2]['id'],
+        )
+
+        before = self.client.get(
+            '/api/rooms/active/', {'game_id': self.game['id']}
+        )
+        before_readiness = [
+            entry['is_ready'] for entry in before.data['room']['participants']
+        ]
+
+        response = self.client.patch(
+            '/api/rooms/ready/',
+            {'session_id': spectator.data['session_id'], 'is_ready': True},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            str(response.data['detail']),
+            'Estás como espectador: no puedes marcarte como listo.',
+        )
+
+        after = self.client.get(
+            '/api/rooms/active/', {'game_id': self.game['id']}
+        )
+        after_readiness = [
+            entry['is_ready'] for entry in after.data['room']['participants']
+        ]
+        self.assertEqual(after_readiness, before_readiness)
+        self.assertFalse(any(after_readiness))
+
     def test_readiness_targets_the_room_containing_the_session(self):
         self.create_room(game=self.game, display_name='First Game Guest')
         second = self.create_room(

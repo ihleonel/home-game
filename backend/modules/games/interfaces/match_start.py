@@ -77,7 +77,10 @@ def open_match_for_room(*, room, reaping, store, registry, projector):
         # ``DjangoMatchStore.create``.
         participants = list(
             Participant.objects.filter(
-                room_id=room.id, left_at__isnull=True, is_ready=True
+                room_id=room.id,
+                left_at__isnull=True,
+                is_ready=True,
+                role=Participant.Role.PLAYER,
             ).order_by('joined_at', 'pk')
         )
         seats = [

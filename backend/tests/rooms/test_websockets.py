@@ -295,26 +295,25 @@ class RoomWebSocketTests(TransactionTestCase):
                 },
             )
             join_event = await communicator.receive_json_from()
-            joined_session_id = join_response.json()['session_id']
 
             ready_response = await api_request(
                 'patch',
                 '/api/rooms/ready/',
-                {'session_id': joined_session_id, 'is_ready': True},
+                {'session_id': created_session_id, 'is_ready': True},
             )
             ready_event = await communicator.receive_json_from()
 
             not_ready_response = await api_request(
                 'patch',
                 '/api/rooms/ready/',
-                {'session_id': joined_session_id, 'is_ready': False},
+                {'session_id': created_session_id, 'is_ready': False},
             )
             not_ready_event = await communicator.receive_json_from()
 
             leave_response = await api_request(
                 'post',
                 '/api/rooms/leave/',
-                {'session_id': joined_session_id},
+                {'session_id': created_session_id},
             )
             leave_event = await communicator.receive_json_from()
             await communicator.disconnect()
@@ -370,7 +369,7 @@ class RoomWebSocketTests(TransactionTestCase):
             next(
                 participant['is_ready']
                 for participant in ready_event['room']['participants']
-                if participant['display_name'] == 'Guest Three'
+                if participant['display_name'] == 'Guest Two'
             )
         )
         self.assertEqual(not_ready_status, 200)
@@ -379,14 +378,14 @@ class RoomWebSocketTests(TransactionTestCase):
             next(
                 participant['is_ready']
                 for participant in not_ready_event['room']['participants']
-                if participant['display_name'] == 'Guest Three'
+                if participant['display_name'] == 'Guest Two'
             )
         )
         self.assertEqual(leave_status, 204)
         self.assertEqual(leave_event['type'], 'player_left')
         self.assertEqual(
             {participant['display_name'] for participant in leave_event['room']['participants']},
-            {'Guest One', 'Guest Two'},
+            {'Guest One', 'Guest Three'},
         )
 
     def test_reconnect_restores_membership_and_receives_a_fresh_snapshot(self):

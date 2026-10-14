@@ -36,6 +36,7 @@ from ..features.readiness.application.use_cases import set_ready_state
 from ..features.readiness.domain.errors import (
     ActiveParticipantNotFound,
     ActiveRoomNotFound,
+    SpectatorCannotBeReady,
 )
 from ..serializers import (
     ActiveRoomLookupSerializer,
@@ -69,6 +70,12 @@ class ReadyLeaveForbidden(APIException):
         'Deja de estar listo para poder salir.'
     )
     default_code = 'ready_participant_cannot_leave'
+
+
+class SpectatorReadyForbidden(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = 'Estás como espectador: no puedes marcarte como listo.'
+    default_code = 'spectator_cannot_ready'
 
 
 def _translate_voting_error(error):
@@ -194,6 +201,8 @@ def update_ready_state(request):
         raise NotFound('No hay ninguna sala activa.')
     except ActiveParticipantNotFound:
         raise NotFound('La sesión no pertenece a ningún participante activo de la sala.')
+    except SpectatorCannotBeReady:
+        raise SpectatorReadyForbidden()
     return Response(response_data)
 
 
