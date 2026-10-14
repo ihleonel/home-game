@@ -42,8 +42,12 @@ export function splitRoomParticipants(participants: Participant[]): {
  */
 export function roomSummary(players: number, spectators: number): string {
   const playersText = `${players} ${players === 1 ? 'jugador' : 'jugadores'}`
-  if (spectators === 0) return `${playersText} en la sala`
   const spectatorsText = `${spectators} ${spectators === 1 ? 'espectador' : 'espectadores'}`
+  if (spectators === 0) return `${playersText} en la sala`
+  // A room can hold only visitors, for example after every player left while
+  // one spectator stayed, so the empty seat count is dropped instead of
+  // reading "0 jugadores y 1 espectador".
+  if (players === 0) return `${spectatorsText} en la sala`
   return `${playersText} y ${spectatorsText} en la sala`
 }
 
