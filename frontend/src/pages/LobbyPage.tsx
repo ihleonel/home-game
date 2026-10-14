@@ -1,0 +1,186 @@
+import { useState } from 'react'
+import type { FormEvent } from 'react'
+import { Navigate, useParams } from 'react-router-dom'
+import { CountdownOverlay } from '../components/CountdownOverlay'
+import { ExpulsionVotePanel } from '../components/ExpulsionVotePanel'
+import { IdentityForm } from '../components/IdentityForm'
+import { Roster } from '../components/Roster'
+import { YourRoomActions } from '../components/YourRoomActions'
+import { markerLabel } from '../lib/format'
+import { readStoredIdentity } from '../lib/session'
+import type { GuestIdentity } from '../lib/session'
+import { useCatalog } from '../state/catalogContext'
+import { useRoomSession } from '../state/roomSessionContext'
+
+/**
+ * The waiting room of a game.
+ *
+ * It shows the roster, the readiness, the expulsion vote and the countdown.
+ * A live match with a renderer moves the player to the game screen; a game
+ * that has no renderer keeps its "no disponible" notice here, so a match can
+ * never trap a player on a screen this app cannot draw.
+ */
+export function LobbyPage() {
+  const { gameId } = useParams<{ gameId: string }>()
+  const { games } = useCatalog()
+  const {
+    room,
+    roomSession,
+    activeExpulsionVote,
+    currentBallot,
+    currentParticipant,
+    allReady,
+    ownReady,
+    busy,
+    pendingAction,
+    isJoined,
+    matchInProgress,
+    matchRendererAvailable,
+    countdown,
+    toggleReady,
+    leaveRoom,
+    startExpulsionVote,
+    castExpulsionBallot,
+    createOrJoin,
+    setActionError,
+  } = useRoomSession()
+
+  const [identity, setIdentity] = useState<GuestIdentity>({
+    displayName: '',
+    gameMarker: '',
+  })
+  const [joining, setJoining] = useState(false)
+
+  const activeGame = games.find((game) => game.id === room?.game_id)
+
+  if (!room) return <Navigate to="/" replace />
+  if (matchInProgress && matchRendererAvailable) {
+    return <Navigate to={`/games/${room.game_id}/match`} replace />
+  }
+  if (gameId !== room.game_id) return <Navigate to={`/rooms/${room.game_id}`} replace />
+
+  function startJoining(): void {
+    if (!activeGame) return
+    const savedIdentity = readStoredIdentity(activeGame)
+    setIdentity(savedIdentity)
+    setActionError(null)
+    if (savedIdentity.displayName.trim() && savedIdentity.gameMarker) {
+      void createOrJoin('join', activeGame, savedIdentity)
+    } else {
+      setJoining(true)
+    }
+  }
+
+  async function submitIdentity(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    if (!activeGame) return
+    const outcome = await createOrJoin('join', activeGame, identity)
+    if (outcome !== 'rejected') setJoining(false)
+  }
+
+  function cancelJoining(): void {
+    setJoining(false)
+    // Cancelling the draft also dismisses the rejection that opened it, the
+    // same way the single identity form did before the split.
+    setActionError(null)
+  }
+
+  return (
+    <>
+      <section className="room-panel" aria-labelledby="active-room-title">
+        <div className="room-heading">
+          <div>
+            <p className="eyebrow">Sala activa</p>
+            <h2 id="active-room-title">{activeGame?.label ?? 'Sala de juego'}</h2>
+            <p className="room-description">
+              {activeGame?.description ?? 'Los jugadores están en la sala de la partida actual.'}
+            </p>
+          </div>
+          <span className="room-status">Sala abierta</span>
+        </div>
+
+        <div className={allReady ? 'ready-summary is-all-ready' : 'ready-summary'} role="status">
+          {allReady
+            ? 'Todos los jugadores de la sala están listos.'
+            : `${room.participants.length} ${room.participants.length === 1 ? 'jugador' : 'jugadores'} en la sala`}
+        </div>
+
+        <Roster
+          busy={busy}
+          canStartExpulsionVote={(participant) =>
+            !activeExpulsionVote &&
+            isJoined &&
+            roomSession !== null &&
+            currentParticipant?.presence === 'online' &&
+            participant.presence === 'inactive' &&
+            participant.participant_ref !== roomSession.participantRef}
+          game={activeGame}
+          onStartExpulsionVote={(participantRef) => void startExpulsionVote(participantRef)}
+          participants={room.participants}
+        />
+
+        {activeExpulsionVote && (
+          <ExpulsionVotePanel
+            busy={busy}
+            canVote={Boolean(currentBallot) && currentParticipant?.presence === 'online'}
+            isTarget={roomSession?.participantRef === activeExpulsionVote.target_ref}
+            onCast={(choice) => void castExpulsionBallot(activeExpulsionVote.vote_ref, choice)}
+            ownBallot={currentBallot}
+            vote={activeExpulsionVote}
+          />
+        )}
+
+        {isJoined && !matchRendererAvailable && (
+          <section className="match-unavailable" aria-labelledby="match-unavailable-title">
+            <h3 id="match-unavailable-title">Vista de partida no disponible</h3>
+            <p className="quiet-copy">
+              Este juego todavía no tiene una vista de partida en HomeGame.
+            </p>
+          </section>
+        )}
+
+        {isJoined && roomSession ? (
+          <YourRoomActions
+            busy={busy}
+            displayName={roomSession.displayName}
+            leavePending={pendingAction === 'leave'}
+            markerLabel={markerLabel(activeGame, roomSession.gameMarker)}
+            onLeave={() => void leaveRoom()}
+            onToggleReady={() => void toggleReady()}
+            ownReady={ownReady}
+            readyPending={pendingAction === 'ready'}
+          />
+        ) : joining && activeGame ? (
+          <IdentityForm
+            busy={busy}
+            game={activeGame}
+            identity={identity}
+            intent="join"
+            onCancel={cancelJoining}
+            onChange={setIdentity}
+            onSubmit={submitIdentity}
+          />
+        ) : (
+          <div className="join-actions">
+            <p className="quiet-copy">Únete a la sala actual para participar.</p>
+            <button
+              className="button button-primary"
+              disabled={busy || !activeGame}
+              onClick={startJoining}
+              type="button"
+            >
+              Entrar en la sala
+            </button>
+          </div>
+        )}
+      </section>
+
+      {isJoined && countdown && !matchInProgress && (
+        <CountdownOverlay
+          remainingSeconds={countdown.remainingSeconds}
+          seconds={countdown.seconds}
+        />
+      )}
+    </>
+  )
+}

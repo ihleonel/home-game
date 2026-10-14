@@ -1,10 +1,10 @@
-from datetime import timedelta
-
 from django.utils import timezone
 from rest_framework import serializers
 
+from modules.games.composition import GAME_REGISTRY
+
 from .constants import RECONNECT_GRACE_SECONDS
-from .features.catalog.domain.catalog import contains_game, contains_marker
+from .features.presence.domain.rules import grace_expired, remaining_seconds
 from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
 from .infrastructure.snapshots import expulsion_vote_snapshot
 
@@ -23,13 +23,15 @@ class RoomRequestSerializer(serializers.Serializer):
     game_marker = serializers.SlugField(max_length=64, required=False)
 
     def validate_game_id(self, value):
-        if not contains_game(value):
+        if not GAME_REGISTRY.is_known_game(value):
             raise serializers.ValidationError('Elige un juego del catálogo.')
         return value
 
     def validate(self, attrs):
         marker = attrs.get('game_marker')
-        if marker is not None and not contains_marker(attrs['game_id'], marker):
+        if marker is not None and not GAME_REGISTRY.contains_seat_option(
+            attrs['game_id'], marker
+        ):
             raise serializers.ValidationError(
                 {'game_marker': 'Elige una ficha para el juego seleccionado.'}
             )
@@ -41,7 +43,7 @@ class ActiveRoomLookupSerializer(serializers.Serializer):
     session_id = SessionIDField(required=False)
 
     def validate_game_id(self, value):
-        if not contains_game(value):
+        if not GAME_REGISTRY.is_known_game(value):
             raise serializers.ValidationError('Elige un juego del catálogo.')
         return value
 
@@ -67,6 +69,7 @@ class CastExpulsionBallotSerializer(serializers.Serializer):
 
 class ParticipantRosterSerializer(serializers.ModelSerializer):
     presence = serializers.SerializerMethodField()
+    remaining_seconds = serializers.SerializerMethodField()
     participant_ref = serializers.UUIDField(source='public_id', read_only=True)
 
     class Meta:
@@ -77,19 +80,46 @@ class ParticipantRosterSerializer(serializers.ModelSerializer):
             'game_marker',
             'is_ready',
             'presence',
+            'remaining_seconds',
             'disconnected_at',
             'joined_at',
         )
 
+    def to_representation(self, instance):
+        """Read one entry's reconnect state at a single instant.
+
+        ``presence`` and ``remaining_seconds`` are two views of the same
+        deadline, so the clock is read once per entry: a presence that is still
+        ``reconnecting`` can never be paired with a countdown that says the
+        window is already over. The WebSocket snapshot does the same with one
+        ``now`` for the entry it builds.
+        """
+        self.read_at = timezone.now()
+        return super().to_representation(instance)
+
     def get_presence(self, participant):
-        if (
-            participant.presence == Participant.Presence.RECONNECTING
-            and participant.disconnected_at is not None
-            and timezone.now()
-            >= participant.disconnected_at + timedelta(seconds=RECONNECT_GRACE_SECONDS)
+        if participant.presence == Participant.Presence.RECONNECTING and grace_expired(
+            participant.disconnected_at,
+            self.read_at,
+            RECONNECT_GRACE_SECONDS,
         ):
             return Participant.Presence.INACTIVE
         return participant.presence
+
+    def get_remaining_seconds(self, participant):
+        """The roster's copy of the countdown the match seats already carry.
+
+        Only a participant still inside its reconnect window counts down; an
+        ``online``, ``inactive`` or expired one has no window left and answers
+        ``None`` (S8).
+        """
+        if participant.presence != Participant.Presence.RECONNECTING:
+            return None
+        return remaining_seconds(
+            participant.disconnected_at,
+            self.read_at,
+            RECONNECT_GRACE_SECONDS,
+        )
 
 
 class RoomSerializer(serializers.ModelSerializer):

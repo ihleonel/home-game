@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import (
@@ -8,7 +10,7 @@ from rest_framework.exceptions import (
 )
 from rest_framework.response import Response
 
-from ..features.catalog.application.use_cases import list_games
+from ...games.interfaces.match_abandon import abandon_expired_seats
 from ..features.expulsion_voting.application.use_cases import cast_ballot, start_vote
 from ..features.expulsion_voting.domain.errors import (
     VotingConflict,
@@ -27,6 +29,7 @@ from ..features.membership.domain.errors import (
     ActiveRoomNotFound as MembershipRoomNotFound,
     ActiveRoomSelectionRequired,
     MissingParticipantIdentity,
+    ReadyParticipantCannotLeave,
     RemovedSession,
 )
 from ..features.readiness.application.use_cases import set_ready_state
@@ -44,6 +47,8 @@ from ..serializers import (
 )
 from .composition import compose_room_dependencies
 
+logger = logging.getLogger(__name__)
+
 
 class ActiveRoomGameConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
@@ -55,6 +60,15 @@ class ExpulsionVoteConflict(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = 'La votación de expulsión ya no se puede modificar.'
     default_code = 'expulsion_vote_conflict'
+
+
+class ReadyLeaveForbidden(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = (
+        'No puedes salir de la sala mientras estés listo. '
+        'Deja de estar listo para poder salir.'
+    )
+    default_code = 'ready_participant_cannot_leave'
 
 
 def _translate_voting_error(error):
@@ -74,18 +88,28 @@ def _request_data(serializer_class, request):
 
 
 @api_view(['GET'])
-def game_catalog(request):
-    dependencies = compose_room_dependencies()
-    return Response(list(list_games(dependencies.catalog)))
-
-
-@api_view(['GET'])
 def active_room(request):
     serializer = ActiveRoomLookupSerializer(data=request.query_params)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     dependencies = compose_room_dependencies()
     try:
+        # Resolve seats whose grace already elapsed before reaping, so the
+        # reap of this same read gets to clean the ghost membership the sweep
+        # just unblocked. Running it after the reap would leave that ghost
+        # alive until the next read. Recovery is best effort: a failure here --
+        # a projection error raised after the match was already persisted, for
+        # example -- must not fail a lookup that has nothing else to do with
+        # it, exactly as the socket path treats the same publish.
+        try:
+            abandon_expired_seats()
+        except Exception:
+            logger.exception(
+                'Unable to resolve the expired seats before reaping.'
+            )
+        # Reap first so an emptied ghost room is gone before the lookup runs,
+        # and the lookup then answers "no active room" instead of a dead one.
+        dependencies.reaping.reap()
         room = get_active_room(
             dependencies.membership,
             game_id=data.get('game_id'),
@@ -107,6 +131,7 @@ def create_room(request):
             dependencies.membership,
             data,
             dependencies.vote_cancellation,
+            dependencies.reaping,
         )
     except ActiveRoomGameConflictError:
         raise ActiveRoomGameConflict()
@@ -127,6 +152,7 @@ def join_room(request):
             dependencies.membership,
             data,
             dependencies.vote_cancellation,
+            dependencies.reaping,
         )
     except ActiveRoomGameConflictError:
         raise ActiveRoomGameConflict()
@@ -153,6 +179,8 @@ def leave_room(request):
         raise NotFound('No hay ninguna sala activa.')
     except MembershipParticipantNotFound:
         raise NotFound('La sesión no pertenece a ningún participante activo de la sala.')
+    except ReadyParticipantCannotLeave:
+        raise ReadyLeaveForbidden()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 

@@ -1,7 +1,7 @@
 from django.utils import timezone
 
 from ..constants import RECONNECT_GRACE_SECONDS
-from ..features.presence.domain.rules import grace_expired
+from ..features.presence.domain.rules import grace_expired, remaining_seconds
 from ..models import ExpulsionVote, Participant
 
 
@@ -31,21 +31,24 @@ def room_snapshot(room):
 
 def _participant_snapshot(participant):
     presence = participant.presence
-    if (
-        presence == Participant.Presence.RECONNECTING
-        and grace_expired(
-            participant.disconnected_at,
-            timezone.now(),
-            RECONNECT_GRACE_SECONDS,
-        )
-    ):
-        presence = Participant.Presence.INACTIVE
+    remaining = None
+    if presence == Participant.Presence.RECONNECTING:
+        now = timezone.now()
+        if grace_expired(participant.disconnected_at, now, RECONNECT_GRACE_SECONDS):
+            presence = Participant.Presence.INACTIVE
+        else:
+            # The roster carries the same server-computed countdown the match
+            # seats do (S8), from the one ``now`` this snapshot was read with.
+            remaining = remaining_seconds(
+                participant.disconnected_at, now, RECONNECT_GRACE_SECONDS
+            )
     return {
         'display_name': participant.display_name,
         'participant_ref': str(participant.public_id),
         'game_marker': participant.game_marker,
         'is_ready': participant.is_ready,
         'presence': presence,
+        'remaining_seconds': remaining,
         'disconnected_at': _datetime(participant.disconnected_at),
         'joined_at': _datetime(participant.joined_at),
     }

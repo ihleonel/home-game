@@ -153,4 +153,5 @@ class DjangoRoomMembershipGateway:
             game_marker=participant.game_marker,
             presence=participant.presence,
             was_left=participant.left_at is not None,
+            is_ready=participant.is_ready,
         )

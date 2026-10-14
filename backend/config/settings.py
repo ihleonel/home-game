@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'channels',
     'corsheaders',
     'modules.rooms.apps.RoomsConfig',
+    'modules.games.apps.GamesConfig',
 ]
 
 MIDDLEWARE = [

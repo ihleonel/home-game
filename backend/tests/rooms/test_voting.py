@@ -11,11 +11,12 @@ from rest_framework.test import APIClient, APITestCase
 from config.asgi import application
 from modules.rooms.connections import register_connection, unregister_connection
 from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from tests.games.support import SCOPING_GAME_ID, SCOPING_GAME_MARKERS
 
 
 class ExpulsionVoteApiTests(APITestCase):
     def setUp(self):
-        self.room = Room.objects.create(game_id='starlight-garden')
+        self.room = Room.objects.create(game_id='duelo')
         self.initiator = self.create_participant('Guest One', Participant.Presence.ONLINE)
         self.other_voter = self.create_participant('Guest Two', Participant.Presence.ONLINE)
         self.target = self.create_participant(
@@ -46,7 +47,7 @@ class ExpulsionVoteApiTests(APITestCase):
         presence,
         disconnected_at=None,
         room=None,
-        game_marker='silver-leaf',
+        game_marker='guante-rojo',
     ):
         return Participant.objects.create(
             room=room or self.room,
@@ -98,25 +99,25 @@ class ExpulsionVoteApiTests(APITestCase):
         self.assertEqual(target_ballot.status_code, http_status.HTTP_403_FORBIDDEN)
 
     def test_start_vote_resolves_the_callers_active_room(self):
-        other_room = Room.objects.create(game_id='cloud-couriers')
+        other_room = Room.objects.create(game_id=SCOPING_GAME_ID)
         caller = self.create_participant(
             'Courier One',
             Participant.Presence.ONLINE,
             room=other_room,
-            game_marker='wind-kite',
+            game_marker=SCOPING_GAME_MARKERS[0],
         )
         voter = self.create_participant(
             'Courier Two',
             Participant.Presence.ONLINE,
             room=other_room,
-            game_marker='cloud-bell',
+            game_marker=SCOPING_GAME_MARKERS[1],
         )
         target = self.create_participant(
             'Courier Three',
             Participant.Presence.INACTIVE,
             disconnected_at=timezone.now() - timedelta(seconds=61),
             room=other_room,
-            game_marker='sunbeam',
+            game_marker=SCOPING_GAME_MARKERS[2],
         )
         self.register_participant_connection(caller)
         self.register_participant_connection(voter)
@@ -140,12 +141,12 @@ class ExpulsionVoteApiTests(APITestCase):
         )
 
     def test_start_vote_rejects_a_session_ambiguous_across_rooms(self):
-        other_room = Room.objects.create(game_id='cloud-couriers')
+        other_room = Room.objects.create(game_id=SCOPING_GAME_ID)
         duplicate = self.create_participant(
             'Duplicate Courier Session',
             Participant.Presence.ONLINE,
             room=other_room,
-            game_marker='wind-kite',
+            game_marker=SCOPING_GAME_MARKERS[0],
         )
         duplicate.session_id = self.initiator.session_id
         duplicate.save(update_fields=('session_id', 'updated_at'))
@@ -156,25 +157,25 @@ class ExpulsionVoteApiTests(APITestCase):
         self.assertFalse(ExpulsionVote.objects.exists())
 
     def test_cast_ballot_resolves_the_room_from_the_vote_reference(self):
-        other_room = Room.objects.create(game_id='cloud-couriers')
+        other_room = Room.objects.create(game_id=SCOPING_GAME_ID)
         caller = self.create_participant(
             'Courier One',
             Participant.Presence.ONLINE,
             room=other_room,
-            game_marker='wind-kite',
+            game_marker=SCOPING_GAME_MARKERS[0],
         )
         voter = self.create_participant(
             'Courier Two',
             Participant.Presence.ONLINE,
             room=other_room,
-            game_marker='cloud-bell',
+            game_marker=SCOPING_GAME_MARKERS[1],
         )
         target = self.create_participant(
             'Courier Three',
             Participant.Presence.INACTIVE,
             disconnected_at=timezone.now() - timedelta(seconds=61),
             room=other_room,
-            game_marker='sunbeam',
+            game_marker=SCOPING_GAME_MARKERS[2],
         )
         vote = ExpulsionVote.objects.create(
             room=other_room,
@@ -252,7 +253,7 @@ class ExpulsionVoteApiTests(APITestCase):
         )
         self.assertEqual(rejoin.status_code, http_status.HTTP_400_BAD_REQUEST)
 
-    def test_target_reconnect_cancels_pending_vote(self):
+    def test_target_rejoin_past_the_grace_window_is_reaped_and_cancels_the_pending_vote(self):
         started = self.start_vote()
 
         rejoin = self.client.post(
@@ -268,7 +269,9 @@ class ExpulsionVoteApiTests(APITestCase):
         vote = ExpulsionVote.objects.get()
         self.assertEqual(rejoin.status_code, http_status.HTTP_200_OK)
         self.assertEqual(vote.status, ExpulsionVote.Status.CANCELLED)
-        self.assertEqual(vote.resolution_reason, 'target_reconnected')
+        # The target was reaped before membership resolution, so the rejoin is
+        # a fresh arrival and cancels the vote as a departure, not a reconnect.
+        self.assertEqual(vote.resolution_reason, 'target_left')
         self.assertIsNone(self.target.left_at)
         self.assertEqual(self.target.presence, Participant.Presence.OFFLINE)
         self.assertIsNone(rejoin.data['room']['expulsion_vote'])
@@ -290,23 +293,23 @@ class ExpulsionVoteApiTests(APITestCase):
 
 class ExpulsionVoteWebSocketTests(TransactionTestCase):
     def setUp(self):
-        self.room = Room.objects.create(game_id='starlight-garden')
+        self.room = Room.objects.create(game_id='duelo')
         self.first_voter = Participant.objects.create(
             room=self.room,
             display_name='Guest One',
-            game_marker='silver-leaf',
+            game_marker='guante-rojo',
             presence=Participant.Presence.ONLINE,
         )
         self.disconnecting_voter = Participant.objects.create(
             room=self.room,
             display_name='Guest Two',
-            game_marker='moonstone',
+            game_marker='guante-azul',
             presence=Participant.Presence.ONLINE,
         )
         self.target = Participant.objects.create(
             room=self.room,
             display_name='Guest Three',
-            game_marker='night-bloom',
+            game_marker='guante-verde',
             presence=Participant.Presence.INACTIVE,
             disconnected_at=timezone.now() - timedelta(seconds=61),
         )

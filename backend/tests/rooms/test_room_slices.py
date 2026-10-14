@@ -1,49 +1,25 @@
-from django.test import SimpleTestCase, TestCase
-from django.utils import translation
+from datetime import datetime, timedelta, timezone as datetime_timezone
+from unittest.mock import patch
 
-from modules.rooms.catalog import GAMES, GAMES_BY_ID
+from django.test import SimpleTestCase, TestCase
+from django.utils import timezone, translation
+
+from modules.rooms.constants import RECONNECT_GRACE_SECONDS
 from modules.rooms.events import room_snapshot
-from modules.rooms.features.catalog.application.use_cases import list_games
-from modules.rooms.features.catalog.domain.catalog import contains_game, contains_marker
 from modules.rooms.features.membership.domain.rules import (
     is_disconnected_presence,
     membership_change,
+)
+from modules.rooms.features.presence.domain.rules import (
+    grace_expired,
+    remaining_seconds,
 )
 from modules.rooms.features.readiness.domain.rules import readiness_change
 from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
 from modules.rooms.serializers import RoomRequestSerializer, RoomSerializer
 
 
-class CatalogSliceTests(SimpleTestCase):
-    def test_static_catalog_is_owned_by_feature_and_compatibility_exports_are_stable(self):
-        self.assertEqual(list(GAMES_BY_ID), [game['id'] for game in GAMES])
-        self.assertTrue(contains_game(GAMES[0]['id']))
-        self.assertTrue(contains_marker(GAMES[0]['id'], GAMES[0]['markers'][0]['id']))
-        self.assertFalse(contains_marker(GAMES[0]['id'], GAMES[1]['markers'][0]['id']))
-
-    def test_list_games_uses_catalog_port(self):
-        catalog = _CatalogStub()
-
-        self.assertEqual(list_games(catalog), catalog.games)
-
-    def test_display_copy_is_spanish_without_changing_catalog_identifiers(self):
-        self.assertEqual(
-            [game['id'] for game in GAMES],
-            ['starlight-garden', 'cloud-couriers', 'amber-islands'],
-        )
-        self.assertEqual(
-            [game['label'] for game in GAMES],
-            ['Jardín estrellado', 'Mensajeros de las nubes', 'Islas de ámbar'],
-        )
-        self.assertEqual(
-            [marker['id'] for marker in GAMES[0]['markers']],
-            ['silver-leaf', 'moonstone', 'night-bloom'],
-        )
-        self.assertEqual(
-            [marker['label'] for marker in GAMES[0]['markers']],
-            ['Hoja plateada', 'Piedra lunar', 'Flor nocturna'],
-        )
-
+class RoomRequestSerializerTests(SimpleTestCase):
     def test_framework_validation_messages_use_spanish(self):
         with translation.override('es-es'):
             serializer = RoomRequestSerializer(data={})
@@ -62,7 +38,7 @@ class MembershipDomainTests(SimpleTestCase):
             was_left=True,
             was_disconnected=True,
             current_display_name='Guest',
-            current_game_marker='silver-leaf',
+            current_game_marker='badge-a',
             data={'display_name': 'Guest Updated'},
         )
 
@@ -82,8 +58,8 @@ class MembershipDomainTests(SimpleTestCase):
             was_left=False,
             was_disconnected=False,
             current_display_name='Guest',
-            current_game_marker='silver-leaf',
-            data={'display_name': 'Guest', 'game_marker': 'silver-leaf'},
+            current_game_marker='badge-a',
+            data={'display_name': 'Guest', 'game_marker': 'badge-a'},
         )
 
         self.assertEqual(change.updates, ())
@@ -102,20 +78,67 @@ class ReadinessDomainTests(SimpleTestCase):
         self.assertFalse(readiness_change(True, True).changed)
 
 
+class PresenceDomainTests(SimpleTestCase):
+    NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime_timezone.utc)
+
+    def test_remaining_seconds_reports_the_whole_seconds_left_in_the_window(self):
+        self.assertEqual(
+            remaining_seconds(self.NOW - timedelta(seconds=20), self.NOW, 60),
+            40,
+        )
+        self.assertEqual(
+            remaining_seconds(self.NOW - timedelta(seconds=59), self.NOW, 60),
+            1,
+        )
+
+    def test_remaining_seconds_never_promises_a_closed_window(self):
+        # Exactly at the deadline the window is already closed: the same
+        # comparison that reports the seat as inactive reports no time left.
+        deadline = self.NOW - timedelta(seconds=60)
+        self.assertTrue(grace_expired(deadline, self.NOW, 60))
+        self.assertIsNone(remaining_seconds(deadline, self.NOW, 60))
+        self.assertIsNone(
+            remaining_seconds(self.NOW - timedelta(seconds=61), self.NOW, 60)
+        )
+
+    def test_remaining_seconds_floors_below_one_second_to_zero(self):
+        self.assertEqual(
+            remaining_seconds(
+                self.NOW - timedelta(seconds=59, milliseconds=500),
+                self.NOW,
+                60,
+            ),
+            0,
+        )
+
+    def test_remaining_seconds_without_a_disconnect_time_has_nothing_to_measure(self):
+        self.assertIsNone(remaining_seconds(None, self.NOW, 60))
+
+
 class EventSnapshotContractTests(TestCase):
     def test_event_snapshot_matches_rest_room_contract_without_using_its_serializer(self):
-        room = Room.objects.create(game_id='starlight-garden')
+        # One clock for the whole test: the disconnect instant is measured from
+        # it and both readers are pinned to it below.
+        read_at = timezone.now()
+        room = Room.objects.create(game_id='duelo')
         caller = Participant.objects.create(
             room=room,
             display_name='Guest One',
-            game_marker='silver-leaf',
+            game_marker='guante-rojo',
             presence=Participant.Presence.ONLINE,
         )
         target = Participant.objects.create(
             room=room,
             display_name='Guest Two',
-            game_marker='moonstone',
+            game_marker='guante-azul',
             presence=Participant.Presence.INACTIVE,
+        )
+        counting = Participant.objects.create(
+            room=room,
+            display_name='Guest Three',
+            game_marker='guante-azul',
+            presence=Participant.Presence.RECONNECTING,
+            disconnected_at=read_at - timedelta(seconds=20),
         )
         vote = ExpulsionVote.objects.create(
             room=room,
@@ -124,11 +147,21 @@ class EventSnapshotContractTests(TestCase):
         )
         ExpulsionBallot.objects.create(vote=vote, voter=caller)
 
-        self.assertEqual(room_snapshot(room), dict(RoomSerializer(room).data))
+        # Both readers are held to one clock: the countdown is the same field
+        # on both sides of the contract, and a reconnecting participant is
+        # exactly the case where a drifting clock would show up.
+        with patch('django.utils.timezone.now', return_value=read_at):
+            snapshot = room_snapshot(room)
+            serialized = dict(RoomSerializer(room).data)
 
-
-class _CatalogStub:
-    games = ('game',)
-
-    def list_games(self):
-        return self.games
+        self.assertEqual(snapshot, serialized)
+        counting_entry = next(
+            entry
+            for entry in snapshot['participants']
+            if entry['display_name'] == counting.display_name
+        )
+        self.assertEqual(counting_entry['presence'], 'reconnecting')
+        self.assertEqual(
+            counting_entry['remaining_seconds'],
+            RECONNECT_GRACE_SECONDS - 20,
+        )

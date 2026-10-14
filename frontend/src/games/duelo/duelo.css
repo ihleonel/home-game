@@ -1,0 +1,110 @@
+.duelo-panel {
+  margin: 0.5rem 0 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.9rem;
+  background: var(--surface-raised);
+}
+
+.duelo-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.duelo-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.duelo-round {
+  color: var(--accent-dark);
+  font-size: 0.85rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.duelo-scores {
+  margin: 0.85rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.duelo-scores li,
+.duelo-reveal li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.duelo-scores li {
+  border-top: 1px solid var(--line);
+}
+
+.duelo-scores strong {
+  min-width: 2rem;
+  color: var(--ink);
+  font-size: 1.05rem;
+  text-align: right;
+}
+
+.duelo-progress {
+  margin: 0.5rem 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.duelo-outcome {
+  margin: 0.5rem 0;
+  color: var(--success-ink);
+  font-weight: 750;
+}
+
+.duelo-reveal {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.75rem;
+  background: var(--accent-soft);
+}
+
+.duelo-reveal-title {
+  margin: 0;
+  color: var(--accent-dark);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.duelo-reveal li {
+  border-top: 1px solid var(--accent-border);
+}
+
+.duelo-reveal strong {
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+.duelo-reveal-winner {
+  margin: 0.5rem 0 0;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.duelo-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.duelo-pick {
+  flex: 1 1 auto;
+}

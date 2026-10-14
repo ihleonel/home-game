@@ -36,8 +36,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Single-replica assumption: this startup sweep frees memberships left in
+    # `reconnecting` by a restart, so a second backend replica joining the
+    # deployment would reap memberships that are live on its sibling. Scaling
+    # out therefore requires the persisted-`last_seen_at` design instead.
     command: >
       sh -c "python manage.py migrate &&
+             python manage.py reap_rooms --startup &&
              python manage.py runserver 0.0.0.0:8000"
 
   frontend:

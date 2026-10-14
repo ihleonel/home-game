@@ -1,0 +1,76 @@
+import type { Game } from '../api/types'
+
+export type GuestIdentity = { displayName: string; gameMarker: string }
+
+export type RoomSession = GuestIdentity & {
+  gameId: string
+  sessionId: string
+  participantRef: string
+  isReady: boolean
+}
+
+export type StoredRoomSession = Pick<RoomSession, 'gameId' | 'sessionId' | 'isReady'>
+
+const DISPLAY_NAME_KEY = 'homegame:display-name'
+const ROOM_SESSION_KEY = 'homegame:room-session'
+
+export function readSessionValue(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+export function writeSessionValue(key: string, value: string): void {
+  try {
+    window.sessionStorage.setItem(key, value)
+  } catch {
+    // The flow remains usable for this page even when browser storage is unavailable.
+  }
+}
+
+function markerStorageKey(gameId: string): string {
+  return `homegame:marker:${gameId}`
+}
+
+export function readStoredIdentity(game: Game): GuestIdentity {
+  const savedMarker = readSessionValue(markerStorageKey(game.id))
+  return {
+    displayName: readSessionValue(DISPLAY_NAME_KEY) ?? '',
+    gameMarker:
+      savedMarker && game.markers.some((marker) => marker.id === savedMarker)
+        ? savedMarker
+        : '',
+  }
+}
+
+export function readStoredRoomSession(gameId: string): StoredRoomSession | null {
+  const savedSession = readSessionValue(ROOM_SESSION_KEY)
+  if (!savedSession) return null
+
+  try {
+    const session = JSON.parse(savedSession) as Partial<StoredRoomSession>
+    if (session.gameId !== gameId || typeof session.sessionId !== 'string') return null
+    return {
+      gameId,
+      sessionId: session.sessionId,
+      isReady: session.isReady === true,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function saveGuestSession(session: RoomSession): void {
+  writeSessionValue(DISPLAY_NAME_KEY, session.displayName)
+  writeSessionValue(markerStorageKey(session.gameId), session.gameMarker)
+  writeSessionValue(
+    ROOM_SESSION_KEY,
+    JSON.stringify({
+      gameId: session.gameId,
+      sessionId: session.sessionId,
+      isReady: session.isReady,
+    } satisfies StoredRoomSession),
+  )
+}
