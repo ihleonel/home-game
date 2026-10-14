@@ -551,6 +551,14 @@ class RoomApiTests(APITestCase):
         participant.refresh_from_db()
         self.assertIsNone(participant.left_at)
         self.assertEqual(participant.presence, Participant.Presence.RECONNECTING)
+        # The roster entry carries the same server-computed countdown the
+        # match seats do: a participant still inside its grace window announces
+        # the whole seconds left instead of making the screen trust its clock.
+        roster_entry = response.data['room']['participants'][0]
+        self.assertEqual(roster_entry['presence'], 'reconnecting')
+        self.assertIsInstance(roster_entry['remaining_seconds'], int)
+        self.assertGreater(roster_entry['remaining_seconds'], 0)
+        self.assertLessEqual(roster_entry['remaining_seconds'], 5)
 
     def test_active_room_lookup_finishes_a_match_with_an_expired_seat(self):
         first_response = self.create_room()

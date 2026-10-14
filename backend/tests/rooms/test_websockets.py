@@ -19,6 +19,7 @@ from modules.games.runtime.infrastructure.channel_projector import (
     match_seat_group_name,
 )
 from modules.games.runtime.infrastructure.django_store import DjangoMatchStore
+from modules.rooms.constants import RECONNECT_GRACE_SECONDS
 from modules.rooms.models import Participant, Room
 from tests.games.support import (
     FakeLifecycle,
@@ -462,6 +463,19 @@ class RoomWebSocketTests(TransactionTestCase):
         self.assertEqual(reconnecting_event['type'], 'participant_reconnecting')
         self.assertEqual(rejoin_response.status_code, 200)
         self.assertEqual(rejoin_response.json()['session_id'], str(returning_guest.session_id))
+        # The room snapshot that announces the reconnect carries the
+        # server-computed countdown for the seat that is counting down.
+        reconnecting_roster = {
+            participant['participant_ref']: participant
+            for participant in reconnecting_event['room']['participants']
+        }
+        returning_entry = reconnecting_roster[str(returning_guest.public_id)]
+        self.assertEqual(returning_entry['presence'], 'reconnecting')
+        self.assertIsInstance(returning_entry['remaining_seconds'], int)
+        self.assertGreater(returning_entry['remaining_seconds'], 0)
+        self.assertLessEqual(
+            returning_entry['remaining_seconds'], RECONNECT_GRACE_SECONDS
+        )
         self.assertTrue(reconnected)
         self.assertEqual(fresh_snapshot['type'], 'room.snapshot')
         self.assertEqual(fresh_snapshot['room']['game_id'], room.game_id)
