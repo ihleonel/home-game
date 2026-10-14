@@ -73,6 +73,16 @@ A spectator can ask for a seat with `POST /api/rooms/play/` (`{'session_id': ...
 
 On screen, a spectator sees the lobby read-only with the notice `Estás como espectador.` and a `Quiero jugar` button that is enabled only while a seat is free, with the exact reason otherwise; the identity form offers `Entrar como espectador` from both the catalog and the lobby, and the game screen labels a seatless viewer for every game.
 
+## Player identity on the match screen
+
+A running match names each seat with its player, not with a seat number. That identity is owned by the backend: for every seat it resolves the `seat_id`, its `index`, the seated participant's current `display_name` and `game_marker`, and the `game_marker_label` looked up centrally in the game's own `seat_options` catalog (`seat_id`, `index`, `display_name`, `game_marker`, `game_marker_label`). When the marker does not belong to that catalog, or the game is unknown, the raw marker id is exposed instead, so an entry never loses its marker.
+
+The list travels as the additive `roster` field of the match projection. It is a sibling of the presence payload in the `match.snapshot` frame, and both REST responses carry it: `POST /api/matches/<match_ref>/actions/` and `GET /api/matches/<match_ref>/` (resync). The presence payload (`seats`) and the room roster are unchanged. Because the list carries public identity only and no hidden play, a seat and a spectator receive exactly the same `roster`; only the `view` is scoped to the seat.
+
+The game screen renders that roster and derives nothing from it: a seat reads as the server-sent name plus its marker chip, the viewer's own seat carries the `(tú)` suffix, and a seat the roster does not name falls back to the neutral `Jugador` rather than to a fabricated seat number. Sentences, such as the match outcome, use `display_name (game_marker_label)`.
+
+Two wordings stay generic by design: the disconnection and abandonment notices on the game screen say `Tu rival` / `Un jugador`, because naming the opponent would require the client to work out which roster entry is the rival. A backend-projected opponent field can add that later without a client change.
+
 ## Frontend
 
 The frontend is a single-page app with three routes, all served by one React
