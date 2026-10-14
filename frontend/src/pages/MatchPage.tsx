@@ -3,7 +3,7 @@ import { AppMessages } from '../components/AppMessages'
 import { CatalogGate } from '../components/CatalogGate'
 import { useMatchPresence } from '../games/matchPresence'
 import { renderMatchScreen } from '../games/registry'
-import type { MatchView } from '../games/registry'
+import type { MatchRuntimeView } from '../games/registry'
 import { useReconnectCountdown } from '../lib/reconnectCountdown'
 import { useCatalog } from '../state/catalogContext'
 import { useRoomSession } from '../state/roomSessionContext'
@@ -15,7 +15,7 @@ import { useRoomSession } from '../state/roomSessionContext'
  * the server view and never recomputed here. A spectator has no ``you`` to
  * compare against and gets the neutral sentence.
  */
-function abandonmentOutcome(view: MatchView): string {
+function abandonmentOutcome(view: MatchRuntimeView): string {
   if (!view.winner) return 'La partida ha terminado por abandono.'
   if (typeof view.you !== 'string') {
     return 'La partida ha terminado por abandono de uno de los jugadores.'
@@ -65,7 +65,6 @@ export function MatchPage() {
     room,
     roomSession,
     activeMatch,
-    matchRendererAvailable,
     busy,
     actionError,
     connectionError,
@@ -150,13 +149,11 @@ export function MatchPage() {
       )}
 
       <CatalogGate>
-        {matchRendererAvailable ? (
-          renderMatchScreen(room.game_id, {
-            busy,
-            match: activeMatch,
-            onPick: (value) => void submitPick(value),
-          })
-        ) : (
+        {renderMatchScreen(room.game_id, {
+          busy,
+          match: activeMatch,
+          onPick: (value) => void submitPick(value),
+        }) ?? (
           <section className="match-unavailable" aria-labelledby="match-unavailable-title">
             <h3 id="match-unavailable-title">Vista de partida no disponible</h3>
             <p className="quiet-copy">

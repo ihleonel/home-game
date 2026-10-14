@@ -12,12 +12,13 @@ Use `.env.example` as a reference when configuring `.env`. Set the variables req
 From the repository root:
 
 ```sh
-make up       # Build and start db, backend, and frontend in the background
-make migrate  # Apply Django migrations in the running backend container
-make test     # Run Django tests in the running backend container
+make up            # Build and start db, backend, and frontend in the background
+make migrate       # Apply Django migrations in the running backend container
+make test          # Run Django tests in the running backend container
+make test-frontend # Run the frontend tests in the running frontend container
 ```
 
-The backend startup command already applies migrations before starting Daphne. Run `make migrate` to apply migrations explicitly; `make migrate` and `make test` require the backend container to be running.
+The backend startup command already applies migrations before starting Daphne. Run `make migrate` to apply migrations explicitly; `make migrate` and `make test` require the backend container to be running, and `make test-frontend` requires the frontend container to be running. The frontend suite runs on Vitest in a Node environment against `react-dom/server`, so it needs no browser and no DOM library.
 
 ## Ghost rooms and ghost memberships
 
@@ -101,15 +102,39 @@ between pages never remounts the providers or closes the socket. The views are g
 a lobby with a live match hands it to the game screen, the game screen returns
 to its room when there is no match, and any unknown path returns to the
 catalog. A game without a renderer keeps its "vista de partida no disponible"
-notice in the lobby instead, so a match can never trap a player on a screen the
-app cannot draw.
+notice in the lobby instead, and so does a frame its own parser does not
+recognize, so a match can never trap a player on a screen the app cannot draw.
 
 ### Adding a game's screen
 
-A game's screen is a component registered in `src/games/registry.ts` under its
-`game_id`, plus its own stylesheet. The registry is the only place that maps a
-game to its renderer, and an unregistered game falls back to the notice above
-instead of crashing the page.
+A game's screen lives in its own folder under `src/games/<game_id>/` and is
+registered in `src/games/registry.ts` under its `game_id`:
+
+| File | Responsibility |
+| --- | --- |
+| `<Game>Match.tsx` | The panel, typed with the game's own view |
+| `view.ts` | The game's view type and the parser that recognizes its payload |
+| `screen.tsx` | The registry entry: parse the raw view, then render the panel or return `null` |
+| `<game>.css` | The game's own stylesheet |
+
+The registry maps a `game_id` to that factory, and it is the only place that
+maps a game to its screen. The factory is what keeps the payload honest: the
+view arrives unvalidated over REST and the socket, so the game's parser either
+recognizes it or the registry returns `null` and the caller renders its own
+notice. A game therefore never receives bytes it did not recognize, and a
+malformed frame cannot crash the page.
+
+The types are split the same way. `MatchRuntimeView` in `src/games/registry.ts`
+holds the fields every view carries, because the match screen reads them for
+every game (`finished`, `winner`, `ended_by_abandon`, `you`). A game's view
+extends it with its own play payload -- `DueloView` adds `round`, `scores`,
+`reveal`, `your_pick`, ... -- so adding a game never widens a shared view and
+never asks another game's screen to tolerate fields it does not own.
+
+A parser rejects a payload that is not its game's view, which is what the
+notice covers, but past the fields that identify it, it degrades instead of
+rejecting: a malformed optional field costs that field, not the whole match
+screen. The roster and presence parsers in `src/games/` follow the same rule.
 
 Per-game CSS shares one global stylesheet once Vite bundles it, so a game must
 prefix every class it owns with its own id (`.duelo-panel`, `.duelo-heading`,

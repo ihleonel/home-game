@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import type { MatchSeatRosterEntry } from '../matchRoster'
-import type { MatchRendererProps, MatchState, MatchView } from '../registry'
+import type { MatchRendererProps, MatchState } from '../registry'
+import type { DueloView } from './view'
 import './duelo.css'
 
 /**
@@ -31,7 +32,7 @@ function pickLabel(value: string | null): string {
  * ``Jugador``, never a fabricated seat number (S3), and the only comparison
  * allowed is the own-seat ``(tú)`` suffix against ``view.you``.
  */
-function seatLabel(seatId: string, match: MatchState): ReactElement {
+function seatLabel(seatId: string, match: MatchState<DueloView>): ReactElement {
   const entry = match.roster.find((seat) => seat.seat_id === seatId)
   const name = entry ? entry.display_name : 'Jugador'
   const suffix = seatId === match.view.you ? ' (tú)' : ''
@@ -63,7 +64,7 @@ function seatProse(
   return seatId === you ? `${name} (tú)` : name
 }
 
-function outcomeMessage(view: MatchView, roster: MatchSeatRosterEntry[]): string {
+function outcomeMessage(view: DueloView, roster: MatchSeatRosterEntry[]): string {
   if (!view.winner) return 'La partida ha terminado.'
   if (view.winner === view.you) return 'Has ganado la partida.'
   return `Ha ganado ${seatProse(view.winner, roster, view.you)}.`
@@ -81,7 +82,7 @@ function outcomeMessage(view: MatchView, roster: MatchSeatRosterEntry[]): string
  * A finish by abandonment is left to the match screen, which renders the
  * runtime-level result; here the outcome line would only repeat it.
  */
-export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
+export function DueloMatch({ match, busy, onPick }: MatchRendererProps<DueloView>) {
   const { view } = match
   const seated = typeof view.you === 'string' && view.you.length > 0
   const picked = typeof view.your_pick === 'string' && view.your_pick.length > 0

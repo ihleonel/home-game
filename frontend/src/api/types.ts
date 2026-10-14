@@ -1,4 +1,4 @@
-import type { MatchView } from '../games/registry'
+import type { MatchRuntimeView } from '../games/registry'
 import type { MatchSeatRosterEntry } from '../games/matchRoster'
 
 /**
@@ -108,7 +108,7 @@ export type MatchEnvelope = {
    * untouched. The client only renders it (S4).
    */
   roster?: MatchSeatRosterEntry[]
-  view: MatchView
+  view: MatchRuntimeView
 }
 
 /**
@@ -138,7 +138,7 @@ export type ServerMessage = {
   match_ref?: string
   seat_index?: number | null
   version?: number
-  view?: MatchView
+  view?: MatchRuntimeView
   seats?: SeatPresence[]
   /**
    * The public seat identity of a ``match.snapshot`` frame (S2). It is

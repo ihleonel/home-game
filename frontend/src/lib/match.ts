@@ -1,7 +1,7 @@
 import type { MatchEnvelope } from '../api/types'
 import { parseMatchRoster } from '../games/matchRoster'
 import type { MatchSeatRosterEntry } from '../games/matchRoster'
-import type { MatchState, MatchView } from '../games/registry'
+import type { MatchState, MatchRuntimeView } from '../games/registry'
 
 /**
  * Apply a resync response over the current match.
@@ -39,7 +39,7 @@ export function mergeMatchEvent(
   current: MatchState | null,
   matchRef: string,
   version: number | null,
-  view: MatchView,
+  view: MatchRuntimeView,
   roster?: MatchSeatRosterEntry[],
 ): MatchState | null {
   if (!current || current.matchRef !== matchRef) return current
