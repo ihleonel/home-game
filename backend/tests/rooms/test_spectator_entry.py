@@ -75,6 +75,19 @@ class SpectatorEntryTests(APITestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data['room']['participants'][0]['role'], 'spectator')
 
+    def test_join_request_can_ask_for_the_spectator_role(self):
+        self.create_room(display_name='Guest One', game_marker='guante-rojo')
+
+        response = self.join_room(
+            display_name='Guest Two',
+            game_marker='guante-azul',
+            as_spectator=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        roles = [entry['role'] for entry in response.data['room']['participants']]
+        self.assertEqual(roles, ['player', 'spectator'])
+
     def test_rejoining_a_spectator_session_keeps_its_role(self):
         created = self.create_room(display_name='Guest One', as_spectator=True)
         session_id = created.data['session_id']
