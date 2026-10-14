@@ -134,7 +134,11 @@ export function LobbyPage() {
             !activeExpulsionVote &&
             isJoined &&
             roomSession !== null &&
+            // A spectator is never a voter, so offering the action would only
+            // produce a rejection: the backend electorate excludes it (S7).
+            currentParticipant?.role === 'player' &&
             currentParticipant?.presence === 'online' &&
+            participant.role === 'player' &&
             participant.presence === 'inactive' &&
             participant.participant_ref !== roomSession.participantRef}
           game={activeGame}
