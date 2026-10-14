@@ -21,6 +21,7 @@ class RoomRequestSerializer(serializers.Serializer):
     session_id = SessionIDField(required=False)
     display_name = serializers.CharField(max_length=80, required=False)
     game_marker = serializers.SlugField(max_length=64, required=False)
+    as_spectator = serializers.BooleanField(required=False, default=False)
 
     def validate_game_id(self, value):
         if not GAME_REGISTRY.is_known_game(value):
@@ -79,6 +80,7 @@ class ParticipantRosterSerializer(serializers.ModelSerializer):
             'participant_ref',
             'game_marker',
             'is_ready',
+            'role',
             'presence',
             'remaining_seconds',
             'disconnected_at',

@@ -47,6 +47,7 @@ def _participant_snapshot(participant):
         'participant_ref': str(participant.public_id),
         'game_marker': participant.game_marker,
         'is_ready': participant.is_ready,
+        'role': participant.role,
         'presence': presence,
         'remaining_seconds': remaining,
         'disconnected_at': _datetime(participant.disconnected_at),

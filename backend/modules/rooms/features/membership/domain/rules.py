@@ -1,10 +1,33 @@
 from dataclasses import dataclass
 
 
+PLAYER_ROLE = 'player'
+SPECTATOR_ROLE = 'spectator'
+
+
 @dataclass(frozen=True)
 class MembershipChange:
     updates: tuple[tuple[str, object], ...]
     event_name: str | None
+
+
+def resolve_entry_role(
+    *, as_spectator, match_in_progress, active_players, max_seats
+):
+    """Resolve a new participant's role in the exact S2 order.
+
+    The policy is derived from the game contract: the caller passes the room's
+    game ``max_seats``, never a per-game list. A room already at capacity or
+    with a match in progress admits only spectators; an explicit request wins
+    over any free seat.
+    """
+    if as_spectator:
+        return SPECTATOR_ROLE
+    if match_in_progress:
+        return SPECTATOR_ROLE
+    if max_seats is not None and active_players >= max_seats:
+        return SPECTATOR_ROLE
+    return PLAYER_ROLE
 
 
 def membership_change(

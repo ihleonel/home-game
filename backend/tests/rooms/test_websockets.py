@@ -359,8 +359,11 @@ class RoomWebSocketTests(TransactionTestCase):
         self.assertEqual(create_payload['session_id'], created_session_id)
         self.assertEqual(len(create_event['room']['participants']), 2)
         self.assertEqual(join_status, 200)
-        self.assertEqual(join_event['type'], 'player_joined')
+        # The room already held two players, so this third session becomes a
+        # spectator and announces itself with its own event (S2).
+        self.assertEqual(join_event['type'], 'spectator_joined')
         self.assertEqual(len(join_event['room']['participants']), 3)
+        self.assertEqual(join_event['room']['participants'][2]['role'], 'spectator')
         self.assertEqual(ready_status, 200)
         self.assertEqual(ready_event['type'], 'ready_changed')
         self.assertTrue(

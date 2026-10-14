@@ -5,7 +5,10 @@ from django.utils import timezone
 
 from ....infrastructure.events import room_snapshot, schedule_room_event
 from ....models import Participant, Room
+from .....games.composition import GAME_REGISTRY
+from .....games.models import Match
 from ...membership.domain.entities import ActiveRoom, ParticipantMembership
+from ...membership.domain.rules import PLAYER_ROLE
 
 
 class DjangoRoomMembershipGateway:
@@ -91,13 +94,31 @@ class DjangoRoomMembershipGateway:
         ).first()
         return self._participant_state(participant) if participant else None
 
-    def create_participant(self, room_id, display_name, game_marker):
+    def create_participant(self, room_id, display_name, game_marker, role):
         participant = Participant.objects.create(
             room_id=room_id,
             display_name=display_name,
             game_marker=game_marker,
+            role=role,
         )
         return self._participant_state(participant)
+
+    def has_in_progress_match(self, room_id):
+        return Match.objects.filter(
+            room_id=room_id,
+            status=Match.Status.IN_PROGRESS,
+        ).exists()
+
+    def count_active_players(self, room_id):
+        return Participant.objects.filter(
+            room_id=room_id,
+            left_at__isnull=True,
+            role=PLAYER_ROLE,
+        ).count()
+
+    def game_max_seats(self, game_id):
+        definition = GAME_REGISTRY.get(game_id)
+        return definition.max_seats if definition is not None else None
 
     def save_membership_changes(self, participant_id, changes):
         participant = Participant.objects.select_for_update().get(pk=participant_id)

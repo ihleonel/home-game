@@ -40,6 +40,9 @@ class MembershipUseCaseTests(SimpleTestCase):
         ports = _ports(
             create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
             participant_for_session_for_update=None,
+            has_in_progress_match=False,
+            count_active_players=0,
+            game_max_seats=2,
             create_participant=participant,
             room_snapshot=deque(({'revision': 1}, {'revision': 2})),
         )
@@ -60,6 +63,9 @@ class MembershipUseCaseTests(SimpleTestCase):
                 'begin',
                 'create_or_lock_active_room',
                 'participant_for_session_for_update',
+                'has_in_progress_match',
+                'count_active_players',
+                'game_max_seats',
                 'create_participant',
                 'room_snapshot',
                 'room_snapshot',
@@ -67,12 +73,139 @@ class MembershipUseCaseTests(SimpleTestCase):
                 'commit',
             ],
         )
+        ports.create_participant.assert_called_once_with(
+            12, 'Guest One', 'guante-rojo', 'player'
+        )
         ports.schedule_room_event.assert_called_once_with(
             12, 'player_joined', {'revision': 2}
         )
         vote_cancellation.target_reconnected.assert_called_once_with(
             12, participant.id
         )
+
+    def test_new_participant_in_a_full_room_resolves_to_spectator(self):
+        participant = _participant()
+        ports = _ports(
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
+            participant_for_session_for_update=None,
+            has_in_progress_match=False,
+            count_active_players=2,
+            game_max_seats=2,
+            create_participant=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.target_reconnected.return_value = None
+
+        create_or_discover_room(
+            ports, _new_member_data(), vote_cancellation, Mock()
+        )
+
+        ports.create_participant.assert_called_once_with(
+            12, 'Guest One', 'guante-rojo', 'spectator'
+        )
+        ports.schedule_room_event.assert_called_once_with(
+            12, 'spectator_joined', {'revision': 2}
+        )
+
+    def test_match_in_progress_resolves_to_spectator_even_with_a_free_seat(self):
+        participant = _participant()
+        ports = _ports(
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
+            participant_for_session_for_update=None,
+            has_in_progress_match=True,
+            count_active_players=0,
+            game_max_seats=2,
+            create_participant=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.target_reconnected.return_value = None
+
+        create_or_discover_room(
+            ports, _new_member_data(), vote_cancellation, Mock()
+        )
+
+        ports.create_participant.assert_called_once_with(
+            12, 'Guest One', 'guante-rojo', 'spectator'
+        )
+        ports.schedule_room_event.assert_called_once_with(
+            12, 'spectator_joined', {'revision': 2}
+        )
+
+    def test_explicit_spectator_resolves_to_spectator_with_a_free_seat(self):
+        participant = _participant()
+        ports = _ports(
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
+            participant_for_session_for_update=None,
+            has_in_progress_match=False,
+            count_active_players=0,
+            game_max_seats=2,
+            create_participant=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.target_reconnected.return_value = None
+        data = {**_new_member_data(), 'as_spectator': True}
+
+        create_or_discover_room(ports, data, vote_cancellation, Mock())
+
+        ports.create_participant.assert_called_once_with(
+            12, 'Guest One', 'guante-rojo', 'spectator'
+        )
+        ports.schedule_room_event.assert_called_once_with(
+            12, 'spectator_joined', {'revision': 2}
+        )
+
+    def test_free_seat_without_a_match_resolves_to_player(self):
+        participant = _participant()
+        ports = _ports(
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
+            participant_for_session_for_update=None,
+            has_in_progress_match=False,
+            count_active_players=1,
+            game_max_seats=2,
+            create_participant=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.target_reconnected.return_value = None
+
+        create_or_discover_room(
+            ports, _new_member_data(), vote_cancellation, Mock()
+        )
+
+        ports.create_participant.assert_called_once_with(
+            12, 'Guest One', 'guante-rojo', 'player'
+        )
+        ports.schedule_room_event.assert_called_once_with(
+            12, 'player_joined', {'revision': 2}
+        )
+
+    def test_existing_session_keeps_its_role_and_skips_entry_resolution(self):
+        participant = _participant()
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'duelo'),
+            participant_for_session_for_update=participant,
+            save_membership_changes=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.session_was_removed.return_value = False
+        vote_cancellation.target_reconnected.return_value = None
+        data = {
+            'game_id': 'duelo',
+            'session_id': participant.session_id,
+            'display_name': 'Guest One',
+            'as_spectator': True,
+        }
+
+        join_room(ports, data, vote_cancellation, Mock())
+
+        ports.create_participant.assert_not_called()
+        ports.has_in_progress_match.assert_not_called()
+        ports.count_active_players.assert_not_called()
+        ports.game_max_seats.assert_not_called()
 
     def test_game_conflict_is_decided_before_membership_or_vote_work(self):
         ports = _ports(

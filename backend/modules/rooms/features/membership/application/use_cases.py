@@ -8,12 +8,14 @@ from ..domain.errors import (
     RemovedSession,
 )
 from ..domain.rules import (
+    SPECTATOR_ROLE,
     can_leave,
     game_matches,
     is_disconnected_presence,
     leave_changes,
     membership_change,
     missing_identity_fields,
+    resolve_entry_role,
 )
 from ....application.ports import GhostReaping, VoteCancellation
 from .ports import RoomMembershipPorts
@@ -45,10 +47,19 @@ def _membership_for(ports: RoomMembershipPorts, room, data, vote_cancellation):
     missing = missing_identity_fields(data)
     if missing:
         raise MissingParticipantIdentity(missing)
-    participant = ports.create_participant(
-        room.id, data['display_name'], data['game_marker']
+    role = resolve_entry_role(
+        as_spectator=bool(data.get('as_spectator', False)),
+        match_in_progress=ports.has_in_progress_match(room.id),
+        active_players=ports.count_active_players(room.id),
+        max_seats=ports.game_max_seats(room.game_id),
     )
-    return participant, 'player_joined'
+    participant = ports.create_participant(
+        room.id, data['display_name'], data['game_marker'], role
+    )
+    event_name = (
+        'spectator_joined' if role == SPECTATOR_ROLE else 'player_joined'
+    )
+    return participant, event_name
 
 
 def _membership_response(ports: RoomMembershipPorts, room, participant):
