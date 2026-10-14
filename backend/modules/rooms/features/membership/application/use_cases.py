@@ -20,6 +20,7 @@ from ..domain.rules import (
     membership_change,
     missing_identity_fields,
     resolve_entry_role,
+    resolve_returning_role,
 )
 from ....application.ports import GhostReaping, VoteCancellation
 from .ports import RoomMembershipPorts
@@ -42,10 +43,24 @@ def _membership_for(ports: RoomMembershipPorts, room, data, vote_cancellation):
             current_game_marker=participant.game_marker,
             data=data,
         )
-        if change.updates:
-            participant = ports.save_membership_changes(
-                participant.id, dict(change.updates)
+        updates = dict(change.updates)
+        if participant.was_left:
+            # A row that comes back is not a fresh arrival: its seat was
+            # released when it left, so it is re-admitted by the same policy
+            # that admits a new session. Otherwise a player returning after
+            # its seat was given to a promoted spectator would leave the room
+            # holding more players than the game accepts.
+            role = resolve_returning_role(
+                current_role=participant.role,
+                as_spectator=bool(data.get('as_spectator', False)),
+                match_in_progress=ports.has_in_progress_match(room.id),
+                active_players=ports.count_active_players(room.id),
+                max_seats=ports.game_max_seats(room.game_id),
             )
+            if role != participant.role:
+                updates['role'] = role
+        if updates:
+            participant = ports.save_membership_changes(participant.id, updates)
         return participant, change.event_name
 
     missing = missing_identity_fields(data)

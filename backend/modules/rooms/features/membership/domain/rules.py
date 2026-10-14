@@ -30,6 +30,29 @@ def resolve_entry_role(
     return PLAYER_ROLE
 
 
+def resolve_returning_role(
+    *, current_role, as_spectator, match_in_progress, active_players, max_seats
+):
+    """Resolve the role of a membership that comes back after leaving.
+
+    A returning session is admitted by the same policy that admits a new
+    arrival, but the outcome can only keep or reduce its role: a stored
+    spectator is never promoted without asking (S5), and a stored player is
+    demoted to spectator exactly when the room has no seat left for it. The
+    row already exists, so this is the only place that can keep the room's
+    player count at or below ``max_seats`` after a seat was given away while
+    its former holder was out (a leave or a reap).
+    """
+    if current_role != PLAYER_ROLE:
+        return SPECTATOR_ROLE
+    return resolve_entry_role(
+        as_spectator=as_spectator,
+        match_in_progress=match_in_progress,
+        active_players=active_players,
+        max_seats=max_seats,
+    )
+
+
 def can_take_player_seat(
     *, role, match_in_progress, active_players, max_seats
 ):

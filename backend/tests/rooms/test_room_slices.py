@@ -11,6 +11,7 @@ from modules.rooms.features.membership.domain.rules import (
     is_disconnected_presence,
     membership_change,
     resolve_entry_role,
+    resolve_returning_role,
 )
 from modules.rooms.features.presence.domain.rules import (
     grace_expired,
@@ -116,6 +117,70 @@ class EntryRoleDomainTests(SimpleTestCase):
                 max_seats=2,
             ),
             'player',
+        )
+
+
+class ReturningRoleDomainTests(SimpleTestCase):
+    """A membership that comes back after leaving never breaks the aforo."""
+
+    def test_a_returning_player_keeps_its_seat_while_one_is_free(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=1,
+                max_seats=2,
+            ),
+            'player',
+        )
+
+    def test_a_returning_player_over_capacity_becomes_a_spectator(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=2,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_a_returning_player_during_a_match_becomes_a_spectator(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=False,
+                match_in_progress=True,
+                active_players=1,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_a_returning_player_that_asks_to_watch_becomes_a_spectator(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=True,
+                match_in_progress=False,
+                active_players=0,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_a_returning_spectator_is_never_promoted_without_asking(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='spectator',
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=0,
+                max_seats=2,
+            ),
+            'spectator',
         )
 
 
