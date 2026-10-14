@@ -54,16 +54,19 @@ function seatLabel(seatId: string, match: MatchState): ReactElement {
 function seatProse(
   seatId: string,
   roster: MatchSeatRosterEntry[],
+  you: string | undefined,
 ): string {
   const entry = roster.find((seat) => seat.seat_id === seatId)
-  if (!entry) return 'Jugador'
-  return `${entry.display_name} (${entry.game_marker_label})`
+  const name = entry
+    ? `${entry.display_name} (${entry.game_marker_label})`
+    : 'Jugador'
+  return seatId === you ? `${name} (tú)` : name
 }
 
 function outcomeMessage(view: MatchView, roster: MatchSeatRosterEntry[]): string {
   if (!view.winner) return 'La partida ha terminado.'
   if (view.winner === view.you) return 'Has ganado la partida.'
-  return `Ha ganado ${seatProse(view.winner, roster)}.`
+  return `Ha ganado ${seatProse(view.winner, roster, view.you)}.`
 }
 
 /**
@@ -137,7 +140,7 @@ export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
           </ul>
           <p className="duelo-reveal-winner">
             {view.reveal.winner
-              ? `Ganó ${seatProse(view.reveal.winner, match.roster)}.`
+              ? `Ganó ${seatProse(view.reveal.winner, match.roster, view.you)}.`
               : 'La ronda terminó en empate.'}
           </p>
         </div>

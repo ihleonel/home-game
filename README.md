@@ -79,7 +79,7 @@ A running match names each seat with its player, not with a seat number. That id
 
 The list travels as the additive `roster` field of the match projection. It is a sibling of the presence payload in the `match.snapshot` frame, and both REST responses carry it: `POST /api/matches/<match_ref>/actions/` and `GET /api/matches/<match_ref>/` (resync). The presence payload (`seats`) and the room roster are unchanged. Because the list carries public identity only and no hidden play, a seat and a spectator receive exactly the same `roster`; only the `view` is scoped to the seat.
 
-The game screen renders that roster and derives nothing from it: a seat reads as the server-sent name plus its marker chip, the viewer's own seat carries the `(tú)` suffix, and a seat the roster does not name falls back to the neutral `Jugador` rather than to a fabricated seat number. Sentences, such as the match outcome, use `display_name (game_marker_label)`.
+The game screen renders that roster and derives nothing from it: a seat reads as the server-sent name plus its marker chip, the viewer's own seat carries the `(tú)` suffix, and a seat the roster does not name falls back to the neutral `Jugador` rather than to a fabricated seat number. Sentences, such as the match outcome and the reveal winner, use `display_name (game_marker_label)`, with the viewer's own seat marked `(tú)` there as well.
 
 Two wordings stay generic by design: the disconnection and abandonment notices on the game screen say `Tu rival` / `Un jugador`, because naming the opponent would require the client to work out which roster entry is the rival. A backend-projected opponent field can add that later without a client change.
 
