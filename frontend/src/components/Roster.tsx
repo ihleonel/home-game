@@ -56,7 +56,7 @@ function RosterPlayer({
           </span>
         )}
       </span>
-      {canStartExpulsionVote(participant) && (
+      {participant.role === 'player' && canStartExpulsionVote(participant) && (
         <button
           className="button button-quiet vote-start-button"
           disabled={busy}

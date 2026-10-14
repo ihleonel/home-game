@@ -100,6 +100,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
     intent: RoomIntent,
     game: Game,
     guestIdentity: GuestIdentity,
+    options?: { asSpectator?: boolean },
   ): Promise<CreateOrJoinOutcome> {
     if (membershipRequestPending.current) return 'rejected'
     if (roomSession) {
@@ -119,6 +120,9 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       display_name: displayName,
       game_marker: guestIdentity.gameMarker,
       ...(savedSession ? { session_id: savedSession.sessionId } : {}),
+      // The spectator flag is additive: a caller that does not ask for it
+      // sends exactly the same body as before.
+      ...(options?.asSpectator ? { as_spectator: true } : {}),
     }
 
     setPendingAction(intent)
@@ -204,6 +208,28 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       )
     } catch {
       // Keep the current session; the action error already explains the rejection.
+    }
+  }
+
+  async function requestPlayerSeat(): Promise<void> {
+    if (!roomSession) return
+    setPendingAction('play')
+    setActionError(null)
+    try {
+      const response = await requestJson<RoomEnvelope>('/api/rooms/play/', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: roomSession.sessionId }),
+      })
+      // The promotion is authoritative: the server snapshot carries the new
+      // role and readiness, so the local session copy is left to the room
+      // frames that follow.
+      setRoom(response.room)
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : 'No se ha podido pedir el asiento.',
+      )
+    } finally {
+      setPendingAction(null)
     }
   }
 
@@ -628,6 +654,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
         matchRendererAvailable,
         createOrJoin,
         toggleReady,
+        requestPlayerSeat,
         leaveRoom,
         startExpulsionVote,
         castExpulsionBallot,

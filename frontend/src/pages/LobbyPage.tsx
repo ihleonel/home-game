@@ -5,6 +5,7 @@ import { CountdownOverlay } from '../components/CountdownOverlay'
 import { ExpulsionVotePanel } from '../components/ExpulsionVotePanel'
 import { IdentityForm } from '../components/IdentityForm'
 import { Roster } from '../components/Roster'
+import { SpectatorActions } from '../components/SpectatorActions'
 import { YourRoomActions } from '../components/YourRoomActions'
 import { markerLabel } from '../lib/format'
 import { readStoredIdentity } from '../lib/session'
@@ -38,6 +39,7 @@ export function LobbyPage() {
     matchRendererAvailable,
     countdown,
     toggleReady,
+    requestPlayerSeat,
     leaveRoom,
     startExpulsionVote,
     castExpulsionBallot,
@@ -59,6 +61,21 @@ export function LobbyPage() {
   }
   if (gameId !== room.game_id) return <Navigate to={`/rooms/${room.game_id}`} replace />
 
+  // A spectator may request a seat only while the room still has one and no
+  // match has started (S5/S8). The reason mirrors the exact server copy so the
+  // disabled button never leaves the spectator guessing.
+  const playerCount = room.participants.filter(
+    (participant) => participant.role === 'player',
+  ).length
+  const seatLimits = room.seat_limits ?? null
+  const roomFull = seatLimits !== null && playerCount >= seatLimits.max_seats
+  const canRequestSeat = !matchInProgress && seatLimits !== null && !roomFull
+  const spectatorSeatReason = matchInProgress
+    ? 'La partida ya ha comenzado.'
+    : roomFull
+      ? 'No hay ningún asiento libre en la sala.'
+      : null
+
   function startJoining(): void {
     if (!activeGame) return
     const savedIdentity = readStoredIdentity(activeGame)
@@ -75,6 +92,12 @@ export function LobbyPage() {
     event.preventDefault()
     if (!activeGame) return
     const outcome = await createOrJoin('join', activeGame, identity)
+    if (outcome !== 'rejected') setJoining(false)
+  }
+
+  async function submitSpectatorIdentity(): Promise<void> {
+    if (!activeGame) return
+    const outcome = await createOrJoin('join', activeGame, identity, { asSpectator: true })
     if (outcome !== 'rejected') setJoining(false)
   }
 
@@ -140,16 +163,35 @@ export function LobbyPage() {
         )}
 
         {isJoined && roomSession ? (
-          <YourRoomActions
-            busy={busy}
-            displayName={roomSession.displayName}
-            leavePending={pendingAction === 'leave'}
-            markerLabel={markerLabel(activeGame, roomSession.gameMarker)}
-            onLeave={() => void leaveRoom()}
-            onToggleReady={() => void toggleReady()}
-            ownReady={ownReady}
-            readyPending={pendingAction === 'ready'}
-          />
+          currentParticipant?.role === 'spectator' ? (
+            <>
+              <p className="spectator-notice" role="status">
+                Estás como espectador.
+              </p>
+              <SpectatorActions
+                busy={busy}
+                canRequestSeat={canRequestSeat}
+                displayName={roomSession.displayName}
+                leavePending={pendingAction === 'leave'}
+                markerLabel={markerLabel(activeGame, roomSession.gameMarker)}
+                onLeave={() => void leaveRoom()}
+                onRequestSeat={() => void requestPlayerSeat()}
+                reason={spectatorSeatReason}
+                requestPending={pendingAction === 'play'}
+              />
+            </>
+          ) : (
+            <YourRoomActions
+              busy={busy}
+              displayName={roomSession.displayName}
+              leavePending={pendingAction === 'leave'}
+              markerLabel={markerLabel(activeGame, roomSession.gameMarker)}
+              onLeave={() => void leaveRoom()}
+              onToggleReady={() => void toggleReady()}
+              ownReady={ownReady}
+              readyPending={pendingAction === 'ready'}
+            />
+          )
         ) : joining && activeGame ? (
           <IdentityForm
             busy={busy}
@@ -159,6 +201,7 @@ export function LobbyPage() {
             onCancel={cancelJoining}
             onChange={setIdentity}
             onSubmit={submitIdentity}
+            onSubmitAsSpectator={() => void submitSpectatorIdentity()}
           />
         ) : (
           <div className="join-actions">

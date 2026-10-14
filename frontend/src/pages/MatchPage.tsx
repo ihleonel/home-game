@@ -116,6 +116,12 @@ export function MatchPage() {
         voteNotice={voteNotice}
       />
 
+      {!seated && (
+        <p className="message message-info spectator-notice" role="status">
+          Estás como espectador.
+        </p>
+      )}
+
       {matchOngoing && rivalReconnecting && (
         <p className="message message-info" role="status">
           {reconnectNotice(rivalLabel, reconnectSeconds)}

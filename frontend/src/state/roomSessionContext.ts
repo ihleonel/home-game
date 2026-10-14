@@ -25,7 +25,7 @@ export type MatchCountdown = {
   remainingSeconds: number
 }
 
-export type PendingAction = RoomIntent | 'ready' | 'leave' | 'vote' | 'pick' | null
+export type PendingAction = RoomIntent | 'ready' | 'leave' | 'vote' | 'pick' | 'play' | null
 
 /**
  * How a create-or-join attempt ended.
@@ -60,8 +60,10 @@ export type RoomSessionContextValue = {
     intent: RoomIntent,
     game: Game,
     identity: GuestIdentity,
+    options?: { asSpectator?: boolean },
   ) => Promise<CreateOrJoinOutcome>
   toggleReady: () => Promise<void>
+  requestPlayerSeat: () => Promise<void>
   leaveRoom: () => Promise<void>
   startExpulsionVote: (targetRef: string) => Promise<void>
   castExpulsionBallot: (voteRef: string, choice: 'yes' | 'no') => Promise<void>

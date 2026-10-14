@@ -30,6 +30,12 @@ export type Participant = {
   participant_ref: string
   display_name: string
   game_marker: string
+  /**
+   * The room role the backend resolved for this participant (S1/S2). A
+   * ``spectator`` does not occupy a seat, cannot be marked ready and is not
+   * an expulsion-vote target.
+   */
+  role: 'player' | 'spectator'
   is_ready: boolean
   presence: 'offline' | 'online' | 'reconnecting' | 'inactive'
   /**
@@ -71,6 +77,12 @@ export type Room = {
   updated_at: string
   participants: Participant[]
   expulsion_vote: ExpulsionVote | null
+  /**
+   * The seat capacity resolved from the game registry for this room (S6), so
+   * the lobby can offer the spectator's promotion without guessing. It is
+   * ``null`` for an unknown ``game_id``.
+   */
+  seat_limits: { min_seats: number; max_seats: number } | null
 }
 
 export type RoomEnvelope = { room: Room }
