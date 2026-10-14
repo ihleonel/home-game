@@ -7,6 +7,7 @@ from django.utils import timezone, translation
 from modules.rooms.constants import RECONNECT_GRACE_SECONDS
 from modules.rooms.events import room_snapshot
 from modules.rooms.features.membership.domain.rules import (
+    can_take_player_seat,
     is_disconnected_presence,
     membership_change,
     resolve_entry_role,
@@ -116,6 +117,78 @@ class EntryRoleDomainTests(SimpleTestCase):
             ),
             'player',
         )
+
+
+class PromotionDomainTests(SimpleTestCase):
+    def test_a_spectator_takes_a_free_seat_in_a_lobby(self):
+        self.assertTrue(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=False,
+                active_players=1,
+                max_seats=2,
+            )
+        )
+
+    def test_a_player_never_needs_a_promotion(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='player',
+                match_in_progress=False,
+                active_players=0,
+                max_seats=2,
+            )
+        )
+
+    def test_an_in_progress_match_blocks_the_seat(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=True,
+                active_players=0,
+                max_seats=2,
+            )
+        )
+
+    def test_a_full_lobby_blocks_the_seat(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=False,
+                active_players=2,
+                max_seats=2,
+            )
+        )
+
+    def test_an_unknown_game_limit_blocks_the_seat(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=False,
+                active_players=0,
+                max_seats=None,
+            )
+        )
+
+
+class SeatLimitsSnapshotTests(TestCase):
+    def test_seat_limits_come_from_the_game_registry_in_both_forms(self):
+        room = Room.objects.create(game_id='duelo')
+
+        self.assertEqual(
+            dict(RoomSerializer(room).data)['seat_limits'],
+            {'min_seats': 2, 'max_seats': 2},
+        )
+        self.assertEqual(
+            room_snapshot(room)['seat_limits'],
+            {'min_seats': 2, 'max_seats': 2},
+        )
+
+    def test_an_unknown_game_has_no_seat_limits(self):
+        room = Room.objects.create(game_id='unknown-game')
+
+        self.assertIsNone(dict(RoomSerializer(room).data)['seat_limits'])
+        self.assertIsNone(room_snapshot(room)['seat_limits'])
 
 
 class ReadinessDomainTests(SimpleTestCase):

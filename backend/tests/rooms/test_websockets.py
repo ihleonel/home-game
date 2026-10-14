@@ -388,6 +388,51 @@ class RoomWebSocketTests(TransactionTestCase):
             {'Guest One', 'Guest Three'},
         )
 
+    def test_a_spectator_promotion_is_broadcast_to_the_room_sockets(self):
+        room, participants = self.create_room_with_guests('Guest One')
+        spectator = Participant.objects.create(
+            room=room,
+            display_name='Guest Two',
+            game_marker='guante-azul',
+            role=Participant.Role.SPECTATOR,
+        )
+        client = APIClient()
+
+        async def promote():
+            communicator = WebsocketCommunicator(
+                application,
+                self.websocket_path(spectator.session_id),
+            )
+            connected, _ = await communicator.connect()
+            initial = await communicator.receive_json_from()
+            await communicator.receive_json_from()
+            response = await database_sync_to_async(client.post)(
+                '/api/rooms/play/',
+                {'session_id': str(spectator.session_id)},
+                format='json',
+            )
+            event = await communicator.receive_json_from()
+            await communicator.disconnect()
+            return connected, initial, response, event
+
+        connected, initial, response, event = async_to_sync(promote)()
+
+        self.assertTrue(connected)
+        # The snapshot the socket received carries the S6 seat limits for the
+        # game, so the lobby can offer the promotion without guessing.
+        self.assertEqual(
+            initial['room']['seat_limits'], {'min_seats': 2, 'max_seats': 2}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(event['type'], 'player_promoted')
+        entry = next(
+            participant
+            for participant in event['room']['participants']
+            if participant['participant_ref'] == str(spectator.public_id)
+        )
+        self.assertEqual(entry['role'], 'player')
+        self.assertFalse(entry['is_ready'])
+
     def test_reconnect_restores_membership_and_receives_a_fresh_snapshot(self):
         room, participants = self.create_room_with_guests('Guest One', 'Guest Two')
         returning_guest = participants[0]

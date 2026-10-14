@@ -139,6 +139,13 @@ class RoomApiTests(APITestCase):
         data.update(identity)
         return self.client.post('/api/rooms/join/', data, format='json')
 
+    def play_room(self, session_id):
+        return self.client.post(
+            '/api/rooms/play/',
+            {'session_id': session_id},
+            format='json',
+        )
+
     def create_ghost_room(
         self,
         game=None,
@@ -398,6 +405,121 @@ class RoomApiTests(APITestCase):
         )
         self.assertFalse(
             Participant.objects.get(room__game_id=self.game['id']).is_ready
+        )
+
+    def test_spectator_with_a_free_seat_is_promoted_to_player(self):
+        self.create_room(display_name='Guest One')
+        spectator = self.create_room(
+            display_name='Guest Two',
+            game_marker=self.game['markers'][1]['id'],
+            as_spectator=True,
+        )
+
+        response = self.play_room(spectator.data['session_id'])
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        entry = next(
+            participant
+            for participant in response.data['room']['participants']
+            if participant['participant_ref'] == spectator.data['participant_ref']
+        )
+        self.assertEqual(entry['role'], 'player')
+        self.assertFalse(entry['is_ready'])
+        participant = Participant.objects.get(
+            session_id=spectator.data['session_id']
+        )
+        self.assertEqual(participant.role, Participant.Role.PLAYER)
+        self.assertFalse(participant.is_ready)
+
+    def test_spectator_of_a_full_lobby_is_rejected_without_a_seat(self):
+        self.create_room(display_name='Guest One')
+        self.create_room(
+            display_name='Guest Two',
+            game_marker=self.game['markers'][1]['id'],
+        )
+        spectator = self.create_room(
+            display_name='Guest Three',
+            game_marker=self.game['markers'][2]['id'],
+        )
+
+        response = self.play_room(spectator.data['session_id'])
+
+        self.assertEqual(response.status_code, http_status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            str(response.data['detail']),
+            'No hay ningún asiento libre en la sala.',
+        )
+        participant = Participant.objects.get(
+            session_id=spectator.data['session_id']
+        )
+        self.assertEqual(participant.role, Participant.Role.SPECTATOR)
+
+    def test_spectator_while_a_match_is_in_progress_is_rejected(self):
+        self.create_room(display_name='Guest One')
+        room = Room.objects.get()
+        Match.objects.create(
+            room=room,
+            game_id='duelo',
+            status=Match.Status.IN_PROGRESS,
+            state=rules.initial_state(['seat-0', 'seat-1']),
+        )
+        spectator = self.join_room(
+            display_name='Guest Two',
+            game_marker=self.game['markers'][1]['id'],
+        )
+
+        response = self.play_room(spectator.data['session_id'])
+
+        self.assertEqual(response.status_code, http_status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            str(response.data['detail']),
+            'La partida ya ha comenzado.',
+        )
+        participant = Participant.objects.get(
+            session_id=spectator.data['session_id']
+        )
+        self.assertEqual(participant.role, Participant.Role.SPECTATOR)
+
+    def test_a_player_calling_play_stays_a_player_without_a_promotion_event(self):
+        created = self.create_room(display_name='Guest One')
+
+        with patch(
+            'modules.rooms.infrastructure.events.broadcast_room_event'
+        ) as broadcast:
+            with self.captureOnCommitCallbacks(execute=True):
+                response = self.play_room(created.data['session_id'])
+
+        self.assertEqual(response.status_code, http_status.HTTP_200_OK)
+        self.assertEqual(
+            response.data['room']['participants'][0]['role'], 'player'
+        )
+        broadcast.assert_not_called()
+
+    def test_play_with_an_unknown_session_is_not_found(self):
+        self.create_room(display_name='Guest One')
+
+        response = self.play_room(str(uuid.uuid4()))
+
+        self.assertEqual(response.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertEqual(
+            str(response.data['detail']),
+            'La sesión no pertenece a ningún participante activo de la sala.',
+        )
+
+    def test_room_snapshot_exposes_the_games_seat_limits(self):
+        created = self.create_room(display_name='Guest One')
+
+        read = self.client.get(
+            '/api/rooms/active/', {'game_id': self.game['id']}
+        )
+
+        self.assertEqual(
+            created.data['room']['seat_limits'],
+            {'min_seats': 2, 'max_seats': 2},
+        )
+        self.assertEqual(
+            read.data['room']['seat_limits'],
+            {'min_seats': 2, 'max_seats': 2},
         )
 
     def test_active_room_lookup_uses_game_or_session_and_rejects_ambiguity(self):

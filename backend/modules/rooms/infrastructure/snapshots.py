@@ -1,8 +1,23 @@
 from django.utils import timezone
 
+from modules.games.composition import GAME_REGISTRY
+
 from ..constants import RECONNECT_GRACE_SECONDS
 from ..features.presence.domain.rules import grace_expired, remaining_seconds
 from ..models import ExpulsionVote, Participant
+
+
+def seat_limits(game_id):
+    """Resolve the room's seat bounds from the game contract (S6).
+
+    The single source for both the REST serializer and the WebSocket snapshot,
+    so the two forms cannot drift. An unknown game has no limits and answers
+    ``None``.
+    """
+    definition = GAME_REGISTRY.get(game_id)
+    if definition is None:
+        return None
+    return {'min_seats': definition.min_seats, 'max_seats': definition.max_seats}
 
 
 def room_snapshot(room):
@@ -26,6 +41,7 @@ def room_snapshot(room):
         'expulsion_vote': (
             expulsion_vote_snapshot(pending_vote) if pending_vote is not None else None
         ),
+        'seat_limits': seat_limits(room.game_id),
     }
 
 

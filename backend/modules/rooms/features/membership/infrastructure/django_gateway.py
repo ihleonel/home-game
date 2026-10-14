@@ -120,6 +120,13 @@ class DjangoRoomMembershipGateway:
         definition = GAME_REGISTRY.get(game_id)
         return definition.max_seats if definition is not None else None
 
+    def set_participant_role(self, participant_id, role):
+        participant = Participant.objects.select_for_update().get(
+            pk=participant_id
+        )
+        participant.role = role
+        participant.save(update_fields=('role', 'updated_at'))
+
     def save_membership_changes(self, participant_id, changes):
         participant = Participant.objects.select_for_update().get(pk=participant_id)
         for field, value in changes.items():
@@ -175,4 +182,5 @@ class DjangoRoomMembershipGateway:
             presence=participant.presence,
             was_left=participant.left_at is not None,
             is_ready=participant.is_ready,
+            role=participant.role,
         )

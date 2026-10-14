@@ -30,6 +30,25 @@ def resolve_entry_role(
     return PLAYER_ROLE
 
 
+def can_take_player_seat(
+    *, role, match_in_progress, active_players, max_seats
+):
+    """The S5 promotion gate, derived from the game contract.
+
+    A spectator only takes a seat in a lobby: never during an ``in_progress``
+    match, and only while the count of active players is below the room's
+    game ``max_seats``. An unknown game has no limit to compare against, so it
+    can never grant a seat.
+    """
+    if role != SPECTATOR_ROLE:
+        return False
+    if match_in_progress:
+        return False
+    if max_seats is None:
+        return False
+    return active_players < max_seats
+
+
 def membership_change(
     *,
     was_left,

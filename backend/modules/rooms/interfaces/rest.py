@@ -22,13 +22,16 @@ from ..features.membership.application.use_cases import (
     get_active_room,
     join_room as join_room_use_case,
     leave_room as leave_room_use_case,
+    play_room as play_room_use_case,
 )
 from ..features.membership.domain.errors import (
     ActiveParticipantNotFound as MembershipParticipantNotFound,
     ActiveRoomGameConflict as ActiveRoomGameConflictError,
     ActiveRoomNotFound as MembershipRoomNotFound,
     ActiveRoomSelectionRequired,
+    MatchAlreadyStarted,
     MissingParticipantIdentity,
+    NoFreeSeat,
     ReadyParticipantCannotLeave,
     RemovedSession,
 )
@@ -42,6 +45,7 @@ from ..serializers import (
     ActiveRoomLookupSerializer,
     CastExpulsionBallotSerializer,
     LeaveRoomSerializer,
+    PlayRoomSerializer,
     ReadyStateSerializer,
     RoomRequestSerializer,
     StartExpulsionVoteSerializer,
@@ -76,6 +80,18 @@ class SpectatorReadyForbidden(APIException):
     status_code = status.HTTP_409_CONFLICT
     default_detail = 'Estás como espectador: no puedes marcarte como listo.'
     default_code = 'spectator_cannot_ready'
+
+
+class NoFreeSeatConflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = 'No hay ningún asiento libre en la sala.'
+    default_code = 'no_free_seat'
+
+
+class MatchAlreadyStartedConflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = 'La partida ya ha comenzado.'
+    default_code = 'match_already_started'
 
 
 def _translate_voting_error(error):
@@ -189,6 +205,23 @@ def leave_room(request):
     except ReadyParticipantCannotLeave:
         raise ReadyLeaveForbidden()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['POST'])
+def play_room(request):
+    data = _request_data(PlayRoomSerializer, request)
+    dependencies = compose_room_dependencies()
+    try:
+        response_data = play_room_use_case(dependencies.membership, data)
+    except (MembershipRoomNotFound, MembershipParticipantNotFound):
+        raise NotFound(
+            'La sesión no pertenece a ningún participante activo de la sala.'
+        )
+    except NoFreeSeat:
+        raise NoFreeSeatConflict()
+    except MatchAlreadyStarted:
+        raise MatchAlreadyStartedConflict()
+    return Response(response_data)
 
 
 @api_view(['PATCH'])

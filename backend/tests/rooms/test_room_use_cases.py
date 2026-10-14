@@ -9,14 +9,19 @@ from modules.rooms.features.membership.application.use_cases import (
     create_or_discover_room,
     join_room,
     leave_room,
+    play_room,
 )
 from modules.rooms.features.membership.domain.entities import (
     ActiveRoom,
     ParticipantMembership,
 )
 from modules.rooms.features.membership.domain.errors import (
+    ActiveParticipantNotFound,
     ActiveRoomGameConflict,
+    ActiveRoomNotFound as MembershipActiveRoomNotFound,
+    MatchAlreadyStarted,
     MissingParticipantIdentity,
+    NoFreeSeat,
     ReadyParticipantCannotLeave,
 )
 from modules.rooms.features.readiness.application.ports import ReadinessPorts
@@ -424,6 +429,142 @@ class MembershipUseCaseTests(SimpleTestCase):
         )
 
 
+class PromotionUseCaseTests(SimpleTestCase):
+    def test_a_spectator_with_a_free_seat_is_promoted_and_published(self):
+        participant = _participant(role='spectator')
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'duelo'),
+            active_participant_for_session_for_update=participant,
+            has_in_progress_match=False,
+            count_active_players=1,
+            game_max_seats=2,
+            room_snapshot={'revision': 1},
+        )
+
+        response = play_room(ports, {'session_id': participant.session_id})
+
+        self.assertEqual(response, {'room': {'revision': 1}})
+        ports.set_participant_role.assert_called_once_with(participant.id, 'player')
+        ports.schedule_room_event.assert_called_once_with(
+            12, 'player_promoted', {'revision': 1}
+        )
+        self.assertEqual(
+            ports.timeline,
+            [
+                'begin',
+                'active_room_for_update',
+                'active_participant_for_session_for_update',
+                'has_in_progress_match',
+                'count_active_players',
+                'game_max_seats',
+                'set_participant_role',
+                'room_snapshot',
+                'schedule_room_event',
+                'commit',
+            ],
+        )
+
+    def test_a_player_is_a_noop_without_a_promotion_event(self):
+        participant = _participant(role='player')
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'duelo'),
+            active_participant_for_session_for_update=participant,
+            room_snapshot={'revision': 1},
+        )
+
+        response = play_room(ports, {'session_id': participant.session_id})
+
+        self.assertEqual(response, {'room': {'revision': 1}})
+        ports.set_participant_role.assert_not_called()
+        ports.schedule_room_event.assert_not_called()
+        ports.has_in_progress_match.assert_not_called()
+        self.assertEqual(
+            ports.timeline,
+            [
+                'begin',
+                'active_room_for_update',
+                'active_participant_for_session_for_update',
+                'room_snapshot',
+                'commit',
+            ],
+        )
+
+    def test_an_in_progress_match_rejects_the_promotion(self):
+        participant = _participant(role='spectator')
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'duelo'),
+            active_participant_for_session_for_update=participant,
+            has_in_progress_match=True,
+            count_active_players=1,
+            game_max_seats=2,
+        )
+
+        with self.assertRaises(MatchAlreadyStarted):
+            play_room(ports, {'session_id': participant.session_id})
+
+        ports.set_participant_role.assert_not_called()
+        ports.schedule_room_event.assert_not_called()
+        self.assertEqual(ports.timeline[-1], 'rollback')
+
+    def test_a_full_lobby_rejects_the_promotion(self):
+        participant = _participant(role='spectator')
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'duelo'),
+            active_participant_for_session_for_update=participant,
+            has_in_progress_match=False,
+            count_active_players=2,
+            game_max_seats=2,
+        )
+
+        with self.assertRaises(NoFreeSeat):
+            play_room(ports, {'session_id': participant.session_id})
+
+        ports.set_participant_role.assert_not_called()
+        ports.schedule_room_event.assert_not_called()
+
+    def test_an_unknown_game_limit_rejects_the_promotion(self):
+        participant = _participant(role='spectator')
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'unknown-game'),
+            active_participant_for_session_for_update=participant,
+            has_in_progress_match=False,
+            count_active_players=0,
+            game_max_seats=None,
+        )
+
+        with self.assertRaises(NoFreeSeat):
+            play_room(ports, {'session_id': participant.session_id})
+
+    def test_a_session_without_a_room_is_not_found(self):
+        ports = _ports(active_room_for_update=None)
+
+        with self.assertRaises(MembershipActiveRoomNotFound):
+            play_room(ports, {'session_id': uuid4()})
+
+        self.assertEqual(
+            ports.timeline, ['begin', 'active_room_for_update', 'rollback']
+        )
+
+    def test_a_session_without_an_active_membership_is_not_found(self):
+        ports = _ports(
+            active_room_for_update=ActiveRoom(12, 'duelo'),
+            active_participant_for_session_for_update=None,
+        )
+
+        with self.assertRaises(ActiveParticipantNotFound):
+            play_room(ports, {'session_id': uuid4()})
+
+        self.assertEqual(
+            ports.timeline,
+            [
+                'begin',
+                'active_room_for_update',
+                'active_participant_for_session_for_update',
+                'rollback',
+            ],
+        )
+
+
 class ReadinessUseCaseTests(SimpleTestCase):
     def test_readiness_change_is_saved_and_published_inside_unit_of_work(self):
         participant = ReadinessParticipant(id=24, is_ready=False)
@@ -521,7 +662,7 @@ def _new_member_data():
     }
 
 
-def _participant(presence='offline', is_ready=False):
+def _participant(presence='offline', is_ready=False, role='player'):
     return ParticipantMembership(
         id=24,
         session_id=uuid4(),
@@ -531,4 +672,5 @@ def _participant(presence='offline', is_ready=False):
         presence=presence,
         was_left=False,
         is_ready=is_ready,
+        role=role,
     )
