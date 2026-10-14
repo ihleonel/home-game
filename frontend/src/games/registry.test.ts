@@ -95,3 +95,31 @@ describe('the game screen registry', () => {
     expect(render('duelo', { round: 1, scores: { 'seat-0': 0 } })).toBeNull()
   })
 })
+
+const taTeTiView = {
+  board: ['seat-0', null, 'seat-1', null, 'seat-0', null, null, null, 'seat-1'],
+  turn: 'seat-0',
+  symbols: { 'seat-0': 'X', 'seat-1': 'O' },
+  winner_line: null,
+  you: 'seat-0',
+  winner: null,
+  finished: false,
+  ended_by_abandon: false,
+}
+
+describe('the ta-te-ti screen entry', () => {
+  it('is registered beside duelo', () => {
+    expect(hasMatchRenderer('ta-te-ti')).toBe(true)
+  })
+
+  it('renders its own panel for a valid payload', () => {
+    const markup = render('ta-te-ti', taTeTiView)
+
+    expect(markup).toContain('Ta-te-ti')
+  })
+
+  it('does not render one game screen over the other game view', () => {
+    expect(render('ta-te-ti', dueloView)).toBeNull()
+    expect(render('duelo', taTeTiView)).toBeNull()
+  })
+})

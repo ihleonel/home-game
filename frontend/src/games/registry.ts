@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { renderDueloMatch } from './duelo/screen'
 import type { MatchSeatRosterEntry } from './matchRoster'
+import { renderTaTeTiMatch } from './ta-te-ti/screen'
 
 /**
  * The fields every game's match view carries.
@@ -71,6 +72,7 @@ export type GameScreen = (props: MatchRendererProps) => ReactElement | null
  */
 const GAME_SCREENS: Record<string, GameScreen> = {
   duelo: renderDueloMatch,
+  'ta-te-ti': renderTaTeTiMatch,
 }
 
 export function hasMatchRenderer(gameId: string | undefined): boolean {
