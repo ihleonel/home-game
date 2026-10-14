@@ -10,6 +10,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from config.asgi import application
 from modules.rooms.connections import register_connection, unregister_connection
+from modules.rooms.features.membership.domain.rules import SPECTATOR_ROLE
 from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
 from tests.games.support import SCOPING_GAME_ID, SCOPING_GAME_MARKERS
 
@@ -48,14 +49,18 @@ class ExpulsionVoteApiTests(APITestCase):
         disconnected_at=None,
         room=None,
         game_marker='guante-rojo',
+        role=None,
     ):
-        return Participant.objects.create(
-            room=room or self.room,
-            display_name=name,
-            game_marker=game_marker,
-            presence=presence,
-            disconnected_at=disconnected_at,
-        )
+        fields = {
+            'room': room or self.room,
+            'display_name': name,
+            'game_marker': game_marker,
+            'presence': presence,
+            'disconnected_at': disconnected_at,
+        }
+        if role is not None:
+            fields['role'] = role
+        return Participant.objects.create(**fields)
 
     def start_vote(self, caller=None):
         return self.client.post(
@@ -206,6 +211,80 @@ class ExpulsionVoteApiTests(APITestCase):
 
         self.assertEqual(ballot_response.status_code, http_status.HTTP_403_FORBIDDEN)
         self.assertEqual(ExpulsionVote.objects.get().ballots.count(), 2)
+
+    def test_spectator_target_is_not_a_participant_for_the_vote(self):
+        spectator = self.create_participant(
+            'Guest Spectator',
+            Participant.Presence.ONLINE,
+            role=SPECTATOR_ROLE,
+        )
+        self.register_participant_connection(spectator)
+
+        response = self.client.post(
+            '/api/rooms/expulsion-votes/',
+            {
+                'session_id': str(self.initiator.session_id),
+                'target_ref': str(spectator.public_id),
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, http_status.HTTP_404_NOT_FOUND)
+        self.assertEqual(
+            response.data['detail'],
+            'La persona propuesta no es un participante activo de la sala.',
+        )
+        self.assertFalse(ExpulsionVote.objects.exists())
+
+    def test_spectator_present_at_vote_start_holds_no_ballot(self):
+        spectator = self.create_participant(
+            'Guest Spectator',
+            Participant.Presence.ONLINE,
+            role=SPECTATOR_ROLE,
+        )
+        self.register_participant_connection(spectator)
+
+        response = self.start_vote()
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(response.data['vote']['eligible_count'], 2)
+
+        ballot_response = self.cast_ballot(response.data['vote'], spectator, 'yes')
+
+        self.assertEqual(ballot_response.status_code, http_status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            ballot_response.data['detail'],
+            'No tenías derecho a votar cuando comenzó la votación.',
+        )
+        self.assertEqual(ExpulsionVote.objects.get().ballots.count(), 2)
+
+    def test_vote_between_players_ignores_a_present_spectator(self):
+        spectator = self.create_participant(
+            'Guest Spectator',
+            Participant.Presence.ONLINE,
+            role=SPECTATOR_ROLE,
+        )
+        self.register_participant_connection(spectator)
+
+        response = self.start_vote()
+
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        vote = ExpulsionVote.objects.get()
+        self.assertEqual(
+            set(vote.ballots.values_list('voter_id', flat=True)),
+            {self.initiator.pk, self.other_voter.pk},
+        )
+        self.assertNotIn(
+            spectator.pk, vote.ballots.values_list('voter_id', flat=True)
+        )
+        self.assertEqual(response.data['vote']['eligible_count'], 2)
+
+        first = self.cast_ballot(response.data['vote'], self.initiator, 'yes')
+        self.assertEqual(first.data['vote']['status'], ExpulsionVote.Status.PENDING)
+        approved = self.cast_ballot(response.data['vote'], self.other_voter, 'yes')
+        self.assertEqual(approved.data['vote']['status'], ExpulsionVote.Status.APPROVED)
+
+        self.target.refresh_from_db()
+        self.assertIsNotNone(self.target.left_at)
 
     def test_no_ballot_rejects_vote_without_expelling_target(self):
         response = self.start_vote()
