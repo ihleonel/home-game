@@ -86,6 +86,7 @@ class DjangoLobbyCountdownGateway:
                 store=dependencies.store,
                 registry=dependencies.registry,
                 projector=dependencies.projector,
+                rng=dependencies.rng,
             )
         except MatchAlreadyInProgress:
             # A concurrent starter won the race and already opened the match.

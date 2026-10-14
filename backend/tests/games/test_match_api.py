@@ -72,14 +72,16 @@ class MatchApiTestCase(APITestCase):
         participant.save(update_fields=('presence', 'disconnected_at'))
         return participant
 
-    def open_match(self, *, reaping=None):
+    def open_match(self, *, reaping=None, rng=None):
         """Open a match for ``self.room`` through the shared interface gateway.
 
         This is the non-HTTP start every non-start test uses: it drives
         ``open_match_for_room`` with the production dependencies, so the
         reap-before-seats rule is exercised where the lobby countdown also
         exercises it. The reaping service is injectable so a test can prove
-        that rule is load-bearing rather than incidental.
+        that rule is load-bearing rather than incidental. ``rng`` is forwarded
+        to ``start_match``; the production caller passes
+        ``dependencies.rng`` and only games that need randomness require it.
         """
         dependencies = compose_match_dependencies()
         return open_match_for_room(
@@ -88,6 +90,7 @@ class MatchApiTestCase(APITestCase):
             store=dependencies.store,
             registry=dependencies.registry,
             projector=dependencies.projector,
+            rng=rng,
         )
 
     def submit_action(
@@ -492,3 +495,79 @@ class ManualStartRetiredApiTests(MatchApiTestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(Match.objects.exists())
+
+
+class _FixedRng:
+    """Deterministic ``RandomSource`` used to pin the random opening seat."""
+
+    def __init__(self, order):
+        self.order = list(order)
+
+    def shuffle(self, items):
+        return list(self.order)
+
+    def roll(self, sides):
+        return 1
+
+
+class TaTeTiStartApiTests(APITestCase):
+    """The ta-te-ti start path through the real interface gateway.
+
+    This pins the S4 seam end to end: ``open_match_for_room`` must forward the
+    ``RandomSource`` to ``start_match``, and a missing source must fail loudly
+    instead of silently opening with seat 0 on turn.
+    """
+
+    def setUp(self):
+        self.room = Room.objects.create(game_id='ta-te-ti')
+        self.first = Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name='Guest One',
+            game_marker='sol',
+            is_ready=True,
+        )
+        self.second = Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name='Guest Two',
+            game_marker='luna',
+            is_ready=True,
+        )
+
+    def _open(self, rng):
+        dependencies = compose_match_dependencies()
+        return open_match_for_room(
+            room=self.room,
+            reaping=dependencies.reaping,
+            store=dependencies.store,
+            registry=dependencies.registry,
+            projector=dependencies.projector,
+            rng=rng,
+        )
+
+    def test_open_without_rng_fails_loudly_and_persists_nothing(self):
+        with self.assertRaises(ValueError):
+            self._open(None)
+
+        self.assertFalse(Match.objects.exists())
+        self.assertFalse(MatchSeat.objects.exists())
+
+    def test_open_with_rng_persists_the_drawn_opening_seat_and_empty_board(self):
+        opened = self._open(_FixedRng(('seat-1', 'seat-0')))
+
+        match = Match.objects.get(public_id=opened.record.match_ref)
+        self.assertEqual(match.game_id, 'ta-te-ti')
+        self.assertEqual(match.state['turn'], 'seat-1')
+        self.assertEqual(match.state['board'], [None] * 9)
+        self.assertFalse(match.state['finished'])
+        # The seat ids are still index-ordered, so seat-0 keeps X and seat-1 O.
+        self.assertEqual(match.state['seats'], ['seat-0', 'seat-1'])
+
+    def test_open_with_the_composed_rng_draws_one_of_the_two_seats(self):
+        dependencies = compose_match_dependencies()
+
+        opened = self._open(dependencies.rng)
+
+        match = Match.objects.get(public_id=opened.record.match_ref)
+        self.assertIn(match.state['turn'], ('seat-0', 'seat-1'))

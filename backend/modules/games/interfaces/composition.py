@@ -31,6 +31,7 @@ from ..composition import GAME_REGISTRY
 from ..registry import GameRegistry
 from ..runtime.infrastructure.channel_projector import ChannelMatchProjector
 from ..runtime.infrastructure.django_store import DjangoMatchStore
+from ..runtime.infrastructure.random_source import SystemRandomSource
 
 
 class DjangoMatchLifecycle:
@@ -60,6 +61,7 @@ class MatchDependencies:
     presence: DjangoPresenceGateway
     lifecycle: DjangoMatchLifecycle
     reaping: ReapingService
+    rng: SystemRandomSource
 
 
 def compose_match_dependencies():
@@ -73,4 +75,7 @@ def compose_match_dependencies():
         # Reuse the rooms composition root instead of re-binding the grace
         # constant here: the reaping service must resolve the window once.
         reaping=compose_room_dependencies().reaping,
+        # The only production RandomSource: the start path draws the opening
+        # seat of a game that needs one (ta-te-ti) from it.
+        rng=SystemRandomSource(),
     )
