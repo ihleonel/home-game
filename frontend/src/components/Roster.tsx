@@ -45,9 +45,13 @@ function RosterPlayer({
     <li className="roster-item">
       <span className="marker-chip">{markerLabel(game, participant.game_marker)}</span>
       <span className="player-name">{participant.display_name}</span>
-      <span className={participant.is_ready ? 'ready-badge is-ready' : 'ready-badge'}>
-        {participant.is_ready ? 'Listo' : 'No está listo'}
-      </span>
+      {participant.role === 'spectator' ? (
+        <span className="spectator-badge">Espectador</span>
+      ) : (
+        <span className={participant.is_ready ? 'ready-badge is-ready' : 'ready-badge'}>
+          {participant.is_ready ? 'Listo' : 'No está listo'}
+        </span>
+      )}
       <span className={`presence-badge presence-${participant.presence}`}>
         {presenceLabel(participant.presence)}
         {reconnectSeconds !== null && reconnectSeconds > 0 && (

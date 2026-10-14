@@ -474,6 +474,21 @@
   font-weight: 600;
 }
 
+/* The roster badge that tells everyone this membership has no seat (S8). It
+   takes the place of the readiness badge, which a spectator has nothing to
+   report: it cannot be marked ready. */
+.spectator-badge {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
 .action-buttons {
   justify-content: flex-end;
 }
