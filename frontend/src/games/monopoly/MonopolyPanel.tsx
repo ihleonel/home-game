@@ -10,7 +10,7 @@ import {
   purchasePrice,
   rentForLevel,
 } from './deeds'
-import { GROUP_LABELS, formatMoney, seatName } from './display'
+import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
 import './monopoly.css'
 import type { MonopolyAction, MonopolyPlayer, MonopolyView } from './view'
@@ -146,6 +146,10 @@ function ownSeatBlock(
               : 'Sin restricciones'}
           </dd>
         </div>
+        <div className="monopoly-own-fact">
+          <dt>Cartas de «Salí de la cárcel gratis»</dt>
+          <dd className="monopoly-own-jail-cards">{own.jail_cards}</dd>
+        </div>
       </dl>
 
       <div className="monopoly-own-properties">
@@ -246,6 +250,22 @@ export function MonopolyPanelLayout({
               ownSeatBlock(own, ownGroups)
             )}
           </div>
+
+          {view.decks !== null && (
+            <div className="monopoly-players-block monopoly-decks">
+              <h3 className="monopoly-block-title">Mazos</h3>
+              <dl className="monopoly-own-facts">
+                <div className="monopoly-own-fact">
+                  <dt>{DECK_LABELS.chance}</dt>
+                  <dd className="monopoly-deck-count">{view.decks.chance}</dd>
+                </div>
+                <div className="monopoly-own-fact">
+                  <dt>{DECK_LABELS.community_chest}</dt>
+                  <dd className="monopoly-deck-count">{view.decks.community_chest}</dd>
+                </div>
+              </dl>
+            </div>
+          )}
 
           {view.actions.length > 0 && (
             <div className="monopoly-actions-block">

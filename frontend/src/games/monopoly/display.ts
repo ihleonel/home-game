@@ -66,6 +66,23 @@ export const GROUP_INITIALS: Record<ColorGroup, string> = {
 }
 
 /**
+ * The printed names of the two card decks (S12).
+ *
+ * The server sends the machine deck id; both the board and the panel turn it
+ * into the words printed on the card piles through here, so a deck cannot be
+ * spelled two different ways in the same screen.
+ */
+export const DECK_LABELS: Record<string, string> = {
+  chance: 'Suerte',
+  community_chest: 'Caja de comunidad',
+}
+
+/** A deck's printed name, falling back to the id for a deck we do not know. */
+export function deckLabel(deck: string): string {
+  return DECK_LABELS[deck] ?? deck
+}
+
+/**
  * Group an integer amount of dollars with dots, the way the board prints it.
  *
  * ``Intl`` is deliberately avoided: the tests run in Node and the markup has

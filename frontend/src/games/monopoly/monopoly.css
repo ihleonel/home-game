@@ -202,6 +202,13 @@
   border-width: 2px;
 }
 
+/* The drawn card is not a die roll: it gets its own marker so the two lines in
+   the centre cannot be confused, and it is set apart from the detail below it. */
+.monopoly-card {
+  border-left: 2px solid var(--monopoly-line);
+  padding-left: 0.3rem;
+}
+
 .monopoly-centre {
   display: flex;
   flex-direction: column;

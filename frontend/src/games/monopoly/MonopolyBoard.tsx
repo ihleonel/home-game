@@ -3,7 +3,7 @@ import type { MatchState } from '../registry'
 import { BOARD, isPurchasable, spaceAt } from './board'
 import type { Space } from './board'
 import { deedFor, purchasePrice, rentForLevel } from './deeds'
-import { GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, formatMoney, seatName } from './display'
+import { GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, deckLabel, formatMoney, seatName } from './display'
 import { spaceArea } from './grid'
 import type { MonopolyPlayer, MonopolyView } from './view'
 
@@ -181,6 +181,11 @@ export function MonopolyBoard({
         {view.last_roll !== null && (
           <p className="monopoly-roll" role="status">
             {`Última tirada: ${view.last_roll[0]} y ${view.last_roll[1]}`}
+          </p>
+        )}
+        {view.last_card !== null && (
+          <p className="monopoly-roll monopoly-card" role="status">
+            {`${deckLabel(view.last_card.deck)}: ${view.last_card.title}`}
           </p>
         )}
         {chosen !== null && (

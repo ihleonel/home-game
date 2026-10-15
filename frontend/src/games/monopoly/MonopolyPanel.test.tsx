@@ -31,6 +31,7 @@ function player(overrides: Partial<MonopolyPlayer> & { seat: string }): Monopoly
     properties: [],
     in_jail: false,
     jail_turns: 0,
+    jail_cards: 0,
     eliminated: false,
     ...overrides,
   }
@@ -46,6 +47,8 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     owners: {},
     last_roll: null,
     pending: null,
+    decks: null,
+    last_card: null,
     actions: [],
     you: 'seat-0',
     ...overrides,
@@ -204,6 +207,27 @@ describe('the monopoly player panel', () => {
 
     expect(page).toContain('monopoly-own-cash">$1.500<')
     expect(page).toContain('monopoly-own-position">GO<')
+  })
+
+  it('shows how many jail cards the own seat holds', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', jail_cards: 2 }), player({ seat: 'seat-1' })],
+    })
+    const page = panelMarkup(seated)
+
+    expect(page).toContain('Cartas de «Salí de la cárcel gratis»')
+    expect(page).toContain('monopoly-own-jail-cards">2<')
+  })
+
+  it('shows the cards left in each deck when the server reports them', () => {
+    const page = panelMarkup(view({ decks: { chance: 14, community_chest: 9 } }))
+
+    expect(page).toContain('monopoly-deck-count">14<')
+    expect(page).toContain('monopoly-deck-count">9<')
+  })
+
+  it('shows no deck count when the view carries no deck information', () => {
+    expect(panelMarkup(view({ decks: null }))).not.toContain('monopoly-deck-count')
   })
 
   it('groups the own properties by colour with their printed data', () => {

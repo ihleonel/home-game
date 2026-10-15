@@ -31,6 +31,7 @@ function player(overrides: Partial<MonopolyPlayer> & { seat: string }): Monopoly
     properties: [],
     in_jail: false,
     jail_turns: 0,
+    jail_cards: 0,
     eliminated: false,
     ...overrides,
   }
@@ -46,6 +47,8 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     owners: {},
     last_roll: null,
     pending: null,
+    decks: null,
+    last_card: null,
     actions: [],
     you: 'seat-0',
     ...overrides,
@@ -164,6 +167,40 @@ describe('the monopoly board', () => {
 
     expect(page).toContain('Turno de Ana')
     expect(page).toContain('Última tirada: 3 y 5')
+  })
+
+  it('renders the drawn card with its deck in Spanish and the copy verbatim', () => {
+    const page = markup(
+      view({
+        last_card: {
+          deck: 'chance',
+          id: 'chance-01',
+          title: 'Avanzá hasta Boardwalk.',
+        },
+      }),
+    )
+
+    expect(page).toContain('monopoly-card')
+    expect(page).toContain('Suerte: Avanzá hasta Boardwalk.')
+    expect(page).toContain('Avanzá hasta Boardwalk.')
+  })
+
+  it('names the community chest deck in Spanish', () => {
+    const page = markup(
+      view({
+        last_card: {
+          deck: 'community_chest',
+          id: 'community_chest-02',
+          title: 'Error bancario a tu favor: cobrá $200.',
+        },
+      }),
+    )
+
+    expect(page).toContain('Caja de comunidad: Error bancario a tu favor: cobrá $200.')
+  })
+
+  it('renders no drawn card once nothing has been turned up', () => {
+    expect(markup(view({ last_card: null }))).not.toContain('monopoly-card')
   })
 
   it('shows the selected space detail with its printed rents and nothing when nothing is selected', () => {

@@ -23,6 +23,7 @@ function rawView(overrides: Record<string, unknown> = {}): Record<string, unknow
         properties: [],
         in_jail: false,
         jail_turns: 0,
+        jail_cards: 1,
         eliminated: false,
       },
       {
@@ -32,10 +33,17 @@ function rawView(overrides: Record<string, unknown> = {}): Record<string, unknow
         properties: [],
         in_jail: false,
         jail_turns: 0,
+        jail_cards: 0,
         eliminated: false,
       },
     ],
     owners: { '3': 'seat-0' },
+    decks: { chance: 16, community_chest: 15 },
+    last_card: {
+      deck: 'chance',
+      id: 'chance-08',
+      title: 'El banco te paga un dividendo de $50.',
+    },
     last_roll: [1, 2],
     pending: null,
     actions: [{ name: 'roll', prompt: 'Tirá los dados.', options: [] }],
@@ -70,6 +78,8 @@ describe('the monopoly view parser', () => {
     delete payload.pending
     delete payload.actions
     delete payload.you
+    delete payload.decks
+    delete payload.last_card
 
     expect(parseMonopolyView(payload)).toEqual({
       finished: false,
@@ -78,10 +88,142 @@ describe('the monopoly view parser', () => {
       turn: null,
       players: payload.players,
       owners: { '3': 'seat-0' },
+      decks: null,
+      last_card: null,
       last_roll: null,
       pending: null,
       actions: [],
     })
+  })
+
+  it('reads the drawn card, the deck counts and the jail cards field by field', () => {
+    const view = parseMonopolyView(rawView())
+
+    expect(view?.decks).toEqual({ chance: 16, community_chest: 15 })
+    expect(view?.last_card).toEqual({
+      deck: 'chance',
+      id: 'chance-08',
+      title: 'El banco te paga un dividendo de $50.',
+    })
+    expect(view?.players.map((player) => player.jail_cards)).toEqual([1, 0])
+  })
+
+  it('recognizes a payload without the card fields and degrades them to null and zero', () => {
+    const payload = rawView({
+      players: [
+        {
+          seat: 'seat-0',
+          cash: 1500,
+          position: 0,
+          properties: [],
+          in_jail: false,
+          jail_turns: 0,
+          eliminated: false,
+        },
+        {
+          seat: 'seat-1',
+          cash: 1500,
+          position: 0,
+          properties: [],
+          in_jail: false,
+          jail_turns: 0,
+          eliminated: false,
+        },
+      ],
+    })
+    delete payload.decks
+    delete payload.last_card
+
+    const view = parseMonopolyView(payload)
+
+    expect(view).not.toBeNull()
+    expect(view?.decks).toBeNull()
+    expect(view?.last_card).toBeNull()
+    expect(view?.players.map((player) => player.jail_cards)).toEqual([0, 0])
+  })
+
+  it('drops a malformed decks object as a whole and keeps the rest of the view', () => {
+    expect(parseMonopolyView(rawView({ decks: 'two decks' }))?.decks).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ decks: { chance: -1, community_chest: 15 } }))?.decks,
+    ).toBeNull()
+    expect(parseMonopolyView(rawView({ decks: { chance: 16 } }))?.decks).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ decks: { chance: 16, community_chest: 1.5 } }))?.decks,
+    ).toBeNull()
+
+    const view = parseMonopolyView(rawView({ decks: { chance: 16 } }))
+
+    expect(view).not.toBeNull()
+    expect(view?.players).toHaveLength(2)
+    expect(view?.last_card).not.toBeNull()
+  })
+
+  it('drops a malformed last card and keeps the rest of the view', () => {
+    expect(parseMonopolyView(rawView({ last_card: 'chance-08' }))?.last_card).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ last_card: { deck: '', id: 'chance-08', title: 'x' } }))
+        ?.last_card,
+    ).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ last_card: { deck: 'chance', id: '', title: 'x' } }))
+        ?.last_card,
+    ).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ last_card: { deck: 'chance', id: 'chance-08', title: 7 } }))
+        ?.last_card,
+    ).toBeNull()
+
+    const view = parseMonopolyView(rawView({ last_card: { deck: 'chance' } }))
+
+    expect(view).not.toBeNull()
+    expect(view?.last_card).toBeNull()
+    expect(view?.decks).toEqual({ chance: 16, community_chest: 15 })
+  })
+
+  it('degrades a malformed jail card count to zero without costing the view', () => {
+    const view = parseMonopolyView(
+      rawView({
+        players: [
+          {
+            seat: 'seat-0',
+            cash: 1500,
+            position: 0,
+            properties: [],
+            in_jail: false,
+            jail_turns: 0,
+            jail_cards: 'two',
+            eliminated: false,
+          },
+          {
+            seat: 'seat-1',
+            cash: 1500,
+            position: 0,
+            properties: [],
+            in_jail: false,
+            jail_turns: 0,
+            jail_cards: -3,
+            eliminated: false,
+          },
+        ],
+      }),
+    )
+
+    expect(view).not.toBeNull()
+    expect(view?.players.map((player) => player.jail_cards)).toEqual([0, 0])
+  })
+
+  it('never leaks the hidden deck order, wherever the payload puts it', () => {
+    const orderInside = parseMonopolyView(
+      rawView({ decks: { chance: 3, community_chest: 4, order: ['chance-01'] } }),
+    )
+    const orderElsewhere = parseMonopolyView(
+      rawView({ deck_order: ['chance-01'], decks: { chance: 3, community_chest: 4 } }),
+    )
+
+    expect(orderInside?.decks).toEqual({ chance: 3, community_chest: 4 })
+    expect(orderElsewhere?.decks).toEqual({ chance: 3, community_chest: 4 })
+    expect(orderElsewhere).not.toHaveProperty('deck_order')
   })
 
   it('reads a finished match', () => {

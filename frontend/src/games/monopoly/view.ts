@@ -19,7 +19,32 @@ export type MonopolyPlayer = {
   properties: number[]
   in_jail: boolean
   jail_turns: number
+  /**
+   * How many Get Out of Jail Free cards the seat holds (S12).
+   *
+   * It is a count, never the card ids: which cards a hand holds is the seat's
+   * own business, and the table only sees the size of the hand.
+   */
+  jail_cards: number
   eliminated: boolean
+}
+
+/**
+ * How many cards remain face down in each deck (S12).
+ *
+ * The deck *order* is hidden state and never reaches a view. These two counts
+ * are all the table learns, and they are what the piles' thickness shows.
+ */
+export type MonopolyDecks = {
+  chance: number
+  community_chest: number
+}
+
+/** The card turned up last, resolved to the copy a player reads (S12). */
+export type MonopolyLastCard = {
+  deck: string
+  id: string
+  title: string
 }
 
 /**
@@ -59,6 +84,8 @@ export type MonopolyView = MatchRuntimeView & {
   owners: Record<string, string>
   last_roll: number[] | null
   pending: MonopolyPending | null
+  decks: MonopolyDecks | null
+  last_card: MonopolyLastCard | null
   actions: MonopolyAction[]
 }
 
@@ -78,7 +105,7 @@ function isBoardIndex(value: unknown): value is number {
 /** Read one seat, or ``null`` when a field the board needs is missing. */
 function readPlayer(value: unknown): MonopolyPlayer | null {
   if (!isRecord(value)) return null
-  const { seat, cash, position, properties, in_jail, jail_turns, eliminated } = value
+  const { seat, cash, position, properties, in_jail, jail_turns, jail_cards, eliminated } = value
   if (typeof seat !== 'string' || seat.length === 0) return null
   if (!isInteger(cash) || !isBoardIndex(position)) return null
   if (!Array.isArray(properties)) return null
@@ -90,6 +117,9 @@ function readPlayer(value: unknown): MonopolyPlayer | null {
   if (typeof in_jail !== 'boolean') return null
   if (!isInteger(jail_turns) || jail_turns < 0) return null
   if (typeof eliminated !== 'boolean') return null
+  // A card count is a small fact next to the seat: losing it costs a number,
+  // not the table, and ``0`` is the honest reading of a hand nobody counted.
+  const held = isInteger(jail_cards) && jail_cards >= 0 ? jail_cards : 0
   return {
     seat,
     cash,
@@ -97,8 +127,34 @@ function readPlayer(value: unknown): MonopolyPlayer | null {
     properties: owned,
     in_jail,
     jail_turns,
+    jail_cards: held,
     eliminated,
   }
+}
+
+/**
+ * Read the remaining deck sizes, or ``null``.
+ *
+ * All-or-nothing by design: half a deck count would show a table a thickness
+ * the server never reported, so one bad count drops both piles rather than
+ * leaving the other one looking authoritative.
+ */
+function readDecks(value: unknown): MonopolyDecks | null {
+  if (!isRecord(value)) return null
+  const { chance, community_chest } = value
+  if (!isInteger(chance) || chance < 0) return null
+  if (!isInteger(community_chest) || community_chest < 0) return null
+  return { chance, community_chest }
+}
+
+/** Read the last card turned up, or ``null`` when nothing usable was drawn. */
+function readLastCard(value: unknown): MonopolyLastCard | null {
+  if (!isRecord(value)) return null
+  const { deck, id, title } = value
+  if (typeof deck !== 'string' || deck.length === 0) return null
+  if (typeof id !== 'string' || id.length === 0) return null
+  if (typeof title !== 'string') return null
+  return { deck, id, title }
 }
 
 /**
@@ -202,10 +258,10 @@ function readActions(value: unknown): MonopolyAction[] {
  *
  * Past those identifiers it degrades instead of rejecting, exactly as every
  * other parser in this folder does: a malformed optional field costs that
- * field, never the whole screen. ``turn``, ``last_roll`` and ``pending``
- * become ``null``, ``actions`` loses only its bad entries, and an optional
- * field of the wrong type is left out so the component's own fallback covers
- * it.
+ * field, never the whole screen. ``turn``, ``last_roll``, ``pending``,
+ * ``decks`` and ``last_card`` become ``null``, ``actions`` loses only its bad
+ * entries, a seat's ``jail_cards`` becomes ``0``, and an optional field of the
+ * wrong type is left out so the component's own fallback covers it.
  */
 export function parseMonopolyView(raw: unknown): MonopolyView | null {
   if (!isRecord(raw)) return null
@@ -234,6 +290,8 @@ export function parseMonopolyView(raw: unknown): MonopolyView | null {
     owners,
     last_roll: readRoll(raw.last_roll),
     pending: readPending(raw.pending),
+    decks: readDecks(raw.decks),
+    last_card: readLastCard(raw.last_card),
     actions: readActions(raw.actions),
   }
 
