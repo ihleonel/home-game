@@ -1,0 +1,446 @@
+/* Monopoly board and player panel (S3/S4/S5).
+   The custom properties live on the panel, never on :root, so the game never
+   leaks colour into the rest of the app. */
+
+.monopoly-panel {
+  --monopoly-ink: var(--ink);
+  --monopoly-ink-soft: var(--ink-soft);
+  --monopoly-line: var(--line-strong);
+  --monopoly-surface: var(--surface);
+  --monopoly-band-empty: var(--surface-raised);
+  --monopoly-you: var(--accent-dark);
+  --monopoly-you-border: var(--accent);
+  --monopoly-brown: #8b5a2b;
+  --monopoly-light-blue: #7ec8e3;
+  --monopoly-pink: #d95fa3;
+  --monopoly-orange: #e8853b;
+  --monopoly-red: #d34f4f;
+  --monopoly-yellow: #e8c33b;
+  --monopoly-green: #3f9c6a;
+  --monopoly-dark-blue: #33439e;
+
+  margin: 0.5rem 0 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.9rem;
+  background: var(--surface-raised);
+}
+
+.monopoly-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+/* Narrow screens: the board fills the width and the panel sits below it. */
+.monopoly-board-column {
+  min-width: 0;
+}
+
+.monopoly-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.monopoly-board {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  grid-template-rows: repeat(11, 1fr);
+  aspect-ratio: 1;
+  width: 100%;
+  max-width: min(92vh, 100%);
+  gap: 1px;
+  padding: 1px;
+  border: 2px solid var(--monopoly-line);
+  border-radius: 0.5rem;
+  background: var(--monopoly-line);
+}
+
+.monopoly-space {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1px;
+  border: 1px solid var(--monopoly-line);
+  border-radius: 2px;
+  background: var(--monopoly-surface);
+  color: var(--monopoly-ink);
+  font-size: 0.45rem;
+  line-height: 1.05;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.monopoly-space:hover {
+  border-color: var(--monopoly-you-border);
+}
+
+.monopoly-space[aria-pressed='true'] {
+  border-color: var(--monopoly-you-border);
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+}
+
+/* The full name stays in the DOM on every screen size; small screens clip it
+   to two lines instead of dropping it, so the accessible name still reads it. */
+.monopoly-space-name {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+/* The colour band is decoration; the name and the group initials below it are
+   what actually say which group the space belongs to. */
+.monopoly-space-band {
+  display: block;
+  height: 0.45rem;
+  border: 1px solid var(--monopoly-line);
+  border-radius: 2px;
+  background: var(--monopoly-band-empty);
+}
+
+.monopoly-space[data-group='brown'] .monopoly-space-band {
+  background: var(--monopoly-brown);
+}
+
+.monopoly-space[data-group='light_blue'] .monopoly-space-band {
+  background: var(--monopoly-light-blue);
+}
+
+.monopoly-space[data-group='pink'] .monopoly-space-band {
+  background: var(--monopoly-pink);
+}
+
+.monopoly-space[data-group='orange'] .monopoly-space-band {
+  background: var(--monopoly-orange);
+}
+
+.monopoly-space[data-group='red'] .monopoly-space-band {
+  background: var(--monopoly-red);
+}
+
+.monopoly-space[data-group='yellow'] .monopoly-space-band {
+  background: var(--monopoly-yellow);
+}
+
+.monopoly-space[data-group='green'] .monopoly-space-band {
+  background: var(--monopoly-green);
+}
+
+.monopoly-space[data-group='dark_blue'] .monopoly-space-band {
+  background: var(--monopoly-dark-blue);
+}
+
+.monopoly-space-group {
+  align-self: center;
+  font-size: 0.4rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+/* The owner is a bordering badge with the player's name, never a bare colour. */
+.monopoly-space-owner {
+  overflow: hidden;
+  border: 1px solid var(--monopoly-ink);
+  border-radius: 0.2rem;
+  background: var(--monopoly-surface);
+  font-size: 0.4rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monopoly-space-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  margin-top: auto;
+}
+
+/* Up to eight tokens can share one cell: they wrap and shrink instead of
+   overlapping, so every seat stays legible. */
+.monopoly-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0.7rem;
+  padding: 0 0.15rem;
+  border: 1px solid var(--monopoly-ink);
+  border-radius: 999px;
+  background: var(--monopoly-surface);
+  font-size: 0.42rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.monopoly-token-you {
+  border-color: var(--monopoly-you-border);
+  color: var(--monopoly-you);
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+}
+
+.monopoly-token-initial {
+  line-height: 1;
+}
+
+/* A jailed seat is marked with an outline, not with words: the words would be
+   clipped inside a token this small, and they already live in the title, in the
+   accessible name and in the players list. */
+.monopoly-token-jailed {
+  border-style: dashed;
+  border-width: 2px;
+}
+
+.monopoly-centre {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  overflow: auto;
+  padding: 0.5rem;
+  border-radius: 0.4rem;
+  background: var(--monopoly-surface);
+  color: var(--monopoly-ink);
+  text-align: center;
+}
+
+.monopoly-turn,
+.monopoly-roll {
+  margin: 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.monopoly-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+}
+
+.monopoly-detail-name {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.monopoly-detail-kind,
+.monopoly-detail-group,
+.monopoly-detail-price,
+.monopoly-detail-owner {
+  margin: 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.8rem;
+}
+
+.monopoly-rents {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.15rem 0.6rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-rent {
+  display: inline-flex;
+  gap: 0.25rem;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.75rem;
+}
+
+.monopoly-rent-value {
+  color: var(--monopoly-ink);
+  font-weight: 700;
+}
+
+.monopoly-winner {
+  margin: 0;
+  color: var(--success-ink);
+  font-weight: 750;
+}
+
+.monopoly-own,
+.monopoly-actions-block,
+.monopoly-players-block {
+  padding: 0.75rem;
+  border: 1px solid var(--monopoly-line);
+  border-radius: 0.75rem;
+  background: var(--monopoly-surface);
+}
+
+.monopoly-block-title {
+  margin: 0 0 0.5rem;
+  color: var(--monopoly-ink);
+  font-size: 0.95rem;
+}
+
+.monopoly-spectator,
+.monopoly-own-empty,
+.monopoly-reference-note {
+  margin: 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.82rem;
+}
+
+.monopoly-reference-note {
+  margin-bottom: 0.5rem;
+  font-style: italic;
+}
+
+.monopoly-own-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.monopoly-own-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.monopoly-own-fact dt {
+  color: var(--monopoly-ink-soft);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.monopoly-own-fact dd {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-weight: 700;
+}
+
+.monopoly-own-properties-title {
+  margin: 0 0 0.25rem;
+  color: var(--monopoly-ink);
+  font-weight: 700;
+}
+
+.monopoly-property-group + .monopoly-property-group {
+  margin-top: 0.6rem;
+}
+
+.monopoly-property-group-title {
+  margin: 0 0 0.25rem;
+  color: var(--monopoly-you);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.monopoly-property-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-property {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.monopoly-property-name {
+  color: var(--monopoly-ink);
+  font-weight: 650;
+}
+
+.monopoly-property-price,
+.monopoly-property-rents {
+  color: var(--monopoly-ink-soft);
+  font-size: 0.78rem;
+}
+
+.monopoly-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.monopoly-action {
+  flex: 1 1 auto;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.6rem;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+.monopoly-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.monopoly-players {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-player {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.6rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--monopoly-ink-soft);
+  font-size: 0.85rem;
+}
+
+.monopoly-player-name {
+  color: var(--monopoly-ink);
+  font-weight: 700;
+}
+
+.monopoly-player-cash {
+  color: var(--monopoly-ink);
+  font-weight: 700;
+}
+
+.monopoly-player-jail,
+.monopoly-player-out-label {
+  padding: 0 0.35rem;
+  border: 1px solid var(--monopoly-line);
+  border-radius: 999px;
+  background: var(--monopoly-band-empty);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.monopoly-player-out {
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+
+@media (min-width: 900px) {
+  .monopoly-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+    align-items: start;
+  }
+}
