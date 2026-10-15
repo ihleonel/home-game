@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ColorGroup, PURCHASABLE_INDEXES, RAILROAD_INDEXES, STREET_INDEXES, UTILITY_INDEXES, streetIndexes } from './board'
+import type { ColorGroup } from './board'
+import { PURCHASABLE_INDEXES, RAILROAD_INDEXES, STREET_INDEXES, UTILITY_INDEXES, streetIndexes } from './board'
 import {
   RAILROAD_MORTGAGE,
   RAILROAD_PRICE,

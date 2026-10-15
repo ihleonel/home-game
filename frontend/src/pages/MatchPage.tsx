@@ -69,6 +69,7 @@ export function MatchPage() {
     actionError,
     connectionError,
     voteNotice,
+    submitAction,
     submitPick,
   } = useRoomSession()
   const seatPresence = useMatchPresence()
@@ -152,6 +153,7 @@ export function MatchPage() {
         {renderMatchScreen(room.game_id, {
           busy,
           match: activeMatch,
+          onAction: (name, value) => void submitAction(name, value),
           onPick: (value) => void submitPick(value),
         }) ?? (
           <section className="match-unavailable" aria-labelledby="match-unavailable-title">

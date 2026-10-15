@@ -56,7 +56,7 @@ function rawMatch(view: unknown, version: number | null = 3): MatchState {
 }
 
 function props(view: unknown, version: number | null = 3, onPick: (value: string) => void = () => {}) {
-  return { busy: false, match: rawMatch(view, version), onPick }
+  return { busy: false, match: rawMatch(view, version), onAction: () => {}, onPick }
 }
 
 function render(view: unknown, version: number | null = 3): string | null {

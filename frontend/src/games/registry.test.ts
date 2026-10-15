@@ -53,6 +53,7 @@ function render(gameId: string | undefined, view: unknown): string | null {
   const screen = renderMatchScreen(gameId, {
     busy: false,
     match: rawMatch(view),
+    onAction: () => {},
     onPick: () => {},
   })
   return screen === null ? null : renderToStaticMarkup(screen)
