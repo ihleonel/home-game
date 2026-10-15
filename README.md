@@ -39,16 +39,26 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   player the debtor's cash and properties, while a debt to the bank takes the cash out of the
   game and returns the properties to the bank unowned. The raise-cash route does not exist yet,
   so an unaffordable debt goes straight to bankruptcy.
-  The playable core is what exists so far, and three limits are deliberate rather than
-  oversights: the Chance and Community Chest decks are not dealt yet, so landing on either
-  space is a stop without a consequence; declining an unowned property leaves it with the bank
-  instead of auctioning it, because the auction is its own increment; and building, mortgages
-  and trading are absent, so no seat can raise cash before going bankrupt.
+  The Chance and Community Chest decks are dealt: landing on either space turns up the top card
+  of its own deck, resolves it and recycles it to the bottom, and the classic United States set
+  of 32 cards is transcribed with a test that pins it card by card. Everything a card prints is
+  implemented: advancing to a named space and paying the GO salary when the lap wraps, the
+  nearest railroad with its doubled rent, the nearest utility with its fresh throw and ten times
+  the throw, going back three spaces, going to jail, the Get Out of Jail Free card a seat holds
+  until it uses it, money in both directions with the bank and with every other player, and the
+  repairs formula. Two limits are still deliberate rather than oversights: declining an unowned
+  property leaves it with the bank instead of auctioning it, because the auction is its own
+  increment; and building, mortgages and trading are absent, so no seat can raise cash before
+  going bankrupt and a repairs card costs nothing while nothing is built. The printed rules do
+  not cover a debt owed to several players at once, so a group payment that cannot be met pays
+  its shares in seat order and the first share that cannot be afforded is the bankruptcy, with
+  that player as the creditor.
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
   printed price and owner and carries the tokens of the seats standing on it, with the turn, the
-  last throw and the detail of the tapped space in the centre 9x9. Next to it, the panel shows
-  the own seat's capital, position, jail state and properties grouped by colour, the actions the
+  last throw, the card turned up last and the detail of the tapped space in the centre 9x9. Next
+  to it, the panel shows the own seat's capital, position, jail state, the jail cards it holds
+  and its properties grouped by colour, how many cards are left in each deck, the actions the
   server offered, and the roster of every seat. The board is read-only on purpose -- buying and
   building belong to the panel -- and the panel submits the actions it was handed and never
   decides which ones are legal, so a spectator sees the same board and no buttons at all. The
