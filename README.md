@@ -43,11 +43,19 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   oversights: the Chance and Community Chest decks are not dealt yet, so landing on either
   space is a stop without a consequence; declining an unowned property leaves it with the bank
   instead of auctioning it, because the auction is its own increment; and building, mortgages
-  and trading are absent, so no seat can raise cash before going bankrupt. The screen is not
-  built yet either: `monopoly` has no renderer in `src/games/registry.ts`, so its room shows the
-  "vista de partida no disponible" notice until the board, the per-player panel and the
-  generalization of the frontend action submission (which is currently hardcoded to `pick`)
-  arrive in the interface increment.
+  and trading are absent, so no seat can raise cash before going bankrupt.
+  Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
+  circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
+  printed price and owner and carries the tokens of the seats standing on it, with the turn, the
+  last throw and the detail of the tapped space in the centre 9x9. Next to it, the panel shows
+  the own seat's capital, position, jail state and properties grouped by colour, the actions the
+  server offered, and the roster of every seat. The board is read-only on purpose -- buying and
+  building belong to the panel -- and the panel submits the actions it was handed and never
+  decides which ones are legal, so a spectator sees the same board and no buttons at all. The
+  board's static data (the 40 spaces and the 22 deeds) is duplicated in TypeScript with a
+  fidelity test on each side, so it does not travel in every match frame. What the tests do not
+  reach is the CSS itself: the 900px breakpoint, the token wrapping and the colour bands are
+  verified in the markup they hang on, not in a browser.
 
 A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
 its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`; `monopoly` reports
