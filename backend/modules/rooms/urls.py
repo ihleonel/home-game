@@ -7,6 +7,7 @@ urlpatterns = [
     path('rooms/active/', views.active_room, name='active-room'),
     path('rooms/join/', views.join_room, name='join-room'),
     path('rooms/leave/', views.leave_room, name='leave-room'),
+    path('rooms/play/', views.play_room, name='play-room'),
     path('rooms/ready/', views.update_ready_state, name='update-ready-state'),
     path(
         'rooms/expulsion-votes/',

@@ -72,14 +72,16 @@ class MatchApiTestCase(APITestCase):
         participant.save(update_fields=('presence', 'disconnected_at'))
         return participant
 
-    def open_match(self, *, reaping=None):
+    def open_match(self, *, reaping=None, rng=None):
         """Open a match for ``self.room`` through the shared interface gateway.
 
         This is the non-HTTP start every non-start test uses: it drives
         ``open_match_for_room`` with the production dependencies, so the
         reap-before-seats rule is exercised where the lobby countdown also
         exercises it. The reaping service is injectable so a test can prove
-        that rule is load-bearing rather than incidental.
+        that rule is load-bearing rather than incidental. ``rng`` is forwarded
+        to ``start_match``; the production caller passes
+        ``dependencies.rng`` and only games that need randomness require it.
         """
         dependencies = compose_match_dependencies()
         return open_match_for_room(
@@ -88,6 +90,7 @@ class MatchApiTestCase(APITestCase):
             store=dependencies.store,
             registry=dependencies.registry,
             projector=dependencies.projector,
+            rng=rng,
         )
 
     def submit_action(
@@ -213,6 +216,30 @@ class ReadySeatsOnlyApiTests(MatchApiTestCase):
         )
 
 
+class SpectatorSeatExclusionApiTests(MatchApiTestCase):
+    """A spectator never occupies a seat, even with a stray ``is_ready``."""
+
+    def test_a_ready_spectator_is_not_seated(self):
+        spectator = self.create_participant('Guest Three', 'guante-verde')
+        spectator.role = Participant.Role.SPECTATOR
+        # Pin the query filter: readiness alone must not buy a seat.
+        spectator.is_ready = True
+        spectator.save(update_fields=('role', 'is_ready'))
+
+        opened = self.open_match()
+
+        seat_refs = [seat.participant_ref for seat in opened.record.seats]
+        self.assertEqual(
+            seat_refs,
+            [str(self.first.public_id), str(self.second.public_id)],
+        )
+        self.assertNotIn(str(spectator.public_id), seat_refs)
+        match = Match.objects.get()
+        self.assertFalse(
+            MatchSeat.objects.filter(match=match, participant=spectator).exists()
+        )
+
+
 class GhostFirstSeatOrderApiTests(MatchApiTestCase):
     """The ghost that joined first would otherwise occupy seat 0."""
 
@@ -253,6 +280,32 @@ class SubmitActionApiTests(MatchApiTestCase):
         self.assertEqual(response.data['seat_index'], 0)
         self.assertEqual(response.data['view']['your_pick'], 'rock')
         self.assertEqual(Match.objects.get(public_id=self.match_ref).version, 1)
+
+    def test_action_response_carries_the_public_roster(self):
+        response = self.submit_action(
+            self.match_ref, self.first, value='rock', version=0
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data['roster'],
+            [
+                {
+                    'seat_id': 'seat-0',
+                    'index': 0,
+                    'display_name': 'Guest One',
+                    'game_marker': 'guante-rojo',
+                    'game_marker_label': 'Guante rojo',
+                },
+                {
+                    'seat_id': 'seat-1',
+                    'index': 1,
+                    'display_name': 'Guest Two',
+                    'game_marker': 'guante-azul',
+                    'game_marker_label': 'Guante azul',
+                },
+            ],
+        )
 
     def test_unknown_match_is_not_found(self):
         response = self.submit_action(str(uuid.uuid4()), self.first)
@@ -378,6 +431,19 @@ class ResyncApiTests(MatchApiTestCase):
         self.assertEqual(response.data['seat_index'], 0)
         self.assertEqual(response.data['view']['you'], 'seat-0')
 
+    def test_resync_response_carries_the_public_roster(self):
+        response = self.resync(self.match_ref, self.first)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [entry['display_name'] for entry in response.data['roster']],
+            ['Guest One', 'Guest Two'],
+        )
+        self.assertEqual(
+            [entry['game_marker_label'] for entry in response.data['roster']],
+            ['Guante rojo', 'Guante azul'],
+        )
+
     def test_spectator_resyncs_to_the_public_view(self):
         spectator = self.create_participant(
             'Guest Three', 'guante-verde', is_ready=False
@@ -429,3 +495,160 @@ class ManualStartRetiredApiTests(MatchApiTestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(Match.objects.exists())
+
+
+class _FixedRng:
+    """Deterministic ``RandomSource`` used to pin the random opening seat."""
+
+    def __init__(self, order):
+        self.order = list(order)
+
+    def shuffle(self, items):
+        return list(self.order)
+
+    def roll(self, sides):
+        return 1
+
+
+class TaTeTiStartApiTests(APITestCase):
+    """The ta-te-ti start path through the real interface gateway.
+
+    This pins the S4 seam end to end: ``open_match_for_room`` must forward the
+    ``RandomSource`` to ``start_match``, and a missing source must fail loudly
+    instead of silently opening with seat 0 on turn.
+    """
+
+    def setUp(self):
+        self.room = Room.objects.create(game_id='ta-te-ti')
+        self.first = Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name='Guest One',
+            game_marker='sol',
+            is_ready=True,
+        )
+        self.second = Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name='Guest Two',
+            game_marker='luna',
+            is_ready=True,
+        )
+
+    def _open(self, rng):
+        dependencies = compose_match_dependencies()
+        return open_match_for_room(
+            room=self.room,
+            reaping=dependencies.reaping,
+            store=dependencies.store,
+            registry=dependencies.registry,
+            projector=dependencies.projector,
+            rng=rng,
+        )
+
+    def test_open_without_rng_fails_loudly_and_persists_nothing(self):
+        with self.assertRaises(ValueError):
+            self._open(None)
+
+        self.assertFalse(Match.objects.exists())
+        self.assertFalse(MatchSeat.objects.exists())
+
+    def test_open_with_rng_persists_the_drawn_opening_seat_and_empty_board(self):
+        opened = self._open(_FixedRng(('seat-1', 'seat-0')))
+
+        match = Match.objects.get(public_id=opened.record.match_ref)
+        self.assertEqual(match.game_id, 'ta-te-ti')
+        self.assertEqual(match.state['turn'], 'seat-1')
+        self.assertEqual(match.state['board'], [None] * 9)
+        self.assertFalse(match.state['finished'])
+        # The seat ids are still index-ordered, so seat-0 keeps X and seat-1 O.
+        self.assertEqual(match.state['seats'], ['seat-0', 'seat-1'])
+
+    def test_open_with_the_composed_rng_draws_one_of_the_two_seats(self):
+        dependencies = compose_match_dependencies()
+
+        opened = self._open(dependencies.rng)
+
+        match = Match.objects.get(public_id=opened.record.match_ref)
+        self.assertIn(match.state['turn'], ('seat-0', 'seat-1'))
+
+
+class TaTeTiDrawApiTests(APITestCase):
+    """A full ta-te-ti draw driven end to end through the real REST path.
+
+    The draw is ta-te-ti's novel ending (duelo has none), so it is exercised
+    through the real action endpoint and the real ``DjangoMatchStore`` rather
+    than a fake: the round-trip that matters is that a finished match with no
+    winner persists ``winner_seat=''`` and reads back as ``None`` instead of
+    failing on the model's non-null char column.
+    """
+
+    def setUp(self):
+        self.room = Room.objects.create(game_id='ta-te-ti')
+        self.first = self._participant('Guest One', 'sol')
+        self.second = self._participant('Guest Two', 'luna')
+
+    def _participant(self, display_name, marker):
+        return Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name=display_name,
+            game_marker=marker,
+            is_ready=True,
+        )
+
+    def _open(self):
+        dependencies = compose_match_dependencies()
+        # seat-0 opens the match, so the draw sequence below alternates from it.
+        return open_match_for_room(
+            room=self.room,
+            reaping=dependencies.reaping,
+            store=dependencies.store,
+            registry=dependencies.registry,
+            projector=dependencies.projector,
+            rng=_FixedRng(('seat-0', 'seat-1')),
+        )
+
+    def test_a_full_board_without_a_line_persists_a_draw(self):
+        opened = self._open()
+        match_ref = opened.record.match_ref
+        moves = (
+            (self.first, '0'),
+            (self.second, '4'),
+            (self.first, '1'),
+            (self.second, '2'),
+            (self.first, '6'),
+            (self.second, '3'),
+            (self.first, '5'),
+            (self.second, '7'),
+            (self.first, '8'),
+        )
+        response = None
+        for version, (participant, cell) in enumerate(moves):
+            response = self.client.post(
+                f'/api/matches/{match_ref}/actions/',
+                {
+                    'session_id': str(participant.session_id),
+                    'action_name': 'pick',
+                    'action_value': cell,
+                    'expected_version': version,
+                },
+                format='json',
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+        self.assertEqual(response.data['status'], 'finished')
+        self.assertTrue(response.data['view']['finished'])
+        self.assertIsNone(response.data['view']['winner'])
+
+        stored = Match.objects.get(public_id=match_ref)
+        self.assertEqual(stored.status, Match.Status.FINISHED)
+        self.assertFalse(stored.winner_seat)
+
+        resync = self.client.get(
+            f'/api/matches/{match_ref}/',
+            {'session_id': str(self.first.session_id)},
+        )
+        self.assertEqual(resync.status_code, status.HTTP_200_OK)
+        self.assertTrue(resync.data['view']['finished'])
+        self.assertIsNone(resync.data['view']['winner'])

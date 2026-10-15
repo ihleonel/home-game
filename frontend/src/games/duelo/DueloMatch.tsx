@@ -1,4 +1,7 @@
-import type { MatchRendererProps, MatchView } from '../registry'
+import type { ReactElement } from 'react'
+import type { MatchSeatRosterEntry } from '../matchRoster'
+import type { MatchRendererProps, MatchState } from '../registry'
+import type { DueloView } from './view'
 import './duelo.css'
 
 /**
@@ -15,27 +18,149 @@ const PICK_LABELS: Record<string, string> = {
 
 const PICK_CHOICES = ['rock', 'paper', 'scissors']
 
-function pickLabel(value: string | null): string {
-  if (!value) return 'Sin elegir'
-  return PICK_LABELS[value] ?? value
+/**
+ * The drawing of one pick, in a 48x48 box, shared by the pick cards and the
+ * resolved round.
+ *
+ * Each choice keeps its own silhouette -- a closed fist with three knuckles, a
+ * flat hand with four fingers and a thumb, two fingers held apart -- because
+ * shape is what makes the three plays tellable apart without relying on hue.
+ * The silhouettes are filled and the digits are round-capped strokes, which is
+ * what gives the chunky arcade hand; drawing them inline keeps the panel free
+ * of asset files and lets the stylesheet own the colour and the glow.
+ */
+const HAND_SHAPES: Record<string, ReactElement> = {
+  rock: (
+    <g>
+      <rect x="13" y="21" width="22" height="18" rx="8" stroke="none" />
+      <path d="M18 22v-3M24 22v-5M30 22v-3" fill="none" />
+    </g>
+  ),
+  paper: (
+    <g>
+      <rect x="13" y="24" width="24" height="16" rx="7" stroke="none" />
+      <path d="M16 27V15M22 27V11M28 27V13M34 27V17" fill="none" />
+      <path d="M36 33l5-5" fill="none" />
+    </g>
+  ),
+  scissors: (
+    <g>
+      <rect x="14" y="28" width="20" height="15" rx="7" stroke="none" />
+      <path d="M19 30L12 16M29 30l7-14" fill="none" />
+    </g>
+  ),
 }
 
 /**
- * A human label for a seat id.
+ * One pick drawn as a picture.
  *
- * ``duelo`` names its seats ``seat-<index>``; every other id is shown as it
- * comes. The own seat is marked so a player can read the score list.
+ * It is always decorative: the wrapper carries ``aria-hidden``, so a screen
+ * reader reaches the visible label instead of a picture it cannot describe, and
+ * the silhouette is what a sighted player uses to tell the plays apart.
  */
-function seatLabel(seatId: string, view: MatchView): string {
-  const numbered = /^seat-(\d+)$/.exec(seatId)
-  const label = numbered ? `Asiento ${Number(numbered[1]) + 1}` : seatId
-  return seatId === view.you ? `${label} (tú)` : label
+function HandArt({ pick }: { pick: string }): ReactElement {
+  return (
+    <svg
+      className="duelo-hand"
+      viewBox="0 0 48 48"
+      fill="currentColor"
+      stroke="currentColor"
+      strokeWidth="4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      focusable="false"
+      role="presentation"
+    >
+      {HAND_SHAPES[pick] ?? null}
+    </svg>
+  )
 }
 
-function outcomeMessage(view: MatchView): string {
+/**
+ * One seat named from the server roster.
+ *
+ * The name and the marker label are the fields the server sent (S4): the
+ * client never maps a ``game_marker`` to a label and never crosses the room
+ * roster with the match seats. A seat the roster does not name reads
+ * ``Jugador``, never a fabricated seat number (S3), and the only comparison
+ * allowed is the own-seat ``(tú)`` suffix against ``view.you``.
+ */
+function seatLabel(seatId: string, match: MatchState<DueloView>): ReactElement {
+  const entry = match.roster.find((seat) => seat.seat_id === seatId)
+  const name = entry ? entry.display_name : 'Jugador'
+  const suffix = seatId === match.view.you ? ' (tú)' : ''
+  return (
+    <span className="duelo-seat">
+      <span className="duelo-seat-name">{`${name}${suffix}`}</span>
+      {entry && (
+        <span className="marker-chip duelo-seat-marker">{entry.game_marker_label}</span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * One seat as a card of the arena: who it is, and the score the server reports.
+ *
+ * The score is the server's number rendered large, never a recomputed one, and
+ * the card is highlighted only by comparing the seat id with ``view.you``.
+ */
+function seatCard(
+  seatId: string,
+  score: number,
+  match: MatchState<DueloView>,
+): ReactElement {
+  const isYou = seatId === match.view.you
+  return (
+    <div
+      className={isYou ? 'duelo-seat-card duelo-seat-card-you' : 'duelo-seat-card'}
+      key={seatId}
+    >
+      {seatLabel(seatId, match)}
+      <span className="duelo-score">{score}</span>
+    </div>
+  )
+}
+
+/**
+ * The seat's own name, with the own-seat suffix: ``display_name (tú)``.
+ *
+ * The reveal uses this instead of the full seat label because the marker chip
+ * already sits in the arena above: repeating it inside the resolved round put
+ * the same chip twice on one screen for no new information.
+ */
+function seatDisplayName(
+  seatId: string,
+  roster: MatchSeatRosterEntry[],
+  you: string | undefined,
+): string {
+  const entry = roster.find((seat) => seat.seat_id === seatId)
+  const name = entry ? entry.display_name : 'Jugador'
+  return seatId === you ? `${name} (tú)` : name
+}
+
+/**
+ * The same seat as plain prose, for sentences: ``display_name (label)``.
+ *
+ * It uses only the server fields and the neutral ``Jugador`` fallback, so a
+ * sentence can never read a seat number either.
+ */
+function seatProse(
+  seatId: string,
+  roster: MatchSeatRosterEntry[],
+  you: string | undefined,
+): string {
+  const entry = roster.find((seat) => seat.seat_id === seatId)
+  const name = entry
+    ? `${entry.display_name} (${entry.game_marker_label})`
+    : 'Jugador'
+  return seatId === you ? `${name} (tú)` : name
+}
+
+function outcomeMessage(view: DueloView, roster: MatchSeatRosterEntry[]): string {
   if (!view.winner) return 'La partida ha terminado.'
   if (view.winner === view.you) return 'Has ganado la partida.'
-  return `Ha ganado ${seatLabel(view.winner, view)}.`
+  return `Ha ganado ${seatProse(view.winner, roster, view.you)}.`
 }
 
 /**
@@ -47,37 +172,45 @@ function outcomeMessage(view: MatchView): string {
  * are enabled only while the server says this session occupies a seat, has not
  * picked this round, the match is not finished and a version is known.
  *
+ * The panel is an arena rather than a table: the seats sit above and below the
+ * resolved round, and the scores are the server's numbers in badges. That
+ * arrangement is presentation only -- the seats are ordered by ``view.you``
+ * and every value still comes from ``view``.
+ *
+ * It deliberately carries no title of its own. The match screen already prints
+ * the game's label as the page heading, so repeating it here would put the same
+ * word twice on one screen for no new information.
+ *
  * A finish by abandonment is left to the match screen, which renders the
  * runtime-level result; here the outcome line would only repeat it.
  */
-export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
+export function DueloMatch({ match, busy, onPick }: MatchRendererProps<DueloView>) {
   const { view } = match
   const seated = typeof view.you === 'string' && view.you.length > 0
   const picked = typeof view.your_pick === 'string' && view.your_pick.length > 0
   const canPick = seated && !picked && !view.finished && match.version !== null
 
+  // The own seat answers last, so the arena reads as a duel: the others come
+  // first, the viewer's own card closes the list. A spectator has no seat and
+  // keeps the server's own order.
+  const seatIds = Object.keys(view.scores)
+  const orderedSeats = seated
+    ? [...seatIds.filter((seatId) => seatId !== view.you), ...seatIds.filter((seatId) => seatId === view.you)]
+    : seatIds
+
   return (
-    <section className="duelo-panel" aria-labelledby="duelo-panel-title">
-      <div className="duelo-heading">
-        <div>
-          <p className="eyebrow">Partida en curso</p>
-          <h3 id="duelo-panel-title">Duelo</h3>
-        </div>
-        <span className="duelo-round">Ronda {view.round}</span>
+    <section className="duelo-panel">
+      <div className="duelo-round-row">
+        <span className="duelo-round">{`Ronda ${view.round}`}</span>
       </div>
 
-      <ul className="duelo-scores">
-        {Object.entries(view.scores).map(([seatId, score]) => (
-          <li key={seatId}>
-            <span>{seatLabel(seatId, view)}</span>
-            <strong>{score}</strong>
-          </li>
-        ))}
-      </ul>
+      <div className="duelo-arena">
+        {orderedSeats.map((seatId) => seatCard(seatId, view.scores[seatId], match))}
+      </div>
 
       {view.finished ? (
         view.ended_by_abandon ? null : (
-          <p className="duelo-outcome" role="status">{outcomeMessage(view)}</p>
+          <p className="duelo-outcome" role="status">{outcomeMessage(view, match.roster)}</p>
         )
       ) : seated ? (
         <p className="duelo-progress" role="status">
@@ -99,37 +232,62 @@ export function DueloMatch({ match, busy, onPick }: MatchRendererProps) {
           <p className="duelo-reveal-title">
             Última ronda resuelta: {view.reveal.round}
           </p>
-          <ul>
+          <ul className="duelo-reveal-picks">
             {Object.entries(view.reveal.picks).map(([seatId, pick]) => (
-              <li key={seatId}>
-                <span>{seatLabel(seatId, view)}</span>
-                <strong>{pickLabel(pick)}</strong>
+              <li
+                className={`duelo-reveal-pick duelo-hand-${pick}${
+                  seatId === view.reveal?.winner ? ' duelo-reveal-pick-winner' : ''
+                }`}
+                key={seatId}
+              >
+                <span className="duelo-reveal-art" aria-hidden="true">
+                  <HandArt pick={pick} />
+                </span>
+                <strong className="duelo-pick-label">{pickLabel(pick)}</strong>
+                <span className="duelo-reveal-seat">
+                  {seatDisplayName(seatId, match.roster, view.you)}
+                </span>
               </li>
             ))}
           </ul>
           <p className="duelo-reveal-winner">
             {view.reveal.winner
-              ? `Ganó ${seatLabel(view.reveal.winner, view)}.`
+              ? `Ganó ${seatProse(view.reveal.winner, match.roster, view.you)}.`
               : 'La ronda terminó en empate.'}
           </p>
         </div>
       )}
 
       {seated && !view.finished && (
-        <div className="duelo-picks">
-          {PICK_CHOICES.map((choice) => (
-            <button
-              className="button button-ready duelo-pick"
-              disabled={busy || !canPick}
-              key={choice}
-              onClick={() => onPick(choice)}
-              type="button"
-            >
-              {PICK_LABELS[choice]}
-            </button>
-          ))}
+        <div className="duelo-picks" role="group" aria-label="Elegí tu jugada">
+          {PICK_CHOICES.map((choice) => {
+            const chosen = view.your_pick === choice
+            return (
+              <button
+                className={`duelo-pick duelo-hand-${choice}${
+                  chosen ? ' duelo-pick-chosen' : ''
+                }`}
+                data-pick={choice}
+                aria-pressed={chosen}
+                disabled={busy || !canPick}
+                key={choice}
+                onClick={() => onPick(choice)}
+                type="button"
+              >
+                <span className="duelo-pick-art" aria-hidden="true">
+                  <HandArt pick={choice} />
+                </span>
+                <span className="duelo-pick-label">{PICK_LABELS[choice]}</span>
+              </button>
+            )
+          })}
         </div>
       )}
     </section>
   )
+}
+
+function pickLabel(value: string | null): string {
+  if (!value) return 'Sin elegir'
+  return PICK_LABELS[value] ?? value
 }

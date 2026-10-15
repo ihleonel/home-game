@@ -453,6 +453,42 @@
   vertical-align: middle;
 }
 
+/* The spectator's read-only notice and controls (S8). The actions block reuses
+   the ``.your-room-actions`` layout, so only the spectator-specific pieces are
+   declared here. */
+.spectator-notice {
+  margin: 0.5rem 0 1.25rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--accent-border);
+  border-radius: 0.9rem;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+
+.spectator-actions .spectator-reason,
+.your-identity > p.spectator-reason {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* The roster badge that tells everyone this membership has no seat (S8). It
+   takes the place of the readiness badge, which a spectator has nothing to
+   report: it cannot be marked ready. */
+.spectator-badge {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
 .action-buttons {
   justify-content: flex-end;
 }

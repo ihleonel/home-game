@@ -36,7 +36,7 @@ class GameCatalogApiTests(APITestCase):
         catalog = self.get_catalog()
 
         self.assertEqual(_normalized(catalog), _normalized(GAME_REGISTRY.list_games()))
-        self.assertEqual([game['id'] for game in catalog], ['duelo'])
+        self.assertEqual([game['id'] for game in catalog], ['duelo', 'ta-te-ti'])
         self.assertEqual(
             [
                 (marker['id'], marker['label'])
@@ -46,6 +46,21 @@ class GameCatalogApiTests(APITestCase):
                 ('guante-rojo', 'Guante rojo'),
                 ('guante-azul', 'Guante azul'),
                 ('guante-verde', 'Guante verde'),
+            ],
+        )
+        self.assertEqual(
+            (catalog[1]['label'], catalog[1]['description']),
+            ('Ta-te-ti', 'Formá una línea de tres y ganá la partida.'),
+        )
+        self.assertEqual(
+            [
+                (marker['id'], marker['label'])
+                for marker in catalog[1]['markers']
+            ],
+            [
+                ('sol', 'Sol'),
+                ('luna', 'Luna'),
+                ('estrella', 'Estrella'),
             ],
         )
 

@@ -71,6 +71,15 @@ export function CatalogPage() {
     }
   }
 
+  async function submitSpectatorIdentity(): Promise<void> {
+    if (!intent || !selectedGame) return
+    const outcome = await createOrJoin(intent, selectedGame, identity, { asSpectator: true })
+    if (outcome !== 'rejected') {
+      setIntent(null)
+      setSelectedGameId(null)
+    }
+  }
+
   function cancelIdentity(): void {
     setIntent(null)
     setSelectedGameId(null)
@@ -108,6 +117,7 @@ export function CatalogPage() {
             }}
             onChange={setIdentity}
             onSubmit={submitIdentity}
+            onSubmitAsSpectator={() => void submitSpectatorIdentity()}
           />
         </dialog>
       )}

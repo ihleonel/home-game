@@ -14,9 +14,10 @@ import type {
   VoteResponse,
 } from '../api/types'
 import { MatchPresenceContext, parseSeatPresence } from '../games/matchPresence'
+import { parseMatchRoster } from '../games/matchRoster'
 import { hasMatchRenderer } from '../games/registry'
 import type { MatchState } from '../games/registry'
-import { expulsionVoteMessage } from '../lib/format'
+import { expulsionVoteMessage, splitRoomParticipants } from '../lib/format'
 import { mergeMatch, mergeMatchEvent } from '../lib/match'
 import { readStoredRoomSession, saveGuestSession } from '../lib/session'
 import type { GuestIdentity, RoomSession } from '../lib/session'
@@ -65,8 +66,12 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
   const currentBallot = activeExpulsionVote?.ballots.find(
     (ballot) => ballot.participant_ref === roomSession?.participantRef,
   )
+  // Only players can be ready: a spectator has no seat to confirm (S3), so
+  // counting it here would keep the lobby from ever reporting a fully ready
+  // room, exactly as ``lobby_is_ready`` ignores spectators on the server.
+  const readyPlayers = splitRoomParticipants(room?.participants ?? []).players
   const allReady = Boolean(
-    room?.participants.length && room.participants.every((participant) => participant.is_ready),
+    readyPlayers.length && readyPlayers.every((participant) => participant.is_ready),
   )
   // Readiness is rendered from the room snapshot, not from this session's
   // stored copy: the backend resets every participant when a match finishes,
@@ -100,6 +105,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
     intent: RoomIntent,
     game: Game,
     guestIdentity: GuestIdentity,
+    options?: { asSpectator?: boolean },
   ): Promise<CreateOrJoinOutcome> {
     if (membershipRequestPending.current) return 'rejected'
     if (roomSession) {
@@ -119,6 +125,9 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       display_name: displayName,
       game_marker: guestIdentity.gameMarker,
       ...(savedSession ? { session_id: savedSession.sessionId } : {}),
+      // The spectator flag is additive: a caller that does not ask for it
+      // sends exactly the same body as before.
+      ...(options?.asSpectator ? { as_spectator: true } : {}),
     }
 
     setPendingAction(intent)
@@ -204,6 +213,28 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       )
     } catch {
       // Keep the current session; the action error already explains the rejection.
+    }
+  }
+
+  async function requestPlayerSeat(): Promise<void> {
+    if (!roomSession) return
+    setPendingAction('play')
+    setActionError(null)
+    try {
+      const response = await requestJson<RoomEnvelope>('/api/rooms/play/', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: roomSession.sessionId }),
+      })
+      // The promotion is authoritative: the server snapshot carries the new
+      // role and readiness, so the local session copy is left to the room
+      // frames that follow.
+      setRoom(response.room)
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : 'No se ha podido pedir el asiento.',
+      )
+    } finally {
+      setPendingAction(null)
     }
   }
 
@@ -509,6 +540,10 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
               matchRef,
               seatIndex,
               version: current && current.matchRef === matchRef ? current.version : null,
+              // A frame that carries no usable roster projects an explicitly
+              // empty one: the screen then falls back to the neutral label
+              // rather than naming a seat from a stale list (S3/S5).
+              roster: parseMatchRoster(message.roster) ?? [],
               view,
             }))
             const snapshotPresence = parseSeatPresence(message.seats)
@@ -534,7 +569,9 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
             const version =
               typeof message.version === 'number' ? message.version : null
             setCountdown(null)
-            setMatch((current) => mergeMatchEvent(current, matchRef, version, view))
+            setMatch((current) =>
+              mergeMatchEvent(current, matchRef, version, view, message.roster),
+            )
           } else if (
             message.type === 'match.presence' &&
             typeof message.match_ref === 'string'
@@ -628,6 +665,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
         matchRendererAvailable,
         createOrJoin,
         toggleReady,
+        requestPlayerSeat,
         leaveRoom,
         startExpulsionVote,
         castExpulsionBallot,

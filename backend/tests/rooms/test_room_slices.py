@@ -7,8 +7,11 @@ from django.utils import timezone, translation
 from modules.rooms.constants import RECONNECT_GRACE_SECONDS
 from modules.rooms.events import room_snapshot
 from modules.rooms.features.membership.domain.rules import (
+    can_take_player_seat,
     is_disconnected_presence,
     membership_change,
+    resolve_entry_role,
+    resolve_returning_role,
 )
 from modules.rooms.features.presence.domain.rules import (
     grace_expired,
@@ -69,6 +72,188 @@ class MembershipDomainTests(SimpleTestCase):
         self.assertTrue(is_disconnected_presence('reconnecting'))
         self.assertTrue(is_disconnected_presence('inactive'))
         self.assertFalse(is_disconnected_presence('offline'))
+
+
+class EntryRoleDomainTests(SimpleTestCase):
+    def test_explicit_spectator_wins_over_a_free_seat(self):
+        self.assertEqual(
+            resolve_entry_role(
+                as_spectator=True,
+                match_in_progress=False,
+                active_players=0,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_match_in_progress_wins_over_a_free_seat(self):
+        self.assertEqual(
+            resolve_entry_role(
+                as_spectator=False,
+                match_in_progress=True,
+                active_players=0,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_full_room_without_a_match_is_a_spectator(self):
+        self.assertEqual(
+            resolve_entry_role(
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=2,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_free_seat_without_a_match_is_a_player(self):
+        self.assertEqual(
+            resolve_entry_role(
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=1,
+                max_seats=2,
+            ),
+            'player',
+        )
+
+
+class ReturningRoleDomainTests(SimpleTestCase):
+    """A membership that comes back after leaving never breaks the aforo."""
+
+    def test_a_returning_player_keeps_its_seat_while_one_is_free(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=1,
+                max_seats=2,
+            ),
+            'player',
+        )
+
+    def test_a_returning_player_over_capacity_becomes_a_spectator(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=2,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_a_returning_player_during_a_match_becomes_a_spectator(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=False,
+                match_in_progress=True,
+                active_players=1,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_a_returning_player_that_asks_to_watch_becomes_a_spectator(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='player',
+                as_spectator=True,
+                match_in_progress=False,
+                active_players=0,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+    def test_a_returning_spectator_is_never_promoted_without_asking(self):
+        self.assertEqual(
+            resolve_returning_role(
+                current_role='spectator',
+                as_spectator=False,
+                match_in_progress=False,
+                active_players=0,
+                max_seats=2,
+            ),
+            'spectator',
+        )
+
+
+class PromotionDomainTests(SimpleTestCase):
+    def test_a_spectator_takes_a_free_seat_in_a_lobby(self):
+        self.assertTrue(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=False,
+                active_players=1,
+                max_seats=2,
+            )
+        )
+
+    def test_a_player_never_needs_a_promotion(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='player',
+                match_in_progress=False,
+                active_players=0,
+                max_seats=2,
+            )
+        )
+
+    def test_an_in_progress_match_blocks_the_seat(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=True,
+                active_players=0,
+                max_seats=2,
+            )
+        )
+
+    def test_a_full_lobby_blocks_the_seat(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=False,
+                active_players=2,
+                max_seats=2,
+            )
+        )
+
+    def test_an_unknown_game_limit_blocks_the_seat(self):
+        self.assertFalse(
+            can_take_player_seat(
+                role='spectator',
+                match_in_progress=False,
+                active_players=0,
+                max_seats=None,
+            )
+        )
+
+
+class SeatLimitsSnapshotTests(TestCase):
+    def test_seat_limits_come_from_the_game_registry_in_both_forms(self):
+        room = Room.objects.create(game_id='duelo')
+
+        self.assertEqual(
+            dict(RoomSerializer(room).data)['seat_limits'],
+            {'min_seats': 2, 'max_seats': 2},
+        )
+        self.assertEqual(
+            room_snapshot(room)['seat_limits'],
+            {'min_seats': 2, 'max_seats': 2},
+        )
+
+    def test_an_unknown_game_has_no_seat_limits(self):
+        room = Room.objects.create(game_id='unknown-game')
+
+        self.assertIsNone(dict(RoomSerializer(room).data)['seat_limits'])
+        self.assertIsNone(room_snapshot(room)['seat_limits'])
 
 
 class ReadinessDomainTests(SimpleTestCase):
@@ -140,6 +325,12 @@ class EventSnapshotContractTests(TestCase):
             presence=Participant.Presence.RECONNECTING,
             disconnected_at=read_at - timedelta(seconds=20),
         )
+        Participant.objects.create(
+            room=room,
+            display_name='Guest Four',
+            game_marker='guante-verde',
+            role=Participant.Role.SPECTATOR,
+        )
         vote = ExpulsionVote.objects.create(
             room=room,
             target=target,
@@ -155,6 +346,10 @@ class EventSnapshotContractTests(TestCase):
             serialized = dict(RoomSerializer(room).data)
 
         self.assertEqual(snapshot, serialized)
+        self.assertEqual(
+            {entry['role'] for entry in snapshot['participants']},
+            {'player', 'spectator'},
+        )
         counting_entry = next(
             entry
             for entry in snapshot['participants']

@@ -9,6 +9,7 @@ from .interfaces.rest import (
     create_room,
     join_room,
     leave_room,
+    play_room,
     start_expulsion_vote,
     update_ready_state,
 )
@@ -21,6 +22,7 @@ __all__ = (
     'create_room',
     'join_room',
     'leave_room',
+    'play_room',
     'start_expulsion_vote',
     'update_ready_state',
 )

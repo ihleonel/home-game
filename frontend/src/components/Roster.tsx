@@ -45,9 +45,13 @@ function RosterPlayer({
     <li className="roster-item">
       <span className="marker-chip">{markerLabel(game, participant.game_marker)}</span>
       <span className="player-name">{participant.display_name}</span>
-      <span className={participant.is_ready ? 'ready-badge is-ready' : 'ready-badge'}>
-        {participant.is_ready ? 'Listo' : 'No está listo'}
-      </span>
+      {participant.role === 'spectator' ? (
+        <span className="spectator-badge">Espectador</span>
+      ) : (
+        <span className={participant.is_ready ? 'ready-badge is-ready' : 'ready-badge'}>
+          {participant.is_ready ? 'Listo' : 'No está listo'}
+        </span>
+      )}
       <span className={`presence-badge presence-${participant.presence}`}>
         {presenceLabel(participant.presence)}
         {reconnectSeconds !== null && reconnectSeconds > 0 && (
@@ -56,7 +60,7 @@ function RosterPlayer({
           </span>
         )}
       </span>
-      {canStartExpulsionVote(participant) && (
+      {participant.role === 'player' && canStartExpulsionVote(participant) && (
         <button
           className="button button-quiet vote-start-button"
           disabled={busy}
@@ -80,7 +84,7 @@ export function Roster({
   return (
     <section className="roster-section" aria-labelledby="roster-title">
       <div className="section-heading">
-        <h3 id="roster-title">Jugadores</h3>
+        <h3 id="roster-title">En la sala</h3>
         <span>{participants.length}</span>
       </div>
       {participants.length > 0 ? (

@@ -1,43 +1,24 @@
-import { createElement } from 'react'
-import type { ComponentType, ReactElement } from 'react'
-import { DueloMatch } from './duelo/DueloMatch'
+import type { ReactElement } from 'react'
+import { renderDueloMatch } from './duelo/screen'
+import type { MatchSeatRosterEntry } from './matchRoster'
+import { renderTaTeTiMatch } from './ta-te-ti/screen'
 
 /**
- * One resolved round exactly as the server reports it.
+ * The fields every game's match view carries.
  *
- * ``picks`` is keyed by seat id and ``winner`` is a seat id or ``null`` for a
- * draw. The client never derives either value; it only renders them.
- */
-export type MatchReveal = {
-  round: number
-  picks: Record<string, string>
-  winner: string | null
-}
-
-/**
- * The seat-scoped or spectator ``view`` the match runtime returns.
+ * They belong to the runtime, not to a game: the match screen reads them to
+ * decide whether the match is over, to word the abandonment result and to mark
+ * the viewer's own seat. A game only adds its own play payload on top of them
+ * (see ``duelo``'s ``DueloView``), so adding a game never widens this shape.
  *
- * A seat receives ``you``, ``your_pick`` and ``opponent_has_picked``; a
- * spectator receives ``both_picked`` instead. Every optional field is
- * optional because the runtime already decides which projection a caller gets
- * and the client must not fill a missing one in by guessing.
+ * ``you`` is a seat id. It stays here because the runtime already knows the
+ * seat it projected the view for, so a game never has to repeat it.
  */
-export type MatchView = {
-  round: number
-  scores: Record<string, number>
-  you?: string
-  your_pick?: string | null
-  opponent_has_picked?: boolean
-  both_picked?: boolean
-  reveal: MatchReveal | null
-  winner: string | null
+export type MatchRuntimeView = {
   finished: boolean
-  /**
-   * Set by the game when the finish came from a seat that did not return
-   * inside the reconnect grace (S3/S6). The client only renders it; it never
-   * derives the reason.
-   */
+  winner: string | null
   ended_by_abandon?: boolean
+  you?: string
 }
 
 /**
@@ -47,49 +28,70 @@ export type MatchView = {
  * It is ``null`` until the server has told this client a value: the WebSocket
  * ``match.snapshot`` only carries the reference and the view, so the version
  * arrives through the resync read.
+ *
+ * ``TView`` is the payload of the game this match belongs to. The plumbing
+ * between the socket and the screen only ever needs the runtime fields, so it
+ * holds the default; the game's own screen narrows it after parsing.
  */
-export type MatchState = {
+export type MatchState<TView extends MatchRuntimeView = MatchRuntimeView> = {
   matchRef: string
   seatIndex: number | null
   version: number | null
-  view: MatchView
+  /**
+   * The public identity of every seat as the server projected it (S1/S3).
+   * The client renders it and never derives it: an empty array is a valid
+   * match whose screen falls back to the neutral seat label.
+   */
+  roster: MatchSeatRosterEntry[]
+  view: TView
 }
 
-export type MatchRendererProps = {
-  match: MatchState
+export type MatchRendererProps<TView extends MatchRuntimeView = MatchRuntimeView> = {
+  match: MatchState<TView>
   busy: boolean
   onPick: (value: string) => void
 }
 
 /**
- * The renderer registry.
+ * One game's screen, already past its own parser.
  *
- * Adding a game means adding its file and one entry here. The app asks for a
- * renderer by ``game_id`` and falls back to a plain message when none exists,
- * so an unknown game can never crash the room panel.
+ * It receives the runtime's raw view and either returns the game's element or
+ * ``null`` when it does not recognize the payload.
  */
-const GAME_RENDERERS: Record<string, ComponentType<MatchRendererProps>> = {
-  duelo: DueloMatch,
+export type GameScreen = (props: MatchRendererProps) => ReactElement | null
+
+/**
+ * The screen registry.
+ *
+ * Adding a game means adding its folder -- the component, its own view type and
+ * parser, its stylesheet and a factory like ``renderDueloMatch`` -- and one
+ * entry here. The factory is what keeps the payload honest: the app asks for a
+ * screen by ``game_id`` and falls back to a plain message when there is none or
+ * when the payload is not that game's view, so an unknown game or a malformed
+ * frame can never crash the room panel.
+ */
+const GAME_SCREENS: Record<string, GameScreen> = {
+  duelo: renderDueloMatch,
+  'ta-te-ti': renderTaTeTiMatch,
 }
 
 export function hasMatchRenderer(gameId: string | undefined): boolean {
   if (!gameId) return false
-  return GAME_RENDERERS[gameId] !== undefined
+  return GAME_SCREENS[gameId] !== undefined
 }
 
 /**
- * Render the match view registered for ``gameId``, or ``null`` when the game
- * has no renderer.
+ * Render the match screen registered for ``gameId``, or ``null`` when the game
+ * has no screen or its parser did not recognize the payload.
  *
- * This is a factory rather than a component so the caller never holds a
- * component reference it created during render, which would remount the
- * renderer on every pass.
+ * The caller owns what ``null`` looks like; every caller renders its own
+ * "vista de partida no disponible" notice.
  */
 export function renderMatchScreen(
   gameId: string | undefined,
   props: MatchRendererProps,
 ): ReactElement | null {
-  const renderer = gameId ? GAME_RENDERERS[gameId] : undefined
-  if (!renderer) return null
-  return createElement(renderer, props)
+  const screen = gameId ? GAME_SCREENS[gameId] : undefined
+  if (!screen) return null
+  return screen(props)
 }

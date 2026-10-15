@@ -1,0 +1,129 @@
+.ta-te-ti-panel {
+  margin: 0.5rem 0 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.9rem;
+  background: var(--surface-raised);
+}
+
+.ta-te-ti-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ta-te-ti-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.ta-te-ti-turn {
+  color: var(--accent-dark);
+  font-size: 0.85rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ta-te-ti-players {
+  margin: 0.85rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ta-te-ti-players li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.ta-te-ti-players strong {
+  min-width: 2rem;
+  color: var(--ink);
+  font-size: 1.05rem;
+  text-align: right;
+}
+
+/* A seat named from the server roster (S1/S3): the player's name followed by
+   the marker chip the room already uses for the ficha. The chip is identity
+   only; the cell symbols stay X/O by seat (S2). */
+.ta-te-ti-seat {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.ta-te-ti-seat-name {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.ta-te-ti-seat .ta-te-ti-seat-marker {
+  border-color: var(--accent-border);
+  color: var(--accent-dark);
+  background: var(--surface);
+}
+
+.ta-te-ti-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin: 0.9rem 0;
+  aspect-ratio: 1 / 1;
+  max-width: 20rem;
+}
+
+.ta-te-ti-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 1.8rem;
+  font-weight: 800;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ta-te-ti-cell:not(:disabled):hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ta-te-ti-cell:disabled {
+  cursor: default;
+}
+
+.ta-te-ti-cell-symbol {
+  line-height: 1;
+}
+
+/* The winning line the server resolved (S6), never computed here. */
+.ta-te-ti-cell-winning {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+
+.ta-te-ti-progress {
+  margin: 0.5rem 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.ta-te-ti-outcome {
+  margin: 0.5rem 0;
+  color: var(--success-ink);
+  font-weight: 750;
+}

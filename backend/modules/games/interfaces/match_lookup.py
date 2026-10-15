@@ -29,6 +29,7 @@ from ..runtime.infrastructure.channel_projector import (
     match_public_group_name,
     match_seat_group_name,
 )
+from .match_roster import resolve_match_roster
 
 
 @dataclass(frozen=True)
@@ -37,13 +38,16 @@ class SeatSubscription:
 
     ``seat_index`` is the seat the socket occupies, or ``None`` for a
     spectator. ``group`` is exactly one group -- the seat's own group when
-    seated, the public group when a spectator -- never both.
+    seated, the public group when a spectator -- never both. ``roster`` is the
+    public per-seat identity list, which is the same for a seat and a
+    spectator because it carries no hidden value.
     """
 
     match_ref: str
     seat_index: int | None
     group: str
     view: Mapping
+    roster: tuple[dict, ...]
 
 
 def resolve_seat_subscription(room_id, session_id, match_ref=None):
@@ -73,12 +77,14 @@ def resolve_seat_subscription(room_id, session_id, match_ref=None):
         return None
 
     match_ref_value = str(match.public_id)
+    roster = resolve_match_roster(match)
     if seat is None:
         return SeatSubscription(
             match_ref=match_ref_value,
             seat_index=None,
             group=match_public_group_name(match_ref_value),
             view=definition.view(match.state, None),
+            roster=roster,
         )
 
     return SeatSubscription(
@@ -86,6 +92,7 @@ def resolve_seat_subscription(room_id, session_id, match_ref=None):
         seat_index=seat.index,
         group=match_seat_group_name(match_ref_value, seat.index),
         view=definition.view(match.state, seat.seat_id),
+        roster=roster,
     )
 
 

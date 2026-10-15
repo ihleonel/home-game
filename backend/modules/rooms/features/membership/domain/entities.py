@@ -18,3 +18,4 @@ class ParticipantMembership:
     presence: str
     was_left: bool
     is_ready: bool
+    role: str

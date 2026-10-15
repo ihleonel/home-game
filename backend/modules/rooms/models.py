@@ -40,6 +40,10 @@ class Participant(models.Model):
         RECONNECTING = 'reconnecting', 'Reconnecting'
         INACTIVE = 'inactive', 'Inactive'
 
+    class Role(models.TextChoices):
+        PLAYER = 'player', 'Player'
+        SPECTATOR = 'spectator', 'Spectator'
+
     room = models.ForeignKey(
         Room,
         on_delete=models.CASCADE,
@@ -50,6 +54,11 @@ class Participant(models.Model):
     display_name = models.CharField(max_length=80)
     game_marker = models.CharField(max_length=64)
     is_ready = models.BooleanField(default=False)
+    role = models.CharField(
+        max_length=16,
+        choices=Role.choices,
+        default=Role.PLAYER,
+    )
     presence = models.CharField(
         max_length=16,
         choices=Presence.choices,

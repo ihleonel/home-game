@@ -49,6 +49,16 @@ def _snapshot(*readiness, game_id='duelo'):
     }
 
 
+def _role_snapshot(*entries, game_id='duelo'):
+    """Snapshot with explicit ``(is_ready, role)`` participants (S3)."""
+    return {
+        'game_id': game_id,
+        'participants': [
+            {'is_ready': ready, 'role': role} for ready, role in entries
+        ],
+    }
+
+
 def _ports(
     *,
     limits=None,
@@ -139,6 +149,20 @@ class LobbyReadyRuleTests(SimpleTestCase):
     def test_empty_roster_is_not_ready(self):
         self.assertFalse(lobby_is_ready(_snapshot(), 2, 2))
 
+    def test_two_ready_players_plus_a_spectator_are_ready(self):
+        snapshot = _role_snapshot(
+            (True, 'player'), (True, 'player'), (False, 'spectator')
+        )
+
+        self.assertTrue(lobby_is_ready(snapshot, 2, 2))
+
+    def test_all_spectators_are_never_ready_even_if_marked_ready(self):
+        snapshot = _role_snapshot(
+            (True, 'spectator'), (True, 'spectator'), (True, 'spectator')
+        )
+
+        self.assertFalse(lobby_is_ready(snapshot, 0, 3))
+
     def test_payload_helpers_use_the_agreed_shapes(self):
         self.assertEqual(
             countdown_payload(10, 4),
@@ -158,6 +182,33 @@ class LobbyReadyRuleTests(SimpleTestCase):
 class SyncLobbyCountdownTests(SimpleTestCase):
     def test_ready_lobby_arms_once_and_broadcasts_the_countdown(self):
         snapshot = _snapshot(True, True)
+        state = LobbyState(snapshot=snapshot, seatable=True)
+        ports = _ports(limits=LobbyLimits(2, 2), prepare=state)
+        on_expire = Mock()
+
+        asyncio.run(
+            sync_lobby_countdown(
+                ports, 5, snapshot, seconds=LOBBY_COUNTDOWN_SECONDS, on_expire=on_expire
+            )
+        )
+
+        ports.arm_countdown.assert_called_once_with(5, 10, on_expire)
+        self.assertEqual(
+            ports.broadcasts,
+            [
+                (
+                    5,
+                    COUNTDOWN_EVENT,
+                    snapshot,
+                    {'seconds': 10, 'remaining_seconds': 10},
+                )
+            ],
+        )
+
+    def test_ready_players_plus_a_spectator_arm_the_countdown(self):
+        snapshot = _role_snapshot(
+            (True, 'player'), (True, 'player'), (False, 'spectator')
+        )
         state = LobbyState(snapshot=snapshot, seatable=True)
         ports = _ports(limits=LobbyLimits(2, 2), prepare=state)
         on_expire = Mock()

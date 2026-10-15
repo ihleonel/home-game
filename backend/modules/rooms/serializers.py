@@ -6,7 +6,7 @@ from modules.games.composition import GAME_REGISTRY
 from .constants import RECONNECT_GRACE_SECONDS
 from .features.presence.domain.rules import grace_expired, remaining_seconds
 from .models import ExpulsionBallot, ExpulsionVote, Participant, Room
-from .infrastructure.snapshots import expulsion_vote_snapshot
+from .infrastructure.snapshots import expulsion_vote_snapshot, seat_limits
 
 
 class SessionIDField(serializers.UUIDField):
@@ -21,6 +21,7 @@ class RoomRequestSerializer(serializers.Serializer):
     session_id = SessionIDField(required=False)
     display_name = serializers.CharField(max_length=80, required=False)
     game_marker = serializers.SlugField(max_length=64, required=False)
+    as_spectator = serializers.BooleanField(required=False, default=False)
 
     def validate_game_id(self, value):
         if not GAME_REGISTRY.is_known_game(value):
@@ -52,6 +53,10 @@ class LeaveRoomSerializer(serializers.Serializer):
     session_id = SessionIDField()
 
 
+class PlayRoomSerializer(serializers.Serializer):
+    session_id = SessionIDField()
+
+
 class ReadyStateSerializer(serializers.Serializer):
     session_id = SessionIDField()
     is_ready = serializers.BooleanField()
@@ -79,6 +84,7 @@ class ParticipantRosterSerializer(serializers.ModelSerializer):
             'participant_ref',
             'game_marker',
             'is_ready',
+            'role',
             'presence',
             'remaining_seconds',
             'disconnected_at',
@@ -125,6 +131,7 @@ class ParticipantRosterSerializer(serializers.ModelSerializer):
 class RoomSerializer(serializers.ModelSerializer):
     participants = serializers.SerializerMethodField()
     expulsion_vote = serializers.SerializerMethodField()
+    seat_limits = serializers.SerializerMethodField()
 
     class Meta:
         model = Room
@@ -135,6 +142,7 @@ class RoomSerializer(serializers.ModelSerializer):
             'updated_at',
             'participants',
             'expulsion_vote',
+            'seat_limits',
         )
 
     def get_participants(self, room):
@@ -153,3 +161,6 @@ class RoomSerializer(serializers.ModelSerializer):
             .first()
         )
         return expulsion_vote_snapshot(vote) if vote is not None else None
+
+    def get_seat_limits(self, room):
+        return seat_limits(room.game_id)

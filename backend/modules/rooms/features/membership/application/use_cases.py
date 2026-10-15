@@ -3,17 +3,24 @@ from ..domain.errors import (
     ActiveRoomGameConflict,
     ActiveRoomNotFound,
     ActiveRoomSelectionRequired,
+    MatchAlreadyStarted,
     MissingParticipantIdentity,
+    NoFreeSeat,
     ReadyParticipantCannotLeave,
     RemovedSession,
 )
 from ..domain.rules import (
+    PLAYER_ROLE,
+    SPECTATOR_ROLE,
     can_leave,
+    can_take_player_seat,
     game_matches,
     is_disconnected_presence,
     leave_changes,
     membership_change,
     missing_identity_fields,
+    resolve_entry_role,
+    resolve_returning_role,
 )
 from ....application.ports import GhostReaping, VoteCancellation
 from .ports import RoomMembershipPorts
@@ -36,19 +43,42 @@ def _membership_for(ports: RoomMembershipPorts, room, data, vote_cancellation):
             current_game_marker=participant.game_marker,
             data=data,
         )
-        if change.updates:
-            participant = ports.save_membership_changes(
-                participant.id, dict(change.updates)
+        updates = dict(change.updates)
+        if participant.was_left:
+            # A row that comes back is not a fresh arrival: its seat was
+            # released when it left, so it is re-admitted by the same policy
+            # that admits a new session. Otherwise a player returning after
+            # its seat was given to a promoted spectator would leave the room
+            # holding more players than the game accepts.
+            role = resolve_returning_role(
+                current_role=participant.role,
+                as_spectator=bool(data.get('as_spectator', False)),
+                match_in_progress=ports.has_in_progress_match(room.id),
+                active_players=ports.count_active_players(room.id),
+                max_seats=ports.game_max_seats(room.game_id),
             )
+            if role != participant.role:
+                updates['role'] = role
+        if updates:
+            participant = ports.save_membership_changes(participant.id, updates)
         return participant, change.event_name
 
     missing = missing_identity_fields(data)
     if missing:
         raise MissingParticipantIdentity(missing)
-    participant = ports.create_participant(
-        room.id, data['display_name'], data['game_marker']
+    role = resolve_entry_role(
+        as_spectator=bool(data.get('as_spectator', False)),
+        match_in_progress=ports.has_in_progress_match(room.id),
+        active_players=ports.count_active_players(room.id),
+        max_seats=ports.game_max_seats(room.game_id),
     )
-    return participant, 'player_joined'
+    participant = ports.create_participant(
+        room.id, data['display_name'], data['game_marker'], role
+    )
+    event_name = (
+        'spectator_joined' if role == SPECTATOR_ROLE else 'player_joined'
+    )
+    return participant, event_name
 
 
 def _membership_response(ports: RoomMembershipPorts, room, participant):
@@ -161,6 +191,46 @@ def leave_room(
                 snapshot,
                 vote=cancelled_vote,
             )
+
+
+def play_room(ports: RoomMembershipPorts, data):
+    """S5: promote a requesting spectator to player when the lobby allows it.
+
+    The room and the participant are locked in one unit of work so the seat
+    count cannot change between the decision and the role write. A player who
+    calls the endpoint is idempotent: the snapshot is returned unchanged and no
+    event is published.
+    """
+    session_id = data['session_id']
+    with ports.atomic():
+        room = ports.active_room_for_update(session_id=session_id)
+        if room is None:
+            raise ActiveRoomNotFound()
+        participant = ports.active_participant_for_session_for_update(
+            room.id, session_id
+        )
+        if participant is None:
+            raise ActiveParticipantNotFound()
+        if participant.role == PLAYER_ROLE:
+            return {'room': ports.room_snapshot(room.id)}
+
+        match_in_progress = ports.has_in_progress_match(room.id)
+        active_players = ports.count_active_players(room.id)
+        max_seats = ports.game_max_seats(room.game_id)
+        if not can_take_player_seat(
+            role=participant.role,
+            match_in_progress=match_in_progress,
+            active_players=active_players,
+            max_seats=max_seats,
+        ):
+            if match_in_progress:
+                raise MatchAlreadyStarted()
+            raise NoFreeSeat()
+
+        ports.set_participant_role(participant.id, PLAYER_ROLE)
+        snapshot = ports.room_snapshot(room.id)
+        ports.schedule_room_event(room.id, 'player_promoted', snapshot)
+    return {'room': snapshot}
 
 
 def get_active_room(ports: RoomMembershipPorts, game_id=None, session_id=None):

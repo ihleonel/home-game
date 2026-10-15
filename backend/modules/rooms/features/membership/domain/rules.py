@@ -1,10 +1,75 @@
 from dataclasses import dataclass
 
 
+PLAYER_ROLE = 'player'
+SPECTATOR_ROLE = 'spectator'
+
+
 @dataclass(frozen=True)
 class MembershipChange:
     updates: tuple[tuple[str, object], ...]
     event_name: str | None
+
+
+def resolve_entry_role(
+    *, as_spectator, match_in_progress, active_players, max_seats
+):
+    """Resolve a new participant's role in the exact S2 order.
+
+    The policy is derived from the game contract: the caller passes the room's
+    game ``max_seats``, never a per-game list. A room already at capacity or
+    with a match in progress admits only spectators; an explicit request wins
+    over any free seat.
+    """
+    if as_spectator:
+        return SPECTATOR_ROLE
+    if match_in_progress:
+        return SPECTATOR_ROLE
+    if max_seats is not None and active_players >= max_seats:
+        return SPECTATOR_ROLE
+    return PLAYER_ROLE
+
+
+def resolve_returning_role(
+    *, current_role, as_spectator, match_in_progress, active_players, max_seats
+):
+    """Resolve the role of a membership that comes back after leaving.
+
+    A returning session is admitted by the same policy that admits a new
+    arrival, but the outcome can only keep or reduce its role: a stored
+    spectator is never promoted without asking (S5), and a stored player is
+    demoted to spectator exactly when the room has no seat left for it. The
+    row already exists, so this is the only place that can keep the room's
+    player count at or below ``max_seats`` after a seat was given away while
+    its former holder was out (a leave or a reap).
+    """
+    if current_role != PLAYER_ROLE:
+        return SPECTATOR_ROLE
+    return resolve_entry_role(
+        as_spectator=as_spectator,
+        match_in_progress=match_in_progress,
+        active_players=active_players,
+        max_seats=max_seats,
+    )
+
+
+def can_take_player_seat(
+    *, role, match_in_progress, active_players, max_seats
+):
+    """The S5 promotion gate, derived from the game contract.
+
+    A spectator only takes a seat in a lobby: never during an ``in_progress``
+    match, and only while the count of active players is below the room's
+    game ``max_seats``. An unknown game has no limit to compare against, so it
+    can never grant a seat.
+    """
+    if role != SPECTATOR_ROLE:
+        return False
+    if match_in_progress:
+        return False
+    if max_seats is None:
+        return False
+    return active_players < max_seats
 
 
 def membership_change(

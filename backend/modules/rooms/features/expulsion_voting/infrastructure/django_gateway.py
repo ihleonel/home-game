@@ -6,6 +6,7 @@ from django.utils import timezone
 from ....infrastructure.connections import has_room_connection
 from ....infrastructure.events import room_snapshot, schedule_room_event
 from ....models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from ...membership.domain.rules import PLAYER_ROLE
 from .snapshot import expulsion_vote_snapshot
 from ..domain.entities import BallotRecord, VoteParticipant, VoteRecord
 
@@ -50,6 +51,7 @@ class DjangoExpulsionVotingGateway:
             room_id=room_id,
             public_id=participant_ref,
             left_at__isnull=True,
+            role=PLAYER_ROLE,
         ).first()
         return self._participant_state(participant) if participant else None
 
@@ -65,6 +67,7 @@ class DjangoExpulsionVotingGateway:
             room_id=room_id,
             left_at__isnull=True,
             presence=Participant.Presence.ONLINE,
+            role=PLAYER_ROLE,
         ).order_by('pk')
         return [self._participant_state(participant) for participant in participants]
 

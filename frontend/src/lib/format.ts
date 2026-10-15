@@ -18,6 +18,39 @@ export function voteChoiceLabel(choice: NonNullable<ExpulsionBallot['choice']>):
   return choice === 'yes' ? 'Sí' : 'No'
 }
 
+/**
+ * Split a room's participants into the seats and the visitors.
+ *
+ * A missing ``role`` counts as a player, matching the server's own rule, so an
+ * older payload never turns a seat into a visit.
+ */
+export function splitRoomParticipants(participants: Participant[]): {
+  players: Participant[]
+  spectators: Participant[]
+} {
+  return {
+    players: participants.filter((participant) => participant.role !== 'spectator'),
+    spectators: participants.filter((participant) => participant.role === 'spectator'),
+  }
+}
+
+/**
+ * The lobby's summary line, counting seats and visitors separately.
+ *
+ * A spectator holds no seat, so calling it a player would contradict both the
+ * roster badge and the server's own lobby rule (S3/S8).
+ */
+export function roomSummary(players: number, spectators: number): string {
+  const playersText = `${players} ${players === 1 ? 'jugador' : 'jugadores'}`
+  const spectatorsText = `${spectators} ${spectators === 1 ? 'espectador' : 'espectadores'}`
+  if (spectators === 0) return `${playersText} en la sala`
+  // A room can hold only visitors, for example after every player left while
+  // one spectator stayed, so the empty seat count is dropped instead of
+  // reading "0 jugadores y 1 espectador".
+  if (players === 0) return `${spectatorsText} en la sala`
+  return `${playersText} y ${spectatorsText} en la sala`
+}
+
 export function expulsionVoteMessage(vote: ExpulsionVote): string {
   if (vote.status === 'pending') {
     return `Votación de expulsión: ${vote.yes_count} de ${vote.eligible_count} votos emitidos son favorables.`

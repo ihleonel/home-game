@@ -276,3 +276,59 @@ class LobbyCountdownWebSocketTests(TransactionTestCase):
         self.assertEqual(countdown['countdown']['seconds'], 30)
         self.assertGreaterEqual(countdown['countdown']['remaining_seconds'], 0)
         self.assertLessEqual(countdown['countdown']['remaining_seconds'], 30)
+
+    def test_a_spectator_arriving_while_armed_does_not_cancel_the_countdown(self):
+        room, players = self.create_room_with_guests('Guest One', 'Guest Two')
+        for player in players:
+            player.is_ready = True
+            player.save(update_fields=('is_ready',))
+        client = APIClient()
+
+        async def drain(socket):
+            """Collect messages until the socket goes quiet without timing
+            out an in-flight receive, so the socket stays disconnectable."""
+            messages = [await socket.receive_json_from()]
+            while not await socket.receive_nothing(timeout=0.05):
+                messages.append(await socket.receive_json_from())
+            return messages
+
+        async def scenario():
+            first = await self.connect(players[0].session_id)
+            second = await self.connect(players[1].session_id)
+            await self.receive_until(first, 'match_countdown')
+            await self.receive_until(second, 'match_countdown')
+
+            # The spectator arrives once the countdown is armed, through the
+            # real join path: the broadcast room event makes every staying
+            # socket reconcile the lobby from the now-larger snapshot.
+            joined = await database_sync_to_async(client.post)(
+                '/api/rooms/join/',
+                {
+                    'game_id': 'duelo',
+                    'display_name': 'Guest Three',
+                    'game_marker': 'guante-verde',
+                },
+                format='json',
+            )
+            self.assertEqual(joined.status_code, 200)
+            self.assertEqual(
+                joined.data['room']['participants'][-1]['role'], 'spectator'
+            )
+
+            first_messages = await drain(first)
+            second_messages = await drain(second)
+
+            await first.disconnect()
+            await second.disconnect()
+            return first_messages, second_messages
+
+        with patch(COUNTDOWN_PATCH, 30):
+            first_messages, second_messages = async_to_sync(scenario)()
+
+        for messages in (first_messages, second_messages):
+            self.assertFalse(
+                any(
+                    message.get('type') == 'match_countdown_cancelled'
+                    for message in messages
+                )
+            )

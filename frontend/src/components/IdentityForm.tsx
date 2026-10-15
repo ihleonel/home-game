@@ -9,6 +9,12 @@ type IdentityFormProps = {
   busy: boolean
   onChange: (identity: GuestIdentity) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  /**
+   * Optional explicit spectator entry (S4/S8). The dedicated handler is what
+   * makes the second submit action appear: a caller that does not pass it
+   * renders exactly the one-action form as before.
+   */
+  onSubmitAsSpectator?: () => void
   onCancel: () => void
 }
 
@@ -19,12 +25,30 @@ export function IdentityForm({
   busy,
   onChange,
   onSubmit,
+  onSubmitAsSpectator,
   onCancel,
 }: IdentityFormProps) {
   const prefix = intent === 'create' ? 'create' : 'join'
 
+  // Both buttons are real submit buttons, so the browser still validates the
+  // required fields. The ``value`` tells the two actions apart, letting the
+  // spectator path reach its dedicated handler without losing validation.
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    const submitter = (event.nativeEvent as SubmitEvent).submitter
+    if (
+      onSubmitAsSpectator &&
+      submitter instanceof HTMLButtonElement &&
+      submitter.value === 'spectator'
+    ) {
+      event.preventDefault()
+      onSubmitAsSpectator()
+      return
+    }
+    onSubmit(event)
+  }
+
   return (
-    <form className="identity-form" onSubmit={onSubmit}>
+    <form className="identity-form" onSubmit={handleSubmit}>
       <div className="form-heading">
         <div>
           <p className="eyebrow">Tu ficha</p>
@@ -71,6 +95,16 @@ export function IdentityForm({
         <button className="button button-primary" disabled={busy} type="submit">
           {busy ? 'Conectando…' : 'Entrar en la sala'}
         </button>
+        {onSubmitAsSpectator && (
+          <button
+            className="button button-quiet"
+            disabled={busy}
+            type="submit"
+            value="spectator"
+          >
+            Entrar como espectador
+          </button>
+        )}
         <button className="button button-quiet" disabled={busy} onClick={onCancel} type="button">
           Cancelar
         </button>

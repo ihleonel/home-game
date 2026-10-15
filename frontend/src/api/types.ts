@@ -1,4 +1,5 @@
-import type { MatchView } from '../games/registry'
+import type { MatchRuntimeView } from '../games/registry'
+import type { MatchSeatRosterEntry } from '../games/matchRoster'
 
 /**
  * The presence of one seat of the running match.
@@ -30,6 +31,12 @@ export type Participant = {
   participant_ref: string
   display_name: string
   game_marker: string
+  /**
+   * The room role the backend resolved for this participant (S1/S2). A
+   * ``spectator`` does not occupy a seat, cannot be marked ready and is not
+   * an expulsion-vote target.
+   */
+  role: 'player' | 'spectator'
   is_ready: boolean
   presence: 'offline' | 'online' | 'reconnecting' | 'inactive'
   /**
@@ -71,6 +78,12 @@ export type Room = {
   updated_at: string
   participants: Participant[]
   expulsion_vote: ExpulsionVote | null
+  /**
+   * The seat capacity resolved from the game registry for this room (S6), so
+   * the lobby can offer the spectator's promotion without guessing. It is
+   * ``null`` for an unknown ``game_id``.
+   */
+  seat_limits: { min_seats: number; max_seats: number } | null
 }
 
 export type RoomEnvelope = { room: Room }
@@ -89,7 +102,13 @@ export type MatchEnvelope = {
   version: number
   status: string
   seat_index: number | null
-  view: MatchView
+  /**
+   * The public seat identity the server resolves for the match (S1/S2). It is
+   * additive: a response that does not carry it leaves the on-screen roster
+   * untouched. The client only renders it (S4).
+   */
+  roster?: MatchSeatRosterEntry[]
+  view: MatchRuntimeView
 }
 
 /**
@@ -119,6 +138,12 @@ export type ServerMessage = {
   match_ref?: string
   seat_index?: number | null
   version?: number
-  view?: MatchView
+  view?: MatchRuntimeView
   seats?: SeatPresence[]
+  /**
+   * The public seat identity of a ``match.snapshot`` frame (S2). It is
+   * additive and optional: frames that do not carry it keep whatever roster
+   * the match already had.
+   */
+  roster?: MatchSeatRosterEntry[]
 }

@@ -12,12 +12,22 @@ Use `.env.example` as a reference when configuring `.env`. Set the variables req
 From the repository root:
 
 ```sh
-make up       # Build and start db, backend, and frontend in the background
-make migrate  # Apply Django migrations in the running backend container
-make test     # Run Django tests in the running backend container
+make up            # Build and start db, backend, and frontend in the background
+make migrate       # Apply Django migrations in the running backend container
+make test          # Run Django tests in the running backend container
+make test-frontend # Run the frontend tests in the running frontend container
 ```
 
-The backend startup command already applies migrations before starting Daphne. Run `make migrate` to apply migrations explicitly; `make migrate` and `make test` require the backend container to be running.
+The backend startup command already applies migrations before starting Daphne. Run `make migrate` to apply migrations explicitly; `make migrate` and `make test` require the backend container to be running, and `make test-frontend` requires the frontend container to be running. The frontend suite runs on Vitest in a Node environment against `react-dom/server`, so it needs no browser and no DOM library.
+
+## Registered games
+
+The catalog is served from the game registry, so a game exists in HomeGame exactly when its `GameDefinition` is wired into `GAME_REGISTRY` in `backend/modules/games/composition.py`; the frontend catalog endpoint and the room entry policy both derive from it. Two games are registered:
+
+- **`duelo`** — rock-paper-scissors, best of three, two seats.
+- **`ta-te-ti`** — three in a row on a 3x3 board, two seats. The first seat plays `X` and the second plays `O`; the ficha a player chose in the room is identity only and never reaches the board. The opening turn is chosen at random per match, which is why the match composition root threads a real `RandomSource` into `start_match`; a definition whose `start` needs randomness fails loudly instead of defaulting to a fixed seat when it is missing. A full board with no line ends the match as a draw (`finished` with no `winner`), and its `abandon` resolution is the same as `duelo`'s: the seat that stayed wins by abandonment.
+
+A finished match reports one of `three_in_a_row`, `draw` or `win_by_abandon` as its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`).
 
 ## Ghost rooms and ghost memberships
 
@@ -63,6 +73,26 @@ The countdown is cancelled and re-armed, never run twice. Any roster change that
 
 The countdown is the only way a match starts on every path: the API serves no manual start route, so the room owns the start decision and no single participant can open a match alone. `GET /api/matches/<match_ref>/` (resync) and `POST /api/matches/<match_ref>/actions/` remain the only match endpoints.
 
+## Full rooms and spectators
+
+A room that already holds the game's `max_seats` players, or whose match is already in progress, does not turn a late arrival away and does not let it break the lobby: the new session joins as a **spectator**. The same policy answers both cases, and it is derived from the game contract (`GameDefinition.min_seats`/`max_seats`) plus the room's match state, so every registered game resolves entry the same way. Entry order is: an explicit `as_spectator` request, an in-progress match, a full player roster, otherwise a player. A session that already has a membership keeps the role it was given; the only role change is an explicit promotion.
+
+A spectator is a member of the room with no seat, not a separate connection path. It cannot be marked ready (`PATCH /api/rooms/ready/` answers `409`, `Estás como espectador: no puedes marcarte como listo.`), it is not an expulsion-vote target and never joins the electorate, and it never occupies a seat: `open_match_for_room` builds seats only from ready players. It does see the running match — `resolve_seat_subscription` already projects the public view to a participant with no seat — and it leaves through the ordinary `POST /api/rooms/leave/`.
+
+A spectator can ask for a seat with `POST /api/rooms/play/` (`{'session_id': ...}`). The request is granted only in a lobby: never while a match is `in_progress`, because the seats are fixed when the match opens, and never when the player roster is already at `max_seats`. Otherwise the role becomes `player`, readiness stays `false`, and the room broadcasts `player_promoted`. The room snapshot carries `participants[].role` and a top-level `seat_limits` (`{'min_seats', 'max_seats'}`, or `null` for an unknown game), both on the REST read and on the socket, so the lobby can offer the action only when it can succeed.
+
+On screen, a spectator sees the lobby read-only with the notice `Estás como espectador.` and a `Quiero jugar` button that is enabled only while a seat is free, with the exact reason otherwise; the identity form offers `Entrar como espectador` from both the catalog and the lobby, and the game screen labels a seatless viewer for every game.
+
+## Player identity on the match screen
+
+A running match names each seat with its player, not with a seat number. That identity is owned by the backend: for every seat it resolves the `seat_id`, its `index`, the seated participant's current `display_name` and `game_marker`, and the `game_marker_label` looked up centrally in the game's own `seat_options` catalog (`seat_id`, `index`, `display_name`, `game_marker`, `game_marker_label`). When the marker does not belong to that catalog, or the game is unknown, the raw marker id is exposed instead, so an entry never loses its marker.
+
+The list travels as the additive `roster` field of the match projection. It is a sibling of the presence payload in the `match.snapshot` frame, and both REST responses carry it: `POST /api/matches/<match_ref>/actions/` and `GET /api/matches/<match_ref>/` (resync). The presence payload (`seats`) and the room roster are unchanged. Because the list carries public identity only and no hidden play, a seat and a spectator receive exactly the same `roster`; only the `view` is scoped to the seat.
+
+The game screen renders that roster and derives nothing from it: a seat reads as the server-sent name plus its marker chip, the viewer's own seat carries the `(tú)` suffix, and a seat the roster does not name falls back to the neutral `Jugador` rather than to a fabricated seat number. Sentences, such as the match outcome and the reveal winner, use `display_name (game_marker_label)`, with the viewer's own seat marked `(tú)` there as well.
+
+Two wordings stay generic by design: the disconnection and abandonment notices on the game screen say `Tu rival` / `Un jugador`, because naming the opponent would require the client to work out which roster entry is the rival. A backend-projected opponent field can add that later without a client change.
+
 ## Frontend
 
 The frontend is a single-page app with three routes, all served by one React
@@ -81,19 +111,50 @@ between pages never remounts the providers or closes the socket. The views are g
 a lobby with a live match hands it to the game screen, the game screen returns
 to its room when there is no match, and any unknown path returns to the
 catalog. A game without a renderer keeps its "vista de partida no disponible"
-notice in the lobby instead, so a match can never trap a player on a screen the
-app cannot draw.
+notice in the lobby instead, and so does a frame its own parser does not
+recognize, so a match can never trap a player on a screen the app cannot draw.
 
 ### Adding a game's screen
 
-A game's screen is a component registered in `src/games/registry.ts` under its
-`game_id`, plus its own stylesheet. The registry is the only place that maps a
-game to its renderer, and an unregistered game falls back to the notice above
-instead of crashing the page.
+A game's screen lives in its own folder under `src/games/<game_id>/` and is
+registered in `src/games/registry.ts` under its `game_id`:
+
+| File | Responsibility |
+| --- | --- |
+| `<Game>Match.tsx` | The panel, typed with the game's own view |
+| `view.ts` | The game's view type and the parser that recognizes its payload |
+| `screen.tsx` | The registry entry: parse the raw view, then render the panel or return `null` |
+| `<game>.css` | The game's own stylesheet |
+
+The registry maps a `game_id` to that factory, and it is the only place that
+maps a game to its screen. The factory is what keeps the payload honest: the
+view arrives unvalidated over REST and the socket, so the game's parser either
+recognizes it or the registry returns `null` and the caller renders its own
+notice. A game therefore never receives bytes it did not recognize, and a
+malformed frame cannot crash the page.
+
+The types are split the same way. `MatchRuntimeView` in `src/games/registry.ts`
+holds the fields every view carries, because the match screen reads them for
+every game (`finished`, `winner`, `ended_by_abandon`, `you`). A game's view
+extends it with its own play payload -- `DueloView` adds `round`, `scores`,
+`reveal`, `your_pick`, ... -- so adding a game never widens a shared view and
+never asks another game's screen to tolerate fields it does not own.
+
+A parser rejects a payload that is not its game's view, which is what the
+notice covers, but past the fields that identify it, it degrades instead of
+rejecting: a malformed optional field costs that field, not the whole match
+screen. The roster and presence parsers in `src/games/` follow the same rule.
 
 Per-game CSS shares one global stylesheet once Vite bundles it, so a game must
 prefix every class it owns with its own id (`.duelo-panel`, `.duelo-heading`,
-…) and reuse the theme tokens from `src/index.css` (`--surface`, `--ink`,
-`--accent`, …) rather than redefining colors. The game screen itself is styled
+…) and never redefine a global token in `:root`. It declares its own theme
+scope instead: `duelo` sets namespaced custom properties (`--duelo-rock`,
+`--duelo-ink-soft`, `--duelo-arena`, …) on its own panel, so custom properties
+cascade only inside that panel and each game can look completely different
+without a shared design system. Colour is never the only cue a game uses: every
+play carries its own silhouette and its own visible label beside its hue, which
+is what keeps the panel readable for a player who cannot tell the hues apart.
+Motion is additive and the global `prefers-reduced-motion` block in
+`src/index.css` neutralises it. The game screen itself is styled
 by `.match-screen` in `src/App.css`; a game only styles the panel it renders
 inside it.

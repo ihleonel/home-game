@@ -47,13 +47,18 @@ class OpenedMatch:
     participants: tuple
 
 
-def open_match_for_room(*, room, reaping, store, registry, projector):
+def open_match_for_room(*, room, reaping, store, registry, projector, rng=None):
     """Open a match in ``room`` from its ready participants.
 
     The room is reaped before the seats are resolved, inside the same atomic
     block as the seat read, so a ready participant who disconnected past the
     grace window cannot occupy a seat. The runtime's own transaction starts
     only after this block closes, so it is never nested here.
+
+    ``rng`` is the ``RandomSource`` the runtime hands to the game's ``start``.
+    It is optional for the games that need no randomness (``duelo``), but a
+    game that does need one -- ``ta-te-ti`` -- fails loudly when it is missing,
+    so the production caller must pass it.
 
     Raises :class:`MatchAlreadyInProgress` when the room already has an
     in-progress match, including when two concurrent starts slip past the
@@ -77,7 +82,10 @@ def open_match_for_room(*, room, reaping, store, registry, projector):
         # ``DjangoMatchStore.create``.
         participants = list(
             Participant.objects.filter(
-                room_id=room.id, left_at__isnull=True, is_ready=True
+                room_id=room.id,
+                left_at__isnull=True,
+                is_ready=True,
+                role=Participant.Role.PLAYER,
             ).order_by('joined_at', 'pk')
         )
         seats = [
@@ -93,6 +101,7 @@ def open_match_for_room(*, room, reaping, store, registry, projector):
             store=store,
             registry=registry,
             projector=projector,
+            rng=rng,
         )
     except IntegrityError:
         # ``one_active_match_per_room`` is the only integrity error the check
