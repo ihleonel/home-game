@@ -126,3 +126,56 @@ describe('the ta-te-ti screen entry', () => {
     expect(render('duelo', taTeTiView)).toBeNull()
   })
 })
+
+const monopolyView = {
+  phase: 'awaiting_roll',
+  turn: 'seat-0',
+  players: [
+    {
+      seat: 'seat-0',
+      cash: 1500,
+      position: 0,
+      properties: [],
+      in_jail: false,
+      jail_turns: 0,
+      eliminated: false,
+    },
+    {
+      seat: 'seat-1',
+      cash: 1500,
+      position: 0,
+      properties: [],
+      in_jail: false,
+      jail_turns: 0,
+      eliminated: false,
+    },
+  ],
+  owners: {},
+  last_roll: null,
+  pending: null,
+  actions: [{ name: 'roll', prompt: 'Tirá los dados.', options: [] }],
+  you: 'seat-0',
+  winner: null,
+  finished: false,
+  ended_by_abandon: false,
+}
+
+describe('the monopoly screen entry', () => {
+  it('is registered beside the other two games', () => {
+    expect(hasMatchRenderer('monopoly')).toBe(true)
+  })
+
+  it('renders the board and the panel for a valid payload', () => {
+    const markup = render('monopoly', monopolyView) ?? ''
+
+    expect(markup).toContain('Tablero de Monopoly')
+    expect(markup).toContain('Tirá los dados.')
+  })
+
+  it('does not render one game screen over the other game view', () => {
+    expect(render('monopoly', dueloView)).toBeNull()
+    expect(render('monopoly', taTeTiView)).toBeNull()
+    expect(render('duelo', monopolyView)).toBeNull()
+    expect(render('ta-te-ti', monopolyView)).toBeNull()
+  })
+})
