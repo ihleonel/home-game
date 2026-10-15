@@ -22,12 +22,35 @@ The backend startup command already applies migrations before starting Daphne. R
 
 ## Registered games
 
-The catalog is served from the game registry, so a game exists in HomeGame exactly when its `GameDefinition` is wired into `GAME_REGISTRY` in `backend/modules/games/composition.py`; the frontend catalog endpoint and the room entry policy both derive from it. Two games are registered:
+The catalog is served from the game registry, so a game exists in HomeGame exactly when its `GameDefinition` is wired into `GAME_REGISTRY` in `backend/modules/games/composition.py`; the frontend catalog endpoint and the room entry policy both derive from it. Three games are registered:
 
 - **`duelo`** — rock-paper-scissors, best of three, two seats.
 - **`ta-te-ti`** — three in a row on a 3x3 board, two seats. The first seat plays `X` and the second plays `O`; the ficha a player chose in the room is identity only and never reaches the board. The opening turn is chosen at random per match, which is why the match composition root threads a real `RandomSource` into `start_match`; a definition whose `start` needs randomness fails loudly instead of defaulting to a fixed seat when it is missing. A full board with no line ends the match as a draw (`finished` with no `winner`), and its `abandon` resolution is the same as `duelo`'s: the seat that stayed wins by abandonment.
 
-A finished match reports one of `three_in_a_row`, `draw` or `win_by_abandon` as its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`).
+- **`monopoly`** — the classic property trading game, two to eight seats, on the classic
+  1999-2007 rulebook: $1.500 to start, Income Tax at $200 or 10 % of total worth, Luxury Tax
+  at $75. A match plays dice, movement, the GO salary, doubles (the third double in a turn goes
+  straight to jail), jail, purchases, rents (a street with the complete colour set doubles its
+  unimproved rent, a railroad scales with how many the owner holds and a utility pays four or
+  ten times the roll), both taxes, bankruptcy and elimination. The opening seat is drawn at
+  random, so its definition requires a real `RandomSource` exactly as `ta-te-ti`'s does.
+  Bankruptcy follows the printed rule's creditor split: a debt to another player hands that
+  player the debtor's cash and properties, while a debt to the bank takes the cash out of the
+  game and returns the properties to the bank unowned. The raise-cash route does not exist yet,
+  so an unaffordable debt goes straight to bankruptcy.
+  The playable core is what exists so far, and three limits are deliberate rather than
+  oversights: the Chance and Community Chest decks are not dealt yet, so landing on either
+  space is a stop without a consequence; declining an unowned property leaves it with the bank
+  instead of auctioning it, because the auction is its own increment; and building, mortgages
+  and trading are absent, so no seat can raise cash before going bankrupt. The screen is not
+  built yet either: `monopoly` has no renderer in `src/games/registry.ts`, so its room shows the
+  "vista de partida no disponible" notice until the board, the per-player panel and the
+  generalization of the frontend action submission (which is currently hardcoded to `pick`)
+  arrive in the interface increment.
+
+A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
+its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`; `monopoly` reports
+`last_solvent` or `win_by_abandon`).
 
 ## Ghost rooms and ghost memberships
 
