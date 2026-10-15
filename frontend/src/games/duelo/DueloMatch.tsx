@@ -19,59 +19,59 @@ const PICK_LABELS: Record<string, string> = {
 const PICK_CHOICES = ['rock', 'paper', 'scissors']
 
 /**
- * The stroke drawing of one pick, in a 48x48 box, shared by the pick cards and
- * the resolved round.
+ * The drawing of one pick, in a 48x48 box, shared by the pick cards and the
+ * resolved round.
  *
- * Each choice keeps its own silhouette -- a closed fist, a flat hand, two
- * fingers held apart -- because shape is what makes the three plays tellable
- * apart without relying on hue. The drawings ship inline: the panel needs no
- * asset file, and ``stroke="currentColor"`` lets the stylesheet own the colour.
+ * Each choice keeps its own silhouette -- a closed fist with three knuckles, a
+ * flat hand with four fingers and a thumb, two fingers held apart -- because
+ * shape is what makes the three plays tellable apart without relying on hue.
+ * The silhouettes are filled and the digits are round-capped strokes, which is
+ * what gives the chunky arcade hand; drawing them inline keeps the panel free
+ * of asset files and lets the stylesheet own the colour and the glow.
  */
-const HAND_SHAPES: Record<string, string[]> = {
-  rock: [
-    'M14 24a6 6 0 0 1 6-6h8a6 6 0 0 1 6 6v6a10 10 0 0 1-10 10 10 10 0 0 1-10-10v-6Z',
-    'M19 18v-3',
-    'M24 18v-4',
-    'M29 18v-3',
-  ],
-  paper: [
-    'M17 26a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v4a7 7 0 0 1-14 0v-4Z',
-    'M19.5 21v-9',
-    'M24 21v-12',
-    'M28.5 21v-10',
-    'M31 25l5-4',
-  ],
-  scissors: [
-    'M17 27a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v4a7 7 0 0 1-7 7 7 7 0 0 1-7-7v-4Z',
-    'M20 22l-5-12',
-    'M28 22l5-12',
-  ],
+const HAND_SHAPES: Record<string, ReactElement> = {
+  rock: (
+    <g>
+      <rect x="13" y="21" width="22" height="18" rx="8" stroke="none" />
+      <path d="M18 22v-3M24 22v-5M30 22v-3" fill="none" />
+    </g>
+  ),
+  paper: (
+    <g>
+      <rect x="13" y="24" width="24" height="16" rx="7" stroke="none" />
+      <path d="M16 27V15M22 27V11M28 27V13M34 27V17" fill="none" />
+      <path d="M36 33l5-5" fill="none" />
+    </g>
+  ),
+  scissors: (
+    <g>
+      <rect x="14" y="28" width="20" height="15" rx="7" stroke="none" />
+      <path d="M19 30L12 16M29 30l7-14" fill="none" />
+    </g>
+  ),
 }
 
 /**
  * One pick drawn as a picture.
  *
  * It is always decorative: the wrapper carries ``aria-hidden``, so a screen
- * reader reaches the visible label instead of a picture it cannot describe,
- * and the shape is what a sighted player uses to tell the plays apart.
+ * reader reaches the visible label instead of a picture it cannot describe, and
+ * the silhouette is what a sighted player uses to tell the plays apart.
  */
 function HandArt({ pick }: { pick: string }): ReactElement {
-  const shapes = HAND_SHAPES[pick] ?? []
   return (
     <svg
       className="duelo-hand"
       viewBox="0 0 48 48"
-      fill="none"
+      fill="currentColor"
       stroke="currentColor"
-      strokeWidth="3"
+      strokeWidth="4"
       strokeLinecap="round"
       strokeLinejoin="round"
       focusable="false"
       role="presentation"
     >
-      {shapes.map((shape) => (
-        <path d={shape} key={shape} />
-      ))}
+      {HAND_SHAPES[pick] ?? null}
     </svg>
   )
 }
@@ -120,6 +120,23 @@ function seatCard(
       <span className="duelo-score">{score}</span>
     </div>
   )
+}
+
+/**
+ * The seat's own name, with the own-seat suffix: ``display_name (tú)``.
+ *
+ * The reveal uses this instead of the full seat label because the marker chip
+ * already sits in the arena above: repeating it inside the resolved round put
+ * the same chip twice on one screen for no new information.
+ */
+function seatDisplayName(
+  seatId: string,
+  roster: MatchSeatRosterEntry[],
+  you: string | undefined,
+): string {
+  const entry = roster.find((seat) => seat.seat_id === seatId)
+  const name = entry ? entry.display_name : 'Jugador'
+  return seatId === you ? `${name} (tú)` : name
 }
 
 /**
@@ -227,7 +244,9 @@ export function DueloMatch({ match, busy, onPick }: MatchRendererProps<DueloView
                   <HandArt pick={pick} />
                 </span>
                 <strong className="duelo-pick-label">{pickLabel(pick)}</strong>
-                <span className="duelo-reveal-seat">{seatLabel(seatId, match)}</span>
+                <span className="duelo-reveal-seat">
+                  {seatDisplayName(seatId, match.roster, view.you)}
+                </span>
               </li>
             ))}
           </ul>
