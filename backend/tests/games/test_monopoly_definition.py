@@ -12,7 +12,7 @@ import json
 from django.test import SimpleTestCase
 
 from modules.games.contracts import Action, Seat
-from modules.games.monopoly import board
+from modules.games.monopoly import board, cards
 from modules.games.monopoly.game import MonopolyDefinition
 
 
@@ -31,6 +31,13 @@ class StubRng:
         if not self.dice:
             raise AssertionError('the definition rolled more dice than the test gave')
         return self.dice.pop(0)
+
+
+class ReversingRng(StubRng):
+    """A ``RandomSource`` whose shuffle reverses, so a shuffle is observable."""
+
+    def shuffle(self, items):
+        return list(reversed(list(items)))
 
 
 def _seats(count=2):
@@ -90,8 +97,15 @@ class MonopolyDefinitionTests(SimpleTestCase):
     def test_start_draws_the_opening_seat_from_the_rng(self):
         state = self._start(first='seat-1')
         self.assertEqual(state['turn'], 'seat-1')
-        # The opening seat comes from the throw, never from an arbitrary draw.
-        self.assertEqual(self.rng.shuffle_calls, [])
+        # The opening seat comes from the throw and never from a draw, so the
+        # only things shuffled are the two decks.
+        self.assertEqual(
+            self.rng.shuffle_calls,
+            [
+                tuple(cards.deck_ids(cards.CHANCE)),
+                tuple(cards.deck_ids(cards.COMMUNITY_CHEST)),
+            ],
+        )
 
     def test_the_highest_throw_opens_the_match(self):
         rng = StubRng(dice=[1, 2, 6, 6])
@@ -103,6 +117,19 @@ class MonopolyDefinitionTests(SimpleTestCase):
         rng = StubRng(dice=[3, 4, 3, 4, 1, 1, 6, 6])
         state = self.definition.start(self.seats, rng)
         self.assertEqual(state['turn'], 'seat-1')
+
+    def test_start_shuffles_both_decks_with_the_random_source(self):
+        rng = ReversingRng(dice=[6, 6, 1, 1])
+
+        state = self.definition.start(self.seats, rng)
+
+        self.assertEqual(
+            state['decks'][cards.CHANCE], list(reversed(cards.deck_ids(cards.CHANCE)))
+        )
+        self.assertEqual(
+            state['decks'][cards.COMMUNITY_CHEST],
+            list(reversed(cards.deck_ids(cards.COMMUNITY_CHEST))),
+        )
 
     def test_start_seats_every_player_at_go_with_the_starting_cash(self):
         state = self._start()
@@ -183,9 +210,36 @@ class MonopolyDefinitionTests(SimpleTestCase):
                 'properties': [],
                 'in_jail': False,
                 'jail_turns': 0,
+                'jail_cards': 0,
                 'eliminated': False,
             },
         )
+
+    def test_the_view_publishes_the_card_counts_and_never_the_deck_order(self):
+        state = self._start()
+        view = self.definition.view(state, None)
+
+        self.assertEqual(view['decks'], {'chance': 16, 'community_chest': 16})
+        self.assertIsNone(view['last_card'])
+        # The order is hidden information: the only list-valued fields are the
+        # roster and the seat's own actions, so no card id list can leak.
+        self.assertEqual(
+            sorted(key for key in view if isinstance(view[key], list)),
+            ['actions', 'players'],
+        )
+
+    def test_the_view_publishes_the_card_that_was_turned_up(self):
+        state = self._start()
+        state = self.definition.apply(
+            state, 'seat-0', Action(name='roll'), StubRng(dice=[1, 1])
+        ).state
+
+        view = self.definition.view(state, None)
+
+        self.assertEqual(view['last_card']['deck'], 'community_chest')
+        self.assertEqual(view['last_card']['id'], 'community_chest-01')
+        self.assertEqual(view['decks']['community_chest'], 16)
+        self.assertIn('Avanzá', view['last_card']['title'])
 
     def test_the_seat_view_carries_its_legal_actions_and_the_spectator_none(self):
         state = self._start()

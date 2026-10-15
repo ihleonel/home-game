@@ -20,7 +20,7 @@ import copy
 from typing import Mapping, Sequence
 
 from ..contracts import Action, ActionSpec, Fact, Outcome, Transition
-from . import board, deeds
+from . import board, cards, deeds
 
 DICE_SIDES = 6
 DICE_COUNT = 2
@@ -40,6 +40,13 @@ LUXURY_TAX = 75
 STARTING_HOUSES = 32
 STARTING_HOTELS = 12
 
+# A card's own rent rule, which is not the rule for landing there: the
+# nearest-railroad card doubles the rent the count of railroads would charge,
+# and the nearest-utility card pays ten times a fresh throw however many
+# utilities the owner holds.
+_RAILROAD_DOUBLED = 'railroad_doubled'
+CARD_UTILITY_MULTIPLIER = 10
+
 # The three phases the state persists (S6). Resolving a space happens inside
 # the same transition as the roll, so it is not a phase of its own.
 PHASE_AWAITING_ROLL = 'awaiting_roll'
@@ -53,16 +60,15 @@ ACTION_DECLINE = 'decline'
 ACTION_PAY_INCOME_TAX_FIXED = 'pay_income_tax_fixed'
 ACTION_PAY_INCOME_TAX_PERCENT = 'pay_income_tax_percent'
 ACTION_END_TURN = 'end_turn'
+ACTION_USE_JAIL_CARD = 'use_jail_card'
 
-# Spaces that stop the token without asking anything. Chance and Community
-# Chest are here because the decks arrive in a later increment (S16).
+# Spaces that stop the token without asking anything. The two card spaces are
+# deliberately absent: they draw, and the draw is what resolves them.
 _SILENT_KINDS = frozenset(
     (
         board.SpaceKind.GO,
         board.SpaceKind.JAIL,
         board.SpaceKind.FREE_PARKING,
-        board.SpaceKind.CHANCE,
-        board.SpaceKind.COMMUNITY_CHEST,
     )
 )
 
@@ -85,11 +91,16 @@ def validate_roster(seat_ids) -> list[str]:
     return seats
 
 
-def initial_state(seat_ids: Sequence[str], first_seat: str) -> dict:
+def initial_state(
+    seat_ids: Sequence[str], first_seat: str, decks: Mapping | None = None
+) -> dict:
     """Open a match with every player at GO, solvent and holding $1.500.
 
     ``first_seat`` is supplied by the caller (the definition draws it from a
     ``RandomSource``); the rules never choose an opening seat themselves.
+    ``decks`` is the shuffled deck order, also supplied by the caller through
+    :func:`fresh_decks`; when it is omitted the decks stay in printed order,
+    which is what a rule test wants and what production must never rely on.
     Raises ``ValueError`` for a roster the board cannot seat, so an invalid
     opening never reaches the board.
     """
@@ -101,6 +112,8 @@ def initial_state(seat_ids: Sequence[str], first_seat: str) -> dict:
         'players': {seat: _fresh_player() for seat in seats},
         'owners': {},
         'bank': {'houses': STARTING_HOUSES, 'hotels': STARTING_HOTELS},
+        'decks': _deck_order(decks),
+        'last_card': None,
         'phase': PHASE_AWAITING_ROLL,
         'turn': first_seat,
         'last_roll': None,
@@ -110,6 +123,25 @@ def initial_state(seat_ids: Sequence[str], first_seat: str) -> dict:
         'ended_by_abandon': False,
         'abandoned_seat': None,
     }
+
+
+def fresh_decks(rng) -> dict:
+    """Return both decks shuffled with ``rng``.
+
+    Production goes through this so a match never starts on an unshuffled deck;
+    the order is hidden information the state keeps and the view never
+    publishes beyond how many cards are left.
+    """
+    if rng is None:
+        raise ValueError('a fresh deck needs a RandomSource to be shuffled')
+    return {deck: rng.shuffle(list(cards.deck_ids(deck))) for deck in cards.DECKS}
+
+
+def _deck_order(decks) -> dict:
+    """Normalize the deck order, defaulting to the printed order."""
+    if decks is None:
+        return {deck: list(cards.deck_ids(deck)) for deck in cards.DECKS}
+    return {deck: list(decks[deck]) for deck in cards.DECKS}
 
 
 def solvent_seats(state: Mapping) -> tuple[str, ...]:
@@ -164,6 +196,13 @@ def legal_actions(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
     phase = state['phase']
     if phase == PHASE_AWAITING_ROLL:
         specs = [ActionSpec(name=ACTION_ROLL, prompt='Tirá los dados.')]
+        if player['in_jail'] and player['jail_cards']:
+            specs.append(
+                ActionSpec(
+                    name=ACTION_USE_JAIL_CARD,
+                    prompt='Usá la carta de «Salí de la cárcel gratis».',
+                )
+            )
         if (
             player['in_jail']
             and player['jail_turns'] < JAIL_TURNS_LIMIT - 1
@@ -298,6 +337,9 @@ def _fresh_player() -> dict:
         'properties': [],
         'in_jail': False,
         'jail_turns': 0,
+        # The decks of the held ``Get Out of Jail Free`` cards, because using
+        # one returns it to the bottom of the deck it came from.
+        'jail_cards': [],
         'eliminated': False,
     }
 
@@ -318,14 +360,13 @@ def _require_pending(state: Mapping, kind: str) -> Mapping:
     return pending
 
 
-def _apply_roll(state: Mapping, seat: str, rng) -> Transition:
-    _require_phase(state, PHASE_AWAITING_ROLL)
-    if rng is None:
-        raise ValueError('rolling requires a RandomSource')
-    state = _copy(state)
-    events = []
+def _throw(state, seat: str, rng, events):
+    """Throw the two dice, record the faces and emit the fact.
+
+    Used by the turn's own roll and by the card that makes the seat throw
+    again, so both record the throw the same way.
+    """
     faces = [rng.roll(DICE_SIDES) for _ in range(DICE_COUNT)]
-    total = sum(faces)
     doubles = faces[0] == faces[1]
     state['last_roll'] = list(faces)
     events.append(
@@ -335,9 +376,20 @@ def _apply_roll(state: Mapping, seat: str, rng) -> Transition:
             detail={'dice': list(faces), 'doubles': doubles},
         )
     )
+    return faces, doubles
+
+
+def _apply_roll(state: Mapping, seat: str, rng) -> Transition:
+    _require_phase(state, PHASE_AWAITING_ROLL)
+    if rng is None:
+        raise ValueError('rolling requires a RandomSource')
+    state = _copy(state)
+    events = []
+    faces, doubles = _throw(state, seat, rng, events)
+    total = sum(faces)
 
     if state['players'][seat]['in_jail']:
-        return _resolve_jail_roll(state, seat, faces, total, doubles, events)
+        return _resolve_jail_roll(state, seat, faces, total, doubles, events, rng)
 
     if doubles:
         state['doubles_count'] += 1
@@ -348,11 +400,11 @@ def _apply_roll(state: Mapping, seat: str, rng) -> Transition:
             return Transition(state=state, facts=tuple(events))
 
     _move(state, seat, total, events)
-    resolution = _resolve_landing(state, seat, faces, events)
+    resolution = _resolve_landing(state, seat, faces, events, rng)
     return _finish_step(state, resolution, doubles, events)
 
 
-def _resolve_jail_roll(state, seat, faces, total, doubles, events) -> Transition:
+def _resolve_jail_roll(state, seat, faces, total, doubles, events, rng) -> Transition:
     """Resolve a roll made from jail (S7)."""
     player = state['players'][seat]
     if doubles:
@@ -360,7 +412,7 @@ def _resolve_jail_roll(state, seat, faces, total, doubles, events) -> Transition
         player['jail_turns'] = 0
         events.append(Fact(name='left_jail', seat=seat, detail={'method': 'doubles'}))
         _move(state, seat, total, events)
-        resolution = _resolve_landing(state, seat, faces, events)
+        resolution = _resolve_landing(state, seat, faces, events, rng)
         # A double that opens the jail cell does not buy another turn.
         return _finish_step(state, resolution, False, events)
 
@@ -377,7 +429,7 @@ def _resolve_jail_roll(state, seat, faces, total, doubles, events) -> Transition
     player['jail_turns'] = 0
     events.append(Fact(name='left_jail', seat=seat, detail={'method': 'fine'}))
     _move(state, seat, total, events)
-    resolution = _resolve_landing(state, seat, faces, events)
+    resolution = _resolve_landing(state, seat, faces, events, rng)
     return _finish_step(state, resolution, False, events)
 
 
@@ -417,12 +469,13 @@ def _move(state, seat: str, total: int, events) -> int:
     return player['position']
 
 
-def _resolve_landing(state, seat: str, faces, events):
+def _resolve_landing(state, seat: str, faces, events, rng, rent_rule=None):
     """Resolve the space the seat stopped on.
 
     Returns ``'decision'`` when the space opened a pending decision, ``'jail'``
     when the seat was sent to jail (which ends the turn in the act) and ``None``
-    when the turn can simply continue.
+    when the turn can simply continue. ``rent_rule`` carries a card's own rent
+    rule down to :func:`_rent`; an ordinary landing passes ``None``.
     """
     index = state['players'][seat]['position']
     space = board.space_at(index)
@@ -430,6 +483,10 @@ def _resolve_landing(state, seat: str, faces, events):
 
     if kind in _SILENT_KINDS:
         return None
+
+    deck = cards.deck_for_space(index)
+    if deck is not None:
+        return _resolve_card(state, seat, _draw(state, seat, deck, events), faces, events, rng)
 
     if kind is board.SpaceKind.GO_TO_JAIL:
         _send_to_jail(state, seat, 'go_to_jail', events)
@@ -453,17 +510,13 @@ def _resolve_landing(state, seat: str, faces, events):
 
     owner = state['owners'].get(str(index))
     if owner is None:
-        state['phase'] = PHASE_AWAITING_DECISION
-        state['pending'] = {'kind': 'purchase', 'space': index}
-        events.append(
-            Fact(name='purchase_offered', seat=seat, detail={'space': index})
-        )
+        _offer_purchase(state, seat, index, events)
         return 'decision'
 
     if owner == seat:
         return None
 
-    amount = _rent(state, space, owner, faces)
+    amount = _rent(state, space, owner, faces, rent_rule)
     if not _pay(state, seat, amount, owner, events):
         events.append(
             Fact(
@@ -478,6 +531,209 @@ def _resolve_landing(state, seat: str, faces, events):
             )
         )
     return None
+
+
+def _offer_purchase(state, seat: str, index: int, events) -> None:
+    """Leave the seat in the purchase decision for ``index``."""
+    state['phase'] = PHASE_AWAITING_DECISION
+    state['pending'] = {'kind': 'purchase', 'space': index}
+    events.append(Fact(name='purchase_offered', seat=seat, detail={'space': index}))
+
+
+def _draw(state, seat: str, deck: str, events):
+    """Turn up the top card of ``deck`` and recycle it (S3).
+
+    A ``Get Out of Jail Free`` card leaves the deck instead of going back to
+    the bottom: the seat holds it until it is used, and using it is what
+    returns it to its own deck.
+    """
+    order = list(state['decks'][deck])
+    card = cards.card_for(order[0])
+    state['decks'][deck] = order[1:] if card.effect is cards.JAIL_CARD else order[1:] + [card.id]
+    state['last_card'] = {'deck': deck, 'id': card.id}
+    events.append(
+        Fact(
+            name='card_drawn',
+            seat=seat,
+            detail={'deck': deck, 'id': card.id, 'title': card.title},
+        )
+    )
+    return card
+
+
+def _resolve_card(state, seat: str, card, faces, events, rng):
+    """Apply one drawn card and resolve the space it leaves the token on."""
+    effect = card.effect
+
+    if effect == cards.ADVANCE:
+        _advance_to(state, seat, card.space, events)
+        return _resolve_landing(state, seat, faces, events, rng)
+
+    if effect == cards.ADVANCE_NEAREST_RAILROAD:
+        destination = _nearest_forward(
+            state['players'][seat]['position'], board.RAILROAD_INDEXES
+        )
+        _advance_to(state, seat, destination, events)
+        return _resolve_landing(
+            state, seat, faces, events, rng, rent_rule=_RAILROAD_DOUBLED
+        )
+
+    if effect == cards.ADVANCE_NEAREST_UTILITY:
+        destination = _nearest_forward(
+            state['players'][seat]['position'], board.UTILITY_INDEXES
+        )
+        _advance_to(state, seat, destination, events)
+        owner = state['owners'].get(str(destination))
+        if owner is None:
+            _offer_purchase(state, seat, destination, events)
+            return 'decision'
+        if owner == seat:
+            return None
+        throw, _ = _throw(state, seat, rng, events)
+        events.append(
+            Fact(name='card_roll', seat=seat, detail={'dice': list(throw)})
+        )
+        amount = CARD_UTILITY_MULTIPLIER * sum(throw)
+        if not _pay(state, seat, amount, owner, events):
+            events.append(
+                Fact(
+                    name='rent_paid',
+                    seat=seat,
+                    detail={
+                        'from': seat,
+                        'to': owner,
+                        'space': destination,
+                        'amount': amount,
+                    },
+                )
+            )
+        return None
+
+    if effect == cards.GO_BACK_THREE:
+        _go_back(state, seat, 3, events)
+        return _resolve_landing(state, seat, faces, events, rng)
+
+    if effect == cards.GO_TO_JAIL:
+        _send_to_jail(state, seat, 'go_to_jail', events)
+        return 'jail'
+
+    if effect == cards.JAIL_CARD:
+        state['players'][seat]['jail_cards'].append(card.id)
+        events.append(
+            Fact(name='jail_card_obtained', seat=seat, detail={'deck': card.deck})
+        )
+        return None
+
+    if effect == cards.COLLECT_BANK:
+        _card_collect(state, seat, card.amount, None, events)
+        return None
+
+    if effect == cards.PAY_BANK:
+        _card_pay(state, seat, card.amount, None, events)
+        return None
+
+    if effect == cards.COLLECT_EACH_PLAYER:
+        for other in solvent_seats(state):
+            if other == seat:
+                continue
+            _card_collect(state, seat, card.amount, other, events)
+        return None
+
+    if effect == cards.PAY_EACH_PLAYER:
+        for other in solvent_seats(state):
+            if other == seat:
+                continue
+            if _card_pay(state, seat, card.amount, other, events):
+                # The first share that cannot be paid is the bankruptcy and the
+                # shares after it are never collected: the printed rules do not
+                # cover several creditors at once (S10).
+                break
+        return None
+
+    if effect == cards.REPAIRS:
+        _card_pay(state, seat, _repairs_amount(state, seat, card), None, events)
+        return None
+
+    raise ValueError(f'unknown card effect: {effect!r}')
+
+
+def _card_pay(state, seat: str, amount: int, creditor, events) -> bool:
+    """Pay a card amount from ``seat``; ``True`` when it went bankrupt.
+
+    A completed payment announces itself; a bankruptcy is announced by
+    ``bankrupt``, which already carries the creditor.
+    """
+    if _pay(state, seat, amount, creditor, events):
+        return True
+    events.append(
+        Fact(name='card_paid', seat=seat, detail={'amount': amount, 'to': creditor})
+    )
+    return False
+
+
+def _card_collect(state, seat: str, amount: int, payer, events) -> bool:
+    """Move a card amount to ``seat`` from ``payer`` (``None`` for the bank).
+
+    Returns ``True`` when the payer went bankrupt over it.
+    """
+    if payer is not None and _pay(state, payer, amount, seat, events):
+        return True
+    if payer is None:
+        state['players'][seat]['cash'] += amount
+    events.append(
+        Fact(
+            name='card_collected',
+            seat=seat,
+            detail={'amount': amount, 'from': payer},
+        )
+    )
+    return False
+
+
+def _repairs_amount(state, seat: str, card) -> int:
+    """What a repairs card costs the seat, from what the seat has built.
+
+    The level of a property comes from the buildings map that the building
+    increment owns; while nothing is built every level reads as zero and the
+    card costs nothing, which is what the printed formula says about a board
+    with no houses on it.
+    """
+    buildings = state.get('buildings') or {}
+    houses = 0
+    hotels = 0
+    for index in state['players'][seat]['properties']:
+        level = buildings.get(str(index), 0)
+        if level >= deeds.HOTEL_LEVEL:
+            hotels += 1
+        else:
+            houses += level
+    return card.per_house * houses + card.per_hotel * hotels
+
+
+def _advance_to(state, seat: str, destination: int, events) -> int:
+    """Move ``seat`` forward to ``destination``, paying the salary if it wraps."""
+    distance = (destination - state['players'][seat]['position']) % board.BOARD_SIZE
+    return _move(state, seat, distance, events)
+
+
+def _go_back(state, seat: str, count: int, events) -> int:
+    """Move ``seat`` back ``count`` spaces: no salary and no GO crossing."""
+    player = state['players'][seat]
+    start = player['position']
+    player['position'] = (start - count) % board.BOARD_SIZE
+    events.append(
+        Fact(
+            name='moved',
+            seat=seat,
+            detail={'from': start, 'to': player['position'], 'passed_go': False},
+        )
+    )
+    return player['position']
+
+
+def _nearest_forward(position: int, indexes) -> int:
+    """Return the next index forward from ``position``, wrapping the circuit."""
+    return min(indexes, key=lambda index: (index - position) % board.BOARD_SIZE)
 
 
 def _settle_turn(state, extra: bool, events) -> None:
@@ -527,8 +783,12 @@ def _send_to_jail(state, seat: str, reason: str, events) -> None:
     events.append(Fact(name='sent_to_jail', seat=seat, detail={'reason': reason}))
 
 
-def _rent(state, space, owner: str, faces) -> int:
-    """Return what ``owner`` charges a token stopping on ``space`` (S9)."""
+def _rent(state, space, owner: str, faces, rule=None) -> int:
+    """Return what ``owner`` charges a token stopping on ``space`` (S9).
+
+    ``rule`` carries a card's own rent rule, which is not the landing rule: the
+    nearest-railroad card doubles what the count of railroads held would charge.
+    """
     if space.kind is board.SpaceKind.STREET:
         deed = deeds.deed_for(space.index)
         if _owns_group(state, owner, space.group):
@@ -539,7 +799,8 @@ def _rent(state, space, owner: str, faces) -> int:
             1 for index in board.RAILROAD_INDEXES
             if state['owners'].get(str(index)) == owner
         )
-        return deeds.RAILROAD_RENTS[owned - 1]
+        rent = deeds.RAILROAD_RENTS[owned - 1]
+        return rent * 2 if rule is _RAILROAD_DOUBLED else rent
     owned = sum(
         1 for index in board.UTILITY_INDEXES
         if state['owners'].get(str(index)) == owner
@@ -675,6 +936,29 @@ def _pay_income_tax(state: Mapping, seat: str, option: str, amount: int) -> Tran
     return Transition(state=state, facts=tuple(events))
 
 
+def _apply_use_jail_card(state: Mapping, seat: str, rng) -> Transition:
+    """Use a held ``Get Out of Jail Free`` card: release, then throw normally.
+
+    The card goes back to the bottom of the deck it came from, and the seat is
+    left in ``awaiting_roll``: leaving jail with the card does not consume the
+    turn, exactly like paying the fine.
+    """
+    _require_phase(state, PHASE_AWAITING_ROLL)
+    player = state['players'][seat]
+    if not player['in_jail'] or not player['jail_cards']:
+        raise ValueError(f'{seat!r} holds no jail card to use')
+    state = _copy(state)
+    player = state['players'][seat]
+    card = cards.card_for(player['jail_cards'].pop(0))
+    player['in_jail'] = False
+    player['jail_turns'] = 0
+    state['decks'][card.deck] = list(state['decks'][card.deck]) + [card.id]
+    return Transition(
+        state=state,
+        facts=(Fact(name='jail_card_used', seat=seat, detail={'deck': card.deck}),),
+    )
+
+
 def _apply_end_turn(state: Mapping, seat: str, rng) -> Transition:
     _require_phase(state, PHASE_MANAGING)
     state = _copy(state)
@@ -685,6 +969,7 @@ def _apply_end_turn(state: Mapping, seat: str, rng) -> Transition:
 
 _HANDLERS = {
     ACTION_ROLL: _apply_roll,
+    ACTION_USE_JAIL_CARD: _apply_use_jail_card,
     ACTION_PAY_JAIL_FINE: _apply_pay_jail_fine,
     ACTION_BUY: _apply_buy,
     ACTION_DECLINE: _apply_decline,

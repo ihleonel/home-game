@@ -16,7 +16,7 @@ from ..contracts import (
     Transition,
     seat_id,
 )
-from . import rules
+from . import cards, rules
 
 
 class MonopolyDefinition:
@@ -57,7 +57,11 @@ class MonopolyDefinition:
                 'rng must not be None'
             )
         seat_ids = rules.validate_roster(seat_id(seat.index) for seat in seats)
-        return rules.initial_state(seat_ids, _highest_throw(seat_ids, rng))
+        return rules.initial_state(
+            seat_ids,
+            _highest_throw(seat_ids, rng),
+            rules.fresh_decks(rng),
+        )
 
     def active_seats(self, state: Mapping) -> tuple[str, ...]:
         """The seat on turn, or ``()`` once the match is finished.
@@ -92,12 +96,15 @@ class MonopolyDefinition:
     def view(self, state: Mapping, seat: str | None) -> Mapping:
         """Return the seat-scoped or spectator view of the match (S13).
 
-        The public economy of a Monopoly match -- positions, cash, owners and
-        the last throw -- is visible to everyone, so a spectator sees the same
-        board as a player. The only difference is ``you`` and ``actions``: the
-        legal actions belong to one seat, so they are offered to that seat and
-        to nobody else. The deck order of a later increment must never reach
-        this projection, spectator or not.
+        The public economy of a Monopoly match -- positions, cash, owners, the
+        last throw and the last card turned up -- is visible to everyone, so a
+        spectator sees the same board as a player. The only difference is
+        ``you`` and ``actions``: the legal actions belong to one seat, so they
+        are offered to that seat and to nobody else.
+
+        The deck **order** never reaches this projection: a seat learns how many
+        cards are left, and the card that was drawn is published only because it
+        was turned face up for the whole table.
         """
         finished = rules.is_finished(state)
         outcome = rules.outcome(state)
@@ -109,6 +116,10 @@ class MonopolyDefinition:
             'turn': None if finished else state['turn'],
             'players': [self._player_view(state, seat_id_) for seat_id_ in state['seats']],
             'owners': dict(state['owners']),
+            'decks': {
+                deck: len(order) for deck, order in state['decks'].items()
+            },
+            'last_card': self._card_view(state),
             'last_roll': (
                 None if state['last_roll'] is None else list(state['last_roll'])
             ),
@@ -149,8 +160,19 @@ class MonopolyDefinition:
             'properties': list(player['properties']),
             'in_jail': player['in_jail'],
             'jail_turns': player['jail_turns'],
+            # How many cards the seat holds, not which ones: the seat count is
+            # what a table sees in someone's hand.
+            'jail_cards': len(player['jail_cards']),
             'eliminated': player['eliminated'],
         }
+
+    def _card_view(self, state: Mapping) -> dict | None:
+        """The card turned up last, resolved to the copy a player reads."""
+        drawn = state['last_card']
+        if drawn is None:
+            return None
+        drawn_card = cards.card_for(drawn['id'])
+        return {'deck': drawn_card.deck, 'id': drawn_card.id, 'title': drawn_card.title}
 
 
 def _highest_throw(seat_ids: Sequence[str], rng) -> str:
