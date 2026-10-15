@@ -154,6 +154,14 @@ describe('the match screen', () => {
     expect(markup).not.toContain('Vista de partida no disponible')
   })
 
+  it('names the game once: the screen header owns the title and the panel does not repeat it', () => {
+    // The match screen already prints the game's label as the page heading, so a
+    // second copy inside the panel is the same word twice on the same screen.
+    const markup = render([dueloGame], 'duelo', validDueloView)
+
+    expect(markup.match(/Duelo/g)).toHaveLength(1)
+  })
+
   it('falls back to the notice when a registered game sends an unrecognizable payload', () => {
     // Regression guard for the reason the screen registry parses at all: a
     // registered game must never be handed bytes it does not recognize.

@@ -1,62 +1,103 @@
+/* Duelo's own theme scope.
+ *
+ * The panel declares its palette as ``--duelo-*`` custom properties on its own
+ * root instead of borrowing the app's ``:root`` tokens. Custom properties
+ * cascade and are scoped, so every game can look completely different without
+ * a shared design system and without redefining a global token: nothing here
+ * is visible outside ``.duelo-panel``.
+ *
+ * Contrast was measured, not estimated: the three hand inks reach at least
+ * 4.5:1 on their own soft background (rock 5.30, paper 5.14, scissors 4.54),
+ * the dark ink reaches 15:1 on the arena, and white on the violet badge 5.21.
+ */
 .duelo-panel {
+  --duelo-ink: #1c1640;
+  --duelo-ink-soft: #5a5480;
+  --duelo-violet: #6f4cf5;
+  --duelo-soft: #f5f0ff;
+  --duelo-line: #ddd2ff;
+  --duelo-edge: #cbb9ff;
+  --duelo-arena: linear-gradient(180deg, #f9f6ff, #ece4ff);
+  --duelo-win: #1f8f5f;
+
   margin: 0.5rem 0 1.25rem;
-  padding: 1rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 0.9rem;
-  background: var(--surface-raised);
+  padding: clamp(0.9rem, 3vw, 1.25rem);
+  border: 1px solid var(--duelo-edge);
+  border-radius: 1.25rem;
+  background: var(--duelo-arena);
+  box-shadow: 0 18px 36px -26px rgba(28, 22, 64, 0.55);
+  color: var(--duelo-ink);
+  animation: duelo-arena-in 220ms ease-out;
 }
 
-.duelo-heading {
+/* Each play owns a hue, a soft tint and a deep ink for its drawing. The tint
+   never carries meaning on its own: the same card ships its own silhouette and
+   its own visible label, which is what the accessibility rule requires. */
+.duelo-hand-rock {
+  --duelo-pick: #ff5d73;
+  --duelo-pick-soft: #ffe6ea;
+  --duelo-pick-ink: #b8233f;
+  --duelo-pick-edge: #ffc2cc;
+}
+
+.duelo-hand-paper {
+  --duelo-pick: #ffc531;
+  --duelo-pick-soft: #fff6dd;
+  --duelo-pick-ink: #8a6100;
+  --duelo-pick-edge: #ffe49b;
+}
+
+.duelo-hand-scissors {
+  --duelo-pick: #21c7b8;
+  --duelo-pick-soft: #ddfaf6;
+  --duelo-pick-ink: #0f7d73;
+  --duelo-pick-edge: #a6efe7;
+}
+
+/* Only the round is printed here: the game's name is the page heading the
+   match screen already renders, so the panel does not repeat it. */
+.duelo-round-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  justify-content: center;
 }
 
-.duelo-heading h3 {
-  margin: 0;
-  color: var(--ink);
-  font-size: 1rem;
-}
-
+/* The round reads as a scoreboard chip, but its text stays one contiguous
+   string: ``MatchPage`` asserts "Ronda N" on the whole screen. */
 .duelo-round {
-  color: var(--accent-dark);
-  font-size: 0.85rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--duelo-violet);
+  font-size: 0.8rem;
   font-weight: 800;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
-.duelo-scores {
-  margin: 0.85rem 0;
-  padding: 0;
-  list-style: none;
+/* The arena: the seats stacked around the resolved round, the way two players
+   sit facing each other. */
+.duelo-arena {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
 }
 
-.duelo-scores li,
-.duelo-reveal li {
+.duelo-seat-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.45rem 0;
-  color: var(--ink-soft);
-  font-size: 0.9rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--duelo-line);
+  border-radius: 0.85rem;
+  background: #fff;
 }
 
-.duelo-scores li {
-  border-top: 1px solid var(--line);
+.duelo-seat-card-you {
+  border-color: var(--duelo-edge);
+  background: var(--duelo-soft);
 }
 
-.duelo-scores strong {
-  min-width: 2rem;
-  color: var(--ink);
-  font-size: 1.05rem;
-  text-align: right;
-}
-
-/* A seat named from the server roster (S3): the player's name followed by the
-   marker chip the room already uses for the ficha. A seat the roster does not
-   name keeps the neutral "Jugador" text and shows no chip. */
 .duelo-seat {
   display: inline-flex;
   align-items: center;
@@ -66,67 +107,206 @@
 }
 
 .duelo-seat-name {
-  color: var(--ink);
-  font-weight: 650;
+  color: var(--duelo-ink);
+  font-weight: 700;
 }
 
 .duelo-seat .duelo-seat-marker {
-  border-color: var(--accent-border);
-  color: var(--accent-dark);
-  background: var(--surface);
+  border-color: var(--duelo-edge);
+  color: var(--duelo-violet);
+  background: #fff;
+}
+
+.duelo-score {
+  min-width: 2.2rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.6rem;
+  color: #fff;
+  background: var(--duelo-violet);
+  font-size: 1.15rem;
+  font-weight: 800;
+  text-align: center;
 }
 
 .duelo-progress {
-  margin: 0.5rem 0;
-  color: var(--ink-soft);
+  margin: 0.75rem 0 0;
+  color: var(--duelo-ink-soft);
   font-size: 0.9rem;
 }
 
 .duelo-outcome {
-  margin: 0.5rem 0;
-  color: var(--success-ink);
-  font-weight: 750;
+  margin: 0.75rem 0 0;
+  color: var(--duelo-win);
+  font-size: 1.05rem;
+  font-weight: 800;
 }
 
+/* The last resolved round, laid out as the two hands that were played. */
 .duelo-reveal {
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-  border: 1px solid var(--accent-border);
-  border-radius: 0.75rem;
-  background: var(--accent-soft);
+  margin-top: 0.9rem;
+  padding: 0.7rem;
+  border: 1px dashed var(--duelo-edge);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .duelo-reveal-title {
   margin: 0;
-  color: var(--accent-dark);
+  color: var(--duelo-violet);
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-.duelo-reveal li {
-  border-top: 1px solid var(--accent-border);
+.duelo-reveal-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.5rem;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.duelo-reveal strong {
-  color: var(--ink);
-  font-size: 0.85rem;
+.duelo-reveal-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.5rem 0.4rem;
+  border: 2px solid transparent;
+  border-radius: 0.9rem;
+  background: var(--duelo-pick-soft);
+  text-align: center;
+}
+
+.duelo-reveal-pick-winner {
+  border-color: var(--duelo-pick);
+  animation: duelo-win-pop 320ms cubic-bezier(0.2, 0.9, 0.3, 1.4);
+}
+
+.duelo-reveal-art {
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 999px;
+  color: var(--duelo-pick-ink);
+  background: #fff;
+}
+
+.duelo-hand {
+  width: 1.9rem;
+  height: 1.9rem;
+  display: block;
+}
+
+.duelo-pick-label {
+  color: var(--duelo-ink);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.duelo-reveal-seat {
+  font-size: 0.75rem;
+  color: var(--duelo-ink-soft);
 }
 
 .duelo-reveal-winner {
-  margin: 0.5rem 0 0;
-  color: var(--ink);
+  margin: 0.6rem 0 0;
+  color: var(--duelo-ink);
+  font-size: 0.9rem;
   font-weight: 700;
 }
 
+/* The three plays, always side by side: the finger-guessing game is a choice
+   between three equal cards, not a list of buttons. */
 .duelo-picks {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.6rem;
-  margin-top: 0.9rem;
+  margin-top: 1rem;
 }
 
 .duelo-pick {
-  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.7rem 0.4rem 0.6rem;
+  border: 2px solid var(--duelo-pick-edge);
+  border-radius: 1rem;
+  background: #fff;
+  color: var(--duelo-ink);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--duelo-pick-edge);
+  transition: transform 120ms cubic-bezier(0.2, 0.9, 0.3, 1.4), box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+/* Lifting on hover and squashing on press are the two cheapest pieces of game
+   feel there are: area is conserved on the press instead of the card simply
+   inflating. The global reduced-motion block in ``src/index.css`` already
+   neutralises both. */
+.duelo-pick:hover:not(:disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 0 var(--duelo-pick-edge);
+}
+
+.duelo-pick:active:not(:disabled) {
+  transform: translateY(1px) scale(0.95, 1.05);
+  box-shadow: 0 1px 0 var(--duelo-pick-edge);
+}
+
+.duelo-pick-art {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  color: var(--duelo-pick-ink);
+  background: var(--duelo-pick-soft);
+}
+
+.duelo-pick .duelo-hand {
+  width: 2rem;
+  height: 2rem;
+}
+
+.duelo-pick:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.duelo-pick-chosen,
+.duelo-pick-chosen:disabled {
+  opacity: 1;
+  border-color: var(--duelo-pick);
+  background: var(--duelo-pick-soft);
+  box-shadow: 0 0 0 3px var(--duelo-pick-edge);
+}
+
+@keyframes duelo-arena-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes duelo-win-pop {
+  0% {
+    transform: scale(0.85);
+  }
+  60% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
 }

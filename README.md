@@ -147,7 +147,14 @@ screen. The roster and presence parsers in `src/games/` follow the same rule.
 
 Per-game CSS shares one global stylesheet once Vite bundles it, so a game must
 prefix every class it owns with its own id (`.duelo-panel`, `.duelo-heading`,
-…) and reuse the theme tokens from `src/index.css` (`--surface`, `--ink`,
-`--accent`, …) rather than redefining colors. The game screen itself is styled
+…) and never redefine a global token in `:root`. It declares its own theme
+scope instead: `duelo` sets namespaced custom properties (`--duelo-rock`,
+`--duelo-ink-soft`, `--duelo-arena`, …) on its own panel, so custom properties
+cascade only inside that panel and each game can look completely different
+without a shared design system. Colour is never the only cue a game uses: every
+play carries its own silhouette and its own visible label beside its hue, which
+is what keeps the panel readable for a player who cannot tell the hues apart.
+Motion is additive and the global `prefers-reduced-motion` block in
+`src/index.css` neutralises it. The game screen itself is styled
 by `.match-screen` in `src/App.css`; a game only styles the panel it renders
 inside it.

@@ -74,7 +74,9 @@ describe('the game screen registry', () => {
   it('renders the registered screen for a valid payload', () => {
     const markup = render('duelo', dueloView)
 
-    expect(markup).toContain('Duelo')
+    // The panel prints no title of its own -- the match screen already renders
+    // the game's label as the page heading -- so duelo's own round field is
+    // what identifies the screen the registry returned.
     expect(markup).toContain('Ronda 2')
   })
 
