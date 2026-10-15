@@ -17,16 +17,15 @@ from modules.games.monopoly.game import MonopolyDefinition
 
 
 class StubRng:
-    """Deterministic ``RandomSource`` that plays back a fixed order and dice."""
+    """Deterministic ``RandomSource`` that plays back a fixed sequence of dice."""
 
-    def __init__(self, order=(), dice=()):
-        self.order = list(order)
+    def __init__(self, dice=()):
         self.dice = list(dice)
         self.shuffle_calls = []
 
     def shuffle(self, items):
         self.shuffle_calls.append(tuple(items))
-        return list(self.order)
+        return list(items)
 
     def roll(self, sides):
         if not self.dice:
@@ -51,8 +50,11 @@ class MonopolyDefinitionTests(SimpleTestCase):
 
     def _start(self, first='seat-0', seats=None):
         seats = self.seats if seats is None else seats
-        order = [first] + [seat for seat in ('seat-0', 'seat-1') if seat != first]
-        self.rng = StubRng(order=order)
+        # The printed throw-off: every seat throws, and `first` throws highest.
+        dice = []
+        for seat in seats:
+            dice.extend([6, 6] if f'seat-{seat.index}' == first else [1, 1])
+        self.rng = StubRng(dice=dice)
         return self.definition.start(seats, self.rng)
 
     def test_registration_fields(self):
@@ -88,7 +90,19 @@ class MonopolyDefinitionTests(SimpleTestCase):
     def test_start_draws_the_opening_seat_from_the_rng(self):
         state = self._start(first='seat-1')
         self.assertEqual(state['turn'], 'seat-1')
-        self.assertEqual(self.rng.shuffle_calls, [('seat-0', 'seat-1')])
+        # The opening seat comes from the throw, never from an arbitrary draw.
+        self.assertEqual(self.rng.shuffle_calls, [])
+
+    def test_the_highest_throw_opens_the_match(self):
+        rng = StubRng(dice=[1, 2, 6, 6])
+        state = self.definition.start(self.seats, rng)
+        self.assertEqual(state['turn'], 'seat-1')
+
+    def test_a_tie_is_rethrown_and_the_higher_total_opens(self):
+        # Both seats throw a 7, then re-throw: seat-0 gets 2 and seat-1 gets 12.
+        rng = StubRng(dice=[3, 4, 3, 4, 1, 1, 6, 6])
+        state = self.definition.start(self.seats, rng)
+        self.assertEqual(state['turn'], 'seat-1')
 
     def test_start_seats_every_player_at_go_with_the_starting_cash(self):
         state = self._start()
@@ -104,9 +118,9 @@ class MonopolyDefinitionTests(SimpleTestCase):
         for count in (1, 9):
             with self.subTest(count=count):
                 seats = _seats(count)
-                order = [f'seat-{seat.index}' for seat in seats]
+                # The roster is validated before the throw, so no dice are needed.
                 with self.assertRaises(ValueError):
-                    self.definition.start(seats, StubRng(order=order))
+                    self.definition.start(seats, StubRng())
 
     def test_active_seats_is_the_seat_on_turn(self):
         state = self._start(first='seat-1')

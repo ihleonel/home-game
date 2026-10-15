@@ -49,6 +49,7 @@ class MonopolyRuntimeTests(SimpleTestCase):
         self.rng = ScriptedRng(
             order=('seat-0', 'seat-1'),
             dice=[
+                6, 6, 1, 1,  # the throw-off: seat-0 throws 12 and opens the match
                 1, 2,  # seat-0: Baltic, bought
                 1, 2,  # seat-1: pays Baltic's rent
                 3, 3,  # seat-0: Connecticut on a double
@@ -128,7 +129,8 @@ class MonopolyRuntimeTests(SimpleTestCase):
             store=FakeStore(),
             registry=self.registry,
             projector=self.projector,
-            rng=ScriptedRng(order=[f'seat-{index}' for index in range(8)]),
+            # The throw-off: seat-0 throws 12, every other seat throws 2.
+            rng=ScriptedRng(dice=[6, 6] + [1, 1] * 7),
         )
 
         self.assertEqual(len(record.state['seats']), 8)

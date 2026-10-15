@@ -67,13 +67,12 @@ _SILENT_KINDS = frozenset(
 )
 
 
-def initial_state(seat_ids: Sequence[str], first_seat: str) -> dict:
-    """Open a match with every player at GO, solvent and holding $1.500.
+def validate_roster(seat_ids) -> list[str]:
+    """Return the roster as a list, or raise for a roster the board cannot seat.
 
-    ``first_seat`` is supplied by the caller (the definition draws it from a
-    ``RandomSource``); the rules never choose an opening seat themselves.
-    Raises ``ValueError`` for a roster the board cannot seat, so an invalid
-    opening never reaches the board.
+    Separated from :func:`initial_state` so a caller that must act before the
+    opening throw -- the definition, which rolls for the turn order -- can
+    reject an invalid roster without first drawing dice for it.
     """
     seats = list(seat_ids)
     if not MIN_SEATS <= len(seats) <= MAX_SEATS:
@@ -83,6 +82,18 @@ def initial_state(seat_ids: Sequence[str], first_seat: str) -> dict:
         )
     if len(set(seats)) != len(seats):
         raise ValueError(f'duplicate seats: {seats!r}')
+    return seats
+
+
+def initial_state(seat_ids: Sequence[str], first_seat: str) -> dict:
+    """Open a match with every player at GO, solvent and holding $1.500.
+
+    ``first_seat`` is supplied by the caller (the definition draws it from a
+    ``RandomSource``); the rules never choose an opening seat themselves.
+    Raises ``ValueError`` for a roster the board cannot seat, so an invalid
+    opening never reaches the board.
+    """
+    seats = validate_roster(seat_ids)
     if first_seat not in seats:
         raise ValueError(f'unknown first seat: {first_seat!r}')
     return {
@@ -222,7 +233,7 @@ def apply_action(
     handler = _HANDLERS.get(action.name)
     if handler is None:
         raise ValueError(f'unknown action: {action.name!r}')
-    return handler(state, seat, rng)
+    return _with_finish_fact(handler(state, seat, rng))
 
 
 def abandon(state: Mapping, seat: str) -> Transition:
@@ -257,7 +268,27 @@ def abandon(state: Mapping, seat: str) -> Transition:
     elif state['turn'] == seat:
         _pass_turn(state, events)
 
-    return Transition(state=state, facts=tuple(events))
+    return _with_finish_fact(Transition(state=state, facts=tuple(events)))
+
+
+def _with_finish_fact(transition: Transition) -> Transition:
+    """Announce the end of the match from the one transition that ends it.
+
+    Every definition emits this fact so a client that reads only the published
+    facts still sees the finish; the runtime reads the winner from
+    :func:`outcome` and publishes its own ``match_finished`` event beside it. A
+    transition that leaves the match running must not announce a finish, and a
+    match can only end once, so the fact appears exactly once.
+    """
+    if not is_finished(transition.state):
+        return transition
+    finished = outcome(transition.state)
+    winner = None if finished is None else finished.winner_seat
+    return Transition(
+        state=transition.state,
+        facts=transition.facts
+        + (Fact(name='match_finished', detail={'winner': winner}),),
+    )
 
 
 def _fresh_player() -> dict:

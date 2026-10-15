@@ -32,8 +32,9 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   at $75. A match plays dice, movement, the GO salary, doubles (the third double in a turn goes
   straight to jail), jail, purchases, rents (a street with the complete colour set doubles its
   unimproved rent, a railroad scales with how many the owner holds and a utility pays four or
-  ten times the roll), both taxes, bankruptcy and elimination. The opening seat is drawn at
-  random, so its definition requires a real `RandomSource` exactly as `ta-te-ti`'s does.
+  ten times the roll), both taxes, bankruptcy and elimination. Every seat throws for the
+  opening turn and the highest total opens (ties re-throw), so its definition requires a real
+  `RandomSource` exactly as `ta-te-ti`'s does.
   Bankruptcy follows the printed rule's creditor split: a debt to another player hands that
   player the debtor's cash and properties, while a debt to the bank takes the cash out of the
   game and returns the properties to the bank unowned. The raise-cash route does not exist yet,

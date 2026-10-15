@@ -43,20 +43,21 @@ class MonopolyDefinition:
     )
 
     def start(self, seats: Sequence[Seat], rng) -> Mapping:
-        """Open a match, drawing the opening seat from ``rng``.
+        """Open a match by the printed throw-off.
 
-        ``rng`` is required: the turn order is decided by a throw of the dice,
-        and silently defaulting to the first seat would hand every match to the
-        same player and make the throw an illusion. A ``None`` rng therefore
-        raises ``ValueError`` instead of falling back.
+        ``rng`` is required: every seat throws two dice and the highest total
+        opens the play, so a ``None`` rng raises ``ValueError`` instead of
+        silently handing the first turn to the first seat and making the throw
+        an illusion. The roster is validated before any die is rolled, so an
+        invalid opening fails without consuming randomness.
         """
         if rng is None:
             raise ValueError(
                 'monopoly requires a RandomSource to draw the opening seat; '
                 'rng must not be None'
             )
-        seat_ids = tuple(seat_id(seat.index) for seat in seats)
-        return rules.initial_state(seat_ids, rng.shuffle(seat_ids)[0])
+        seat_ids = rules.validate_roster(seat_id(seat.index) for seat in seats)
+        return rules.initial_state(seat_ids, _highest_throw(seat_ids, rng))
 
     def active_seats(self, state: Mapping) -> tuple[str, ...]:
         """The seat on turn, or ``()`` once the match is finished.
@@ -150,3 +151,26 @@ class MonopolyDefinition:
             'jail_turns': player['jail_turns'],
             'eliminated': player['eliminated'],
         }
+
+
+def _highest_throw(seat_ids: Sequence[str], rng) -> str:
+    """Return the seat that opens the match, by the printed throw-off.
+
+    Every seat throws two dice and the highest total opens. Ties re-throw among
+    the tied seats only, bounded to one round per seat so a degenerate
+    ``RandomSource`` cannot spin forever: if the bound is exhausted, the first
+    tied seat in seat order opens, which is the tie-break the printed rule
+    leaves to the table.
+    """
+    contenders = list(seat_ids)
+    for _ in range(len(seat_ids)):
+        totals = {
+            seat: sum(rng.roll(rules.DICE_SIDES) for _ in range(rules.DICE_COUNT))
+            for seat in contenders
+        }
+        best = max(totals.values())
+        leaders = [seat for seat in contenders if totals[seat] == best]
+        if len(leaders) == 1:
+            return leaders[0]
+        contenders = leaders
+    return contenders[0]

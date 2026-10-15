@@ -639,6 +639,9 @@ class MonopolyFinishTests(MonopolyRulesTestCase):
             rules.outcome(transition.state),
             Outcome(winner_seat='seat-1', reason='last_solvent'),
         )
+        self.assertIn(
+            ('match_finished', None, {'winner': 'seat-1'}), self._facts(transition)
+        )
         self.assertIsNone(transition.state['turn'])
         self.assertEqual(self._names(transition.state, 'seat-1'), ())
 
@@ -658,6 +661,13 @@ class MonopolyFinishTests(MonopolyRulesTestCase):
         self.assertIsNone(rules.outcome(self._open()))
         self.assertIs(rules.is_finished(self._open()), False)
 
+    def test_a_running_transition_never_announces_a_finish(self):
+        state = self._place(self._open(), 'seat-0', 15)
+        transition = self._roll(state, 'seat-0', 2, 3)
+        self.assertNotIn(
+            'match_finished', [fact[0] for fact in self._facts(transition)]
+        )
+
 
 class MonopolyAbandonTests(MonopolyRulesTestCase):
     def test_abandon_frees_the_properties_and_eliminates_the_seat(self):
@@ -676,6 +686,9 @@ class MonopolyAbandonTests(MonopolyRulesTestCase):
             rules.outcome(transition.state),
             Outcome(winner_seat='seat-0', reason='win_by_abandon'),
         )
+        self.assertIn(
+            ('match_finished', None, {'winner': 'seat-0'}), self._facts(transition)
+        )
 
     def test_abandon_of_a_three_seat_match_keeps_it_running(self):
         state = rules.initial_state(('seat-0', 'seat-1', 'seat-2'), 'seat-0')
@@ -685,6 +698,9 @@ class MonopolyAbandonTests(MonopolyRulesTestCase):
         self.assertIs(transition.state['ended_by_abandon'], False)
         self.assertEqual(transition.state['turn'], 'seat-0')
         self.assertEqual(transition.state['abandoned_seat'], 'seat-1')
+        self.assertNotIn(
+            'match_finished', [fact[0] for fact in self._facts(transition)]
+        )
 
     def test_a_repeated_abandon_of_the_same_seat_is_tolerated(self):
         state = rules.initial_state(('seat-0', 'seat-1', 'seat-2'), 'seat-0')
