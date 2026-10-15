@@ -5,6 +5,12 @@ The definition is exercised through the framework-free use cases
 gates -- ``NotYourTurn``, ``IllegalAction`` and ``StaleVersion`` -- are proven
 against the real game, not a fake. The dice are scripted, so the whole trace is
 deterministic.
+
+The use cases are handed their dependencies here on purpose: this file proves
+the game against the runtime, and the **production** wiring of those
+dependencies is pinned separately by the REST tests in ``test_match_api.py``.
+An integration test that injects its own dependencies cannot prove the wiring,
+which is exactly how a missing ``rng`` in the action view stayed invisible.
 """
 
 from django.test import SimpleTestCase

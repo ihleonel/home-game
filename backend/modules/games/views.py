@@ -204,6 +204,7 @@ def submit_action_view(request, match_ref):
             registry=dependencies.registry,
             projector=dependencies.projector,
             lifecycle=dependencies.lifecycle,
+            rng=dependencies.rng,
         )
     except match_errors.MatchError as error:
         translate_match_error(error)
