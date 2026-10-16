@@ -3,21 +3,28 @@
    leaks colour into the rest of the app. */
 
 .monopoly-panel {
-  --monopoly-ink: var(--ink);
-  --monopoly-ink-soft: var(--ink-soft);
+  /* The palette lives here and never on :root, so the game cannot leak colour
+     into the rest of the app (S10). ``--monopoly-board-line`` is separate from
+     the UI ``--monopoly-line``: the printed board draws in ink, the panel
+     blocks keep the app's softer rule. */
+  --monopoly-ink: #241f2e;
+  --monopoly-ink-soft: #56516a;
   --monopoly-line: var(--line-strong);
-  --monopoly-surface: var(--surface);
-  --monopoly-band-empty: var(--surface-raised);
+  --monopoly-board-line: #2b2733;
+  --monopoly-surface: #fbf6ea;
+  --monopoly-paper: #fdfbf4;
+  --monopoly-band-empty: #efe7d6;
+  --monopoly-band-size: 0.42rem;
   --monopoly-you: var(--accent-dark);
   --monopoly-you-border: var(--accent);
-  --monopoly-brown: #8b5a2b;
-  --monopoly-light-blue: #7ec8e3;
-  --monopoly-pink: #d95fa3;
-  --monopoly-orange: #e8853b;
-  --monopoly-red: #d34f4f;
-  --monopoly-yellow: #e8c33b;
-  --monopoly-green: #3f9c6a;
-  --monopoly-dark-blue: #33439e;
+  --monopoly-brown: #7a4a1f;
+  --monopoly-light-blue: #64b6da;
+  --monopoly-pink: #d23f88;
+  --monopoly-orange: #dd7a1f;
+  --monopoly-red: #cb3a3a;
+  --monopoly-yellow: #e0b81c;
+  --monopoly-green: #2c8a55;
+  --monopoly-dark-blue: #29378f;
 
   margin: 0.5rem 0 1.25rem;
   padding: 1rem;
@@ -53,9 +60,10 @@
   max-width: min(92vh, 100%);
   gap: 1px;
   padding: 1px;
-  border: 2px solid var(--monopoly-line);
-  border-radius: 0.5rem;
-  background: var(--monopoly-line);
+  border: 2px solid var(--monopoly-board-line);
+  border-radius: 0.45rem;
+  /* The gap shows this ink, so the ring between cells reads as a printed line. */
+  background: var(--monopoly-board-line);
 }
 
 .monopoly-space {
@@ -67,10 +75,10 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 1px;
-  border: 1px solid var(--monopoly-line);
-  border-radius: 2px;
-  background: var(--monopoly-surface);
+  padding: 0.14rem;
+  border: 1px solid var(--monopoly-board-line);
+  border-radius: 1px;
+  background: var(--monopoly-paper);
   color: var(--monopoly-ink);
   font-size: 0.45rem;
   line-height: 1.05;
@@ -87,27 +95,88 @@
   box-shadow: inset 0 0 0 2px var(--accent-soft);
 }
 
-/* The full name stays in the DOM on every screen size; small screens clip it
-   to two lines instead of dropping it, so the accessible name still reads it. */
+/* S2: the band faces the centre. It is absolutely positioned against the cell
+   (which is already ``position: relative``) instead of being first in the flex
+   column: the printed board puts the band on the inner edge, and that edge is
+   a different physical side for every side of the ring. Leaving it in the flow
+   would still paint it at the top in the top row -- the outside edge -- and
+   would shove the name and badges when a side flips. The band stays a child so
+   the markup hook (``data-side``) and the accessibility tree do not change;
+   only the decoration moves. Padding on the same edge keeps the content off
+   it. */
+.monopoly-space-band {
+  position: absolute;
+  display: block;
+  background: var(--monopoly-band-empty);
+}
+
+.monopoly-space[data-side='bottom'] {
+  padding-top: calc(var(--monopoly-band-size) + 0.1rem);
+}
+
+.monopoly-space[data-side='bottom'] .monopoly-space-band {
+  inset: 0 0 auto 0;
+  height: var(--monopoly-band-size);
+}
+
+.monopoly-space[data-side='top'] {
+  padding-bottom: calc(var(--monopoly-band-size) + 0.1rem);
+}
+
+.monopoly-space[data-side='top'] .monopoly-space-band {
+  inset: auto 0 0 0;
+  height: var(--monopoly-band-size);
+}
+
+.monopoly-space[data-side='left'] {
+  padding-right: calc(var(--monopoly-band-size) + 0.08rem);
+}
+
+.monopoly-space[data-side='left'] .monopoly-space-band {
+  inset: 0 0 0 auto;
+  width: var(--monopoly-band-size);
+}
+
+.monopoly-space[data-side='right'] {
+  padding-left: calc(var(--monopoly-band-size) + 0.08rem);
+}
+
+.monopoly-space[data-side='right'] .monopoly-space-band {
+  inset: 0 auto 0 0;
+  width: var(--monopoly-band-size);
+}
+
+/* The full name stays in the DOM on every screen size; small screens hide or
+   clip it instead of deleting it, so the accessible name still reads it. */
 .monopoly-space-name {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow-wrap: anywhere;
-  font-weight: 600;
+  font-weight: 650;
 }
 
-/* The colour band is decoration; the name and the group initials below it are
-   what actually say which group the space belongs to. */
-.monopoly-space-band {
-  display: block;
-  height: 0.45rem;
-  border: 1px solid var(--monopoly-line);
-  border-radius: 2px;
-  background: var(--monopoly-band-empty);
+/* S3: on the two side columns the name runs vertically, as on the printed
+   board, and that also frees the cell's width. ``vertical-rl`` reads
+   top-to-bottom, which is what the right column wants; the left column is the
+   same element rotated 180deg so it reads bottom-to-top. The top and bottom
+   rows stay horizontal. */
+.monopoly-space[data-side='left'] .monopoly-space-name,
+.monopoly-space[data-side='right'] .monopoly-space-name {
+  flex: 1 1 auto;
+  align-self: center;
+  max-height: 100%;
+  min-height: 0;
+  writing-mode: vertical-rl;
 }
 
+.monopoly-space[data-side='left'] .monopoly-space-name {
+  transform: rotate(180deg);
+}
+
+/* Colour further down in the cell (S2): the band is decoration; the name, the
+   price and the group initials are what actually say what the space is. */
 .monopoly-space[data-group='brown'] .monopoly-space-band {
   background: var(--monopoly-brown);
 }
@@ -140,20 +209,37 @@
   background: var(--monopoly-dark-blue);
 }
 
-.monopoly-space-group {
+/* S4: the printed purchase price, under the name. It never appears on a space
+   the bank cannot sell. */
+.monopoly-space-price {
   align-self: center;
+  color: var(--monopoly-ink);
   font-size: 0.4rem;
   font-weight: 800;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* The group initials are the non-colour cue (S9); discreet, but always there. */
+.monopoly-space-group {
+  align-self: center;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.36rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
 }
 
 /* The owner is a bordering badge with the player's name, never a bare colour. */
 .monopoly-space-owner {
   overflow: hidden;
-  border: 1px solid var(--monopoly-ink);
-  border-radius: 0.2rem;
-  background: var(--monopoly-surface);
-  font-size: 0.4rem;
+  align-self: center;
+  max-width: 100%;
+  padding: 0 0.12rem;
+  border: 1px solid var(--monopoly-ink-soft);
+  border-radius: 0.15rem;
+  background: var(--monopoly-paper);
+  color: var(--monopoly-ink-soft);
+  font-size: 0.36rem;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -162,44 +248,137 @@
 .monopoly-space-tokens {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
   gap: 1px;
   margin-top: auto;
 }
 
-/* Up to eight tokens can share one cell: they wrap and shrink instead of
-   overlapping, so every seat stays legible. */
+/* S7: a ficha is a round head over a narrow base. Up to eight can share one
+   cell: they wrap instead of overlapping, so every seat stays legible. */
 .monopoly-token {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 0.7rem;
-  padding: 0 0.15rem;
-  border: 1px solid var(--monopoly-ink);
-  border-radius: 999px;
-  background: var(--monopoly-surface);
-  font-size: 0.42rem;
-  font-weight: 800;
-  line-height: 1.15;
+  justify-content: flex-end;
+  min-width: 0;
+  line-height: 1;
 }
 
-.monopoly-token-you {
+/* The base is a pseudo-element (a trapezoid, so it reads as a stand and not a
+   second dot) and is purely decorative. */
+.monopoly-token::after {
+  content: '';
+  width: 0.3rem;
+  height: 0.18rem;
+  margin-top: -0.02rem;
+  background: var(--monopoly-ink);
+  border-radius: 0 0 1px 1px;
+  clip-path: polygon(22% 0, 78% 0, 100% 100%, 0 100%);
+}
+
+.monopoly-token-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.62rem;
+  height: 0.62rem;
+  border: 1px solid var(--monopoly-ink);
+  border-radius: 50%;
+  background: var(--monopoly-paper);
+  color: var(--monopoly-ink);
+  font-size: 0.4rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* The viewer's own seat keeps its distinguishing ring, on the head now that
+   the token has two parts. */
+.monopoly-token-you .monopoly-token-initial {
   border-color: var(--monopoly-you-border);
   color: var(--monopoly-you);
   box-shadow: inset 0 0 0 2px var(--accent-soft);
 }
 
-.monopoly-token-initial {
-  line-height: 1;
-}
-
 /* A jailed seat is marked with an outline, not with words: the words would be
    clipped inside a token this small, and they already live in the title, in the
    accessible name and in the players list. */
-.monopoly-token-jailed {
+.monopoly-token-jailed .monopoly-token-initial {
   border-style: dashed;
   border-width: 2px;
+}
+
+/* S5: the four corners get CSS-only character from pseudo-elements and
+   backgrounds, so every decoration stays out of the accessibility tree and the
+   button is still named exactly after its space. */
+.monopoly-space[data-kind='go'],
+.monopoly-space[data-kind='jail'],
+.monopoly-space[data-kind='free_parking'],
+.monopoly-space[data-kind='go_to_jail'] {
+  justify-content: center;
+}
+
+.monopoly-space[data-kind='go'] .monopoly-space-name,
+.monopoly-space[data-kind='jail'] .monopoly-space-name,
+.monopoly-space[data-kind='free_parking'] .monopoly-space-name,
+.monopoly-space[data-kind='go_to_jail'] .monopoly-space-name {
+  /* Corners read horizontally even when they close a side column: only the
+     streets along the sides are set on their edge on the printed board. */
+  writing-mode: horizontal-tb;
+  transform: none;
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* GO points the way the circuit moves: left, off the bottom-right corner. */
+.monopoly-space[data-kind='go']::before {
+  content: '';
+  width: 0;
+  height: 0;
+  margin-bottom: 0.12rem;
+  border-top: 0.26rem solid transparent;
+  border-bottom: 0.26rem solid transparent;
+  border-right: 0.4rem solid var(--monopoly-ink);
+}
+
+/* Jail draws its bars as a repeating gradient; the note is decorative and
+   duplicates the second half of the name, which already reads it aloud. */
+.monopoly-space[data-kind='jail'] {
+  background-image: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--monopoly-ink) 24%, transparent) 0 1px,
+    transparent 1px 0.3rem
+  );
+}
+
+.monopoly-space[data-kind='jail']::after {
+  content: 'Solo visitando';
+  margin-top: 0.06rem;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.34rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Free Parking and Go to Jail each get a direction of hatching so their corner
+   is distinct without an image. */
+.monopoly-space[data-kind='free_parking'] {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--monopoly-band-empty) 0 0.22rem,
+    transparent 0.22rem 0.44rem
+  );
+}
+
+.monopoly-space[data-kind='go_to_jail'] {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--monopoly-ink) 14%, transparent) 0 0.16rem,
+    transparent 0.16rem 0.32rem
+  );
 }
 
 /* The space under auction is marked without relying on colour: a dashed,
@@ -230,13 +409,90 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
+  gap: 0.7rem;
   overflow: auto;
-  padding: 0.5rem;
+  padding: 0.6rem;
   border-radius: 0.4rem;
-  background: var(--monopoly-surface);
+  background: radial-gradient(circle at 50% 40%, var(--monopoly-paper), var(--monopoly-surface));
   color: var(--monopoly-ink);
   text-align: center;
+}
+
+/* S6: the centre reads top to bottom -- the game's name and the two piles of
+   cards, then the match state (turn, throw, drawn card), then the tapped
+   space's detail. The band is the identity line above that state. */
+.monopoly-centre-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  max-width: 22rem;
+  padding: 0 0.5rem 0.5rem;
+  border-bottom: 2px solid var(--monopoly-board-line);
+}
+
+.monopoly-brand-name {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  text-transform: uppercase;
+}
+
+.monopoly-piles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem 1.1rem;
+}
+
+/* A pile is drawn as a small stack of cards with a doubled shadow, no image. */
+.monopoly-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 5rem;
+  padding: 0.4rem 0.6rem 0.35rem;
+  border: 1px solid var(--monopoly-board-line);
+  border-radius: 0.18rem;
+  background: var(--monopoly-paper);
+  box-shadow:
+    0.14rem 0.14rem 0 0 var(--monopoly-band-empty),
+    0.14rem 0.14rem 0 1px var(--monopoly-board-line);
+}
+
+.monopoly-pile-chance {
+  border-top: 0.22rem solid var(--monopoly-orange);
+}
+
+.monopoly-pile-community {
+  border-top: 0.22rem solid var(--monopoly-light-blue);
+}
+
+.monopoly-pile-name {
+  color: var(--monopoly-ink-soft);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.monopoly-pile-count {
+  color: var(--monopoly-ink);
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.monopoly-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
 }
 
 .monopoly-turn,
@@ -475,6 +731,23 @@
 .monopoly-player-out {
   opacity: 0.65;
   text-decoration: line-through;
+}
+
+/* S8: on a narrow board the cell drops its least important information first.
+   The price goes, then the name. The group initials, the owner badge and the
+   tokens are never dropped, and these rules only hide things: the markup, and
+   with it the button's ``aria-label``, keeps every fact intact for a screen
+   reader. The two breakpoints make the order explicit instead of one jump. */
+@media (max-width: 899px) {
+  .monopoly-space-price {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .monopoly-space-name {
+    display: none;
+  }
 }
 
 @media (min-width: 900px) {

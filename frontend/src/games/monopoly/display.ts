@@ -83,6 +83,21 @@ export function deckLabel(deck: string): string {
 }
 
 /**
+ * The game's printed name, shown on the board's centre band (S6).
+ *
+ * The board is rendered from the match view alone and never receives the game
+ * catalog label the page heading uses, so the name is **copied** here next to
+ * the deck and group labels this module already owns.
+ *
+ * It is a copy and not the source: the backend's ``label`` is. Renaming the game
+ * therefore costs two edits and nothing fails when only one is made. Passing
+ * the label through the match view would remove the copy, and that is a change
+ * to the shared view for a cosmetic reason; until somebody decides to make it,
+ * this comment is the only warning.
+ */
+export const GAME_NAME = 'Monopoly'
+
+/**
  * Group an integer amount of dollars with dots, the way the board prints it.
  *
  * ``Intl`` is deliberately avoided: the tests run in Node and the markup has

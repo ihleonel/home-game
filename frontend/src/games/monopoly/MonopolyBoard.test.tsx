@@ -102,6 +102,11 @@ function markup(rawView: MonopolyView, selected: number | null = null): string {
   )
 }
 
+/** The static markup of one rendered host element, so a test can pin its contents. */
+function elementMarkup(element: ReactElement): string {
+  return renderToStaticMarkup(element)
+}
+
 function labelOf(button: ReactElement): string {
   return (button.props as { 'aria-label'?: string })['aria-label'] ?? ''
 }
@@ -268,6 +273,61 @@ describe('the monopoly board', () => {
 
     expect(pressed).toHaveLength(1)
     expect(labelOf(pressed[0])).toContain('Avenida Mediterráneo')
+  })
+
+  it('prints the purchase price on a purchasable space and none on a non-purchasable one', () => {
+    // The printed board carries the price under every street name (S4); a
+    // corner, a tax or a card space is not for sale and prints no price.
+    const buttons = buttonElements(view())
+
+    expect(elementMarkup(spaceButton(buttons, 'Avenida Mediterráneo'))).toMatch(
+      /monopoly-space-price[^>]*>\$60</,
+    )
+    expect(elementMarkup(spaceButton(buttons, 'GO'))).not.toContain('monopoly-space-price')
+    expect(elementMarkup(spaceButton(buttons, 'Chance'))).not.toContain('monopoly-space-price')
+  })
+
+  it('keeps the group initials, the owner badge and the tokens as accessible markup', () => {
+    // Colour is never the only cue (S9): the skin may make these discreet, but
+    // the markup still carries the two-letter group, the owner's name and the
+    // seat tokens next to the name and the price.
+    const withOwner = view({
+      owners: { '1': 'seat-0' },
+      players: [
+        player({ seat: 'seat-0', position: 1 }),
+        player({ seat: 'seat-1', position: 1, eliminated: true }),
+      ],
+    })
+    const page = markup(withOwner)
+
+    expect(page).toMatch(/monopoly-space-group[^>]*>MA</)
+    expect(page).toMatch(/monopoly-space-owner[^>]*>Ana</)
+    expect(page).toContain('monopoly-space-tokens')
+    expect(page.match(/monopoly-token-initial/g)).toHaveLength(1)
+  })
+
+  it('keeps every corner name in the markup', () => {
+    // The corners get CSS character (S5); their names stay legible and the
+    // accessible name keeps reading them.
+    const page = markup(view())
+
+    expect(page).toContain('>GO<')
+    expect(page).toContain('Cárcel / Solo visitando')
+    expect(page).toContain('Free Parking')
+    expect(page).toContain('Go to Jail')
+  })
+
+  it('shows the game name band and the two deck piles in the centre', () => {
+    const page = markup(view({ decks: { chance: 14, community_chest: 9 } }))
+
+    expect(page).toMatch(/monopoly-brand-name[^>]*>Monopoly</)
+    expect(page).toContain('monopoly-centre-band')
+    expect(page).toContain('monopoly-pile-count">14<')
+    expect(page).toContain('monopoly-pile-count">9<')
+  })
+
+  it('shows no deck pile markup when the view reports no deck counts', () => {
+    expect(markup(view({ decks: null }))).not.toContain('monopoly-pile')
   })
 
   it('reports a tap with the space index and never calls an action', () => {

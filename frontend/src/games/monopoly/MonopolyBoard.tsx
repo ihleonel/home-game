@@ -3,7 +3,16 @@ import type { MatchState } from '../registry'
 import { BOARD, isPurchasable, spaceAt } from './board'
 import type { Space } from './board'
 import { deedFor, purchasePrice, rentForLevel } from './deeds'
-import { GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, deckLabel, formatMoney, seatName } from './display'
+import {
+  DECK_LABELS,
+  GAME_NAME,
+  GROUP_INITIALS,
+  GROUP_LABELS,
+  KIND_LABELS,
+  deckLabel,
+  formatMoney,
+  seatName,
+} from './display'
 import { spaceArea, spaceSide } from './grid'
 import type { MonopolyPlayer, MonopolyView } from './view'
 
@@ -163,6 +172,11 @@ export function MonopolyBoard({
           >
             {space.group && <span className="monopoly-space-band" aria-hidden="true" />}
             <span className="monopoly-space-name">{space.name}</span>
+            {isPurchasable(space) && (
+              <span className="monopoly-space-price">
+                {formatMoney(purchasePrice(space.index))}
+              </span>
+            )}
             {space.group && (
               <span className="monopoly-space-group" aria-hidden="true">
                 {GROUP_INITIALS[space.group]}
@@ -179,24 +193,41 @@ export function MonopolyBoard({
       })}
 
       <div className="monopoly-centre" style={{ gridRow: '2 / 11', gridColumn: '2 / 11' }}>
-        <p className="monopoly-turn" role="status">
-          {view.turn === null ? 'Sin turno' : `Turno de ${seatName(match, view.turn)}`}
-        </p>
-        {view.last_roll !== null && (
-          <p className="monopoly-roll" role="status">
-            {`Última tirada: ${view.last_roll[0]} y ${view.last_roll[1]}`}
+        <div className="monopoly-centre-band">
+          <p className="monopoly-brand-name">{GAME_NAME}</p>
+          {view.decks !== null && (
+            <div className="monopoly-piles">
+              <div className="monopoly-pile monopoly-pile-chance">
+                <span className="monopoly-pile-name">{DECK_LABELS.chance}</span>
+                <span className="monopoly-pile-count">{view.decks.chance}</span>
+              </div>
+              <div className="monopoly-pile monopoly-pile-community">
+                <span className="monopoly-pile-name">{DECK_LABELS.community_chest}</span>
+                <span className="monopoly-pile-count">{view.decks.community_chest}</span>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="monopoly-status">
+          <p className="monopoly-turn" role="status">
+            {view.turn === null ? 'Sin turno' : `Turno de ${seatName(match, view.turn)}`}
           </p>
-        )}
-        {view.last_card !== null && (
-          <p className="monopoly-roll monopoly-card" role="status">
-            {`${deckLabel(view.last_card.deck)}: ${view.last_card.title}`}
-          </p>
-        )}
-        {view.auction !== null && (
-          <p className="monopoly-roll monopoly-auction-line" role="status">
-            {`Subasta de ${spaceAt(view.auction.space).name}`}
-          </p>
-        )}
+          {view.last_roll !== null && (
+            <p className="monopoly-roll" role="status">
+              {`Última tirada: ${view.last_roll[0]} y ${view.last_roll[1]}`}
+            </p>
+          )}
+          {view.last_card !== null && (
+            <p className="monopoly-roll monopoly-card" role="status">
+              {`${deckLabel(view.last_card.deck)}: ${view.last_card.title}`}
+            </p>
+          )}
+          {view.auction !== null && (
+            <p className="monopoly-roll monopoly-auction-line" role="status">
+              {`Subasta de ${spaceAt(view.auction.space).name}`}
+            </p>
+          )}
+        </div>
         {chosen !== null && (
           <div className="monopoly-detail" role="status">
             <p className="monopoly-detail-name">{chosen.name}</p>

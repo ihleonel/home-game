@@ -61,7 +61,12 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
   printed price and owner and carries the tokens of the seats standing on it, with the turn, the
-  last throw, the card turned up last and the detail of the tapped space in the centre 9x9. Next
+  last throw, the card turned up last and the detail of the tapped space in the centre 9x9. The
+  board is skinned after the printed game, and with CSS only -- no fonts, images or SVG: the
+  colour band sits on the inner edge of every space instead of the outer one, the two side columns
+  carry their names rotated the way the printed board reads them, every purchasable space prints
+  its price, and the corners and the centre draw their own character from borders, gradients and
+  type. Next
   to it, the panel shows the own seat's capital, position, jail state, the jail cards it holds
   and its properties grouped by colour, how many cards are left in each deck, the actions the
   server offered, and the roster of every seat. The board is read-only on purpose -- buying and
