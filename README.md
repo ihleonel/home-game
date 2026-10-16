@@ -63,12 +63,34 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   keeps charging double even when a sibling carries houses. Buildings go back to the bank when a
   seat goes bankrupt, and a player creditor also collects half of what they cost, because a property
   is never handed over with buildings on it; that is likewise what makes the repairs cards cost
-  something. Mortgages and trading are still absent, and with them the route that would let a seat
-  raise cash before going bankrupt, and the printed rule that sends houses and hotels to auction
-  when the bank runs out is not implemented either: the option is simply not offered. The printed rules do
-  not cover a debt owed to several players at once, so a group payment that cannot be met pays
-  its shares in seat order and the first share that cannot be afforded is the bankruptcy, with
-  that player as the creditor.
+  something.
+  Mortgages are in. A seat may mortgage any of its unimproved properties -- no street of that
+  colour group may carry a house, and a railroad or a utility needs no such check -- and collects
+  the printed mortgage value from the bank while the space keeps its owner: it stays in the seat's
+  estate, it still counts at its printed price for the 10 % Income Tax, and it charges no rent at
+  all, so a mortgaged sibling of a complete colour group does not stop the others from charging
+  double. Building on a group with a mortgaged street is refused for the same reason. Lifting a
+  mortgage costs its value plus a tenth of it, rounded up to the whole dollar, and is offered only
+  when the cash covers it. A seat that takes over mortgaged property -- today only through a
+  bankruptcy settlement, because trading is still absent -- pays the bank that same tenth of each
+  property at once and keeps them mortgaged, and a creditor who cannot afford it goes bankrupt to
+  the bank, the cascade the printed rules imply: it cannot keep what it cannot sustain. The
+  mortgage is a fact about the owner, not about the space: a property the bank takes back comes
+  out from under its mortgage, and a debt whose creditor leaves the match is owed to the bank.
+  A charge a seat cannot pay no longer ends it on the spot. The seat enters a raise-cash window
+  whose only actions are selling buildings back at half price, mortgaging, paying the whole debt
+  or declaring bankruptcy, and the window closes on its own terms: the turn never passes with a
+  debt open and a debt never survives a change of turn. Paying resumes the step exactly as it
+  would have run with the cash in hand, down to the extra roll a double had already earned and
+  the throw the third jail turn was decided with. The printed rules do not cover a debt owed to
+  several players at once, so a group payment is paid share by share in seat order from the top;
+  the first share the cash cannot cover opens the window with the remaining shares saved, and
+  paying it continues the round where it stopped, with that player as the creditor if the seat
+  declares bankruptcy there. A seat that is charged while it is not on turn -- the seat on turn
+  collects from everyone and some other seat cannot pay -- still goes bankrupt in the act, an
+  accepted limit of a window that belongs to the turn.
+  Trading and the printed rule that sends houses and hotels to auction when the bank's box runs
+  out are still absent, and the option is simply not offered.
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
   printed price, owner and development level, carries the tokens of the seats standing on it and the
@@ -86,13 +108,20 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   server offered, and the roster of every seat. Building lives there as well: the server offers
   `build` and `sell` with the streets it will accept, and the panel resolves each offered index to
   its space name and its price, so it still never decides which options are legal nor whether the
-  level being raised is a house or a hotel. The board is read-only on purpose -- buying and
-  building belong to the panel -- and the panel submits the actions it was handed and never
+  level being raised is a house or a hotel. Mortgages read the same way: the server offers
+  `mortgage` and `unmortgage` with the spaces it will accept, and the panel labels each with the
+  cash it moves. A mortgaged space wears a diagonal grey stripe over its colour band -- or over
+  the band strip the cell already reserves when it is a railroad or a utility, which this skin
+  leaves band-less -- with its printed price struck through, `Hipotecada` in its accessible name
+  and its value and its lift cost in the centre detail; its own property row carries a mortgaged
+  badge, and the raise-cash window shows the open debt above the actions, with the amount and the
+  creditor by display name. The board is read-only on purpose -- buying, building and mortgaging
+  belong to the panel -- and the panel submits the actions it was handed and never
   decides which ones are legal, so a spectator sees the same board and no buttons at all. The
   board's static data (the 40 spaces and the 22 deeds) is duplicated in TypeScript with a
   fidelity test on each side, so it does not travel in every match frame. What the tests do not
   reach is the CSS itself: the 900px breakpoint, the token wrapping, the colour bands and the
-  little houses and hotel block are
+  little houses and hotel block, and the mortgaged stripe and its struck price over them, are
   verified in the markup they hang on, not in a browser.
 
 A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
