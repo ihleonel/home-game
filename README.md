@@ -89,8 +89,24 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   declares bankruptcy there. A seat that is charged while it is not on turn -- the seat on turn
   collects from everyone and some other seat cannot pay -- still goes bankrupt in the act, an
   accepted limit of a window that belongs to the turn.
-  Trading and the printed rule that sends houses and hotels to auction when the bank's box runs
-  out are still absent, and the option is simply not offered.
+  Trading is in, and it can happen at any moment. Any seat still in the match may offer another one a
+  deal, in any phase, whether or not it is that seat's turn, and several offers can be open at once.
+  An offer names what each side hands over -- properties and cash, either side possibly empty, but
+  never both -- and the receiver of an offer can only accept it or reject it: there is no
+  counteroffer, so countering means rejecting and offering again. The seat that made an offer can
+  withdraw it, and an offer never expires on its own. What keeps an old offer honest is that its
+  terms are checked again when it is accepted, so an offer whose properties have moved on since it
+  was made is shown as no longer acceptable: offering reserves nothing. The printed rules' three
+  limits hold: no street of a colour group that carries a house or a hotel can change hands (sell
+  them to the bank first), there are no loans between players, and whoever receives a mortgaged
+  property pays the bank its tenth of interest at once, which is why an offer that would leave a
+  side unable to afford that interest cannot be accepted. A deal is agreed between two seats only:
+  no three-way pacts, and the offer is the only way to negotiate, since there is no free-text
+  channel. A seat with an open debt does not take part in a trade while that debt is open -- its
+  ways out stay the window's four -- and an offer dies with either of its two seats, or with the
+  match.
+  The printed rule that sends houses and hotels to auction when the bank's box runs out is still
+  absent, and the option is simply not offered.
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
   printed price, owner and development level, carries the tokens of the seats standing on it and the
@@ -115,8 +131,15 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   leaves band-less -- with its printed price struck through, `Hipotecada` in its accessible name
   and its value and its lift cost in the centre detail; its own property row carries a mortgaged
   badge, and the raise-cash window shows the open debt above the actions, with the amount and the
-  creditor by display name. The board is read-only on purpose -- buying, building and mortgaging
-  belong to the panel -- and the panel submits the actions it was handed and never
+  creditor by display name. Trading is composed there too: the panel offers the block when the
+  server offers `propose`, the seat picks the receiver among the other seats still in the match,
+  marks its own properties to give and that receiver's to ask for, sets the two cash amounts within
+  the cash the view shows, and one button composes the value the server grades; the open offers are
+  listed with their terms, which side each piece belongs to and the validity the server published,
+  and accept and reject are offered to the receiver while withdraw is offered to the proposer,
+  never a button the server did not offer. The board is read-only on purpose -- buying, building,
+  mortgaging and trading belong to the panel -- and the panel submits the actions it was handed and
+  never
   decides which ones are legal, so a spectator sees the same board and no buttons at all. The
   board's static data (the 40 spaces and the 22 deeds) is duplicated in TypeScript with a
   fidelity test on each side, so it does not travel in every match frame. What the tests do not
