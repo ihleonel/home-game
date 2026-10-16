@@ -38,7 +38,7 @@ class SubmitActionSerializer(StrictSerializer):
     session_id = serializers.UUIDField()
     action_name = serializers.CharField(max_length=32)
     action_value = serializers.CharField(
-        max_length=64, required=False, allow_null=True
+        max_length=512, required=False, allow_null=True
     )
     expected_version = serializers.IntegerField(min_value=0)
 

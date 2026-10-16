@@ -106,7 +106,7 @@ class MatchAction(models.Model):
     sequence = models.PositiveIntegerField()
     seat_id = models.CharField(max_length=32)
     action_name = models.CharField(max_length=32)
-    action_value = models.CharField(max_length=64, blank=True, default='')
+    action_value = models.CharField(max_length=512, blank=True, default='')
     version = models.PositiveIntegerField()
     facts = models.JSONField(default=list)
     created_at = models.DateTimeField(auto_now_add=True)

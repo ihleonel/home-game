@@ -24,7 +24,7 @@ from modules.games.duelo import rules
 from modules.games.interfaces.composition import compose_match_dependencies
 from modules.games.interfaces.match_start import open_match_for_room
 from modules.games.monopoly import cards
-from modules.games.models import Match, MatchSeat
+from modules.games.models import Match, MatchAction, MatchSeat
 from modules.games.runtime.domain.errors import WrongSeatCount
 from modules.rooms.models import Participant, Room
 
@@ -372,6 +372,36 @@ class SubmitActionApiTests(MatchApiTestCase):
         response = self.submit_action(self.match_ref, self.first, value='bomb', version=0)
 
         self.assert_error(response, status.HTTP_400_BAD_REQUEST, 'illegal_action')
+
+    def test_a_long_value_passes_the_serializer_and_is_graded_as_illegal(self):
+        # 240 characters used to fail the 64-character serializer before the
+        # definition ever saw the value. The widened channel lets the runtime
+        # grade it, so the rejection is the domain's ``illegal_action`` and not
+        # a serializer field error.
+        response = self.submit_action(
+            self.match_ref, self.first, value='x' * 240, version=0
+        )
+
+        self.assert_error(response, status.HTTP_400_BAD_REQUEST, 'illegal_action')
+        self.assertEqual(MatchAction.objects.count(), 0)
+
+    def test_the_audit_row_round_trips_a_512_character_value(self):
+        match = Match.objects.get(public_id=self.match_ref)
+        value = 'x' * 512
+
+        action = MatchAction.objects.create(
+            match=match,
+            sequence=1,
+            seat_id='seat-0',
+            action_name='build',
+            action_value=value,
+            version=1,
+            facts=[],
+        )
+
+        self.assertEqual(
+            MatchAction.objects.get(pk=action.pk).action_value, value
+        )
 
 
 class MatchFinishResetsReadinessApiTests(MatchApiTestCase):
