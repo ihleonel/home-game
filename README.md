@@ -52,15 +52,28 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   bids at all. A fresh bid reopens the auction for whoever had passed, and the seat holding the
   high bid can only raise it, because a bid cannot be withdrawn. Bids climb a small ladder over
   the high bid, capped by the bidder's cash, because the runtime only accepts enumerated options
-  and the printed rules allow any price. One limit is still deliberate rather than an oversight:
-  building, mortgages and trading are absent, so no seat can raise cash before going bankrupt and
-  a repairs card costs nothing while nothing is built. The printed rules do
+  and the printed rules allow any price.
+  Building is in. A seat holding a complete colour group may raise its least developed street one
+  level, and the piece comes out of the bank's finite stock of 32 houses and 12 hotels: a house for
+  levels one to four, and a hotel once every street of that group carries four houses, which returns
+  those four houses to the box. Houses and hotels also come down as evenly as they went up -- only
+  the group's most developed street can sell, one level at a time, for half of what it cost -- and
+  selling a hotel is the reverse of buying it, so it needs four houses in the bank to leave the
+  property at four. A street's rent follows its level, while an unimproved lot of a complete group
+  keeps charging double even when a sibling carries houses. Buildings go back to the bank when a
+  seat goes bankrupt, and a player creditor also collects half of what they cost, because a property
+  is never handed over with buildings on it; that is likewise what makes the repairs cards cost
+  something. Mortgages and trading are still absent, and with them the route that would let a seat
+  raise cash before going bankrupt, and the printed rule that sends houses and hotels to auction
+  when the bank runs out is not implemented either: the option is simply not offered. The printed rules do
   not cover a debt owed to several players at once, so a group payment that cannot be met pays
   its shares in seat order and the first share that cannot be afforded is the bankruptcy, with
   that player as the creditor.
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
-  printed price and owner and carries the tokens of the seats standing on it, with the turn, the
+  printed price, owner and development level, carries the tokens of the seats standing on it and the
+  little houses or the single hotel block a built street holds -- painted with CSS shapes on the
+  inner edge of its colour band, like the printed board -- with the turn, the
   last throw, the card turned up last and the detail of the tapped space in the centre 9x9. The
   board is skinned after the printed game, and with CSS only -- no fonts, images or SVG: the
   colour band sits on the inner edge of every space instead of the outer one, the two side columns
@@ -68,13 +81,18 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   its price, and the corners and the centre draw their own character from borders, gradients and
   type. Next
   to it, the panel shows the own seat's capital, position, jail state, the jail cards it holds
-  and its properties grouped by colour, how many cards are left in each deck, the actions the
-  server offered, and the roster of every seat. The board is read-only on purpose -- buying and
+  and its properties grouped by colour with the level of each built one, how many cards are left in
+  each deck, how many houses and hotels are left in the bank's box, the actions the
+  server offered, and the roster of every seat. Building lives there as well: the server offers
+  `build` and `sell` with the streets it will accept, and the panel resolves each offered index to
+  its space name and its price, so it still never decides which options are legal nor whether the
+  level being raised is a house or a hotel. The board is read-only on purpose -- buying and
   building belong to the panel -- and the panel submits the actions it was handed and never
   decides which ones are legal, so a spectator sees the same board and no buttons at all. The
   board's static data (the 40 spaces and the 22 deeds) is duplicated in TypeScript with a
   fidelity test on each side, so it does not travel in every match frame. What the tests do not
-  reach is the CSS itself: the 900px breakpoint, the token wrapping and the colour bands are
+  reach is the CSS itself: the 900px breakpoint, the token wrapping, the colour bands and the
+  little houses and hotel block are
   verified in the markup they hang on, not in a browser.
 
 A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
