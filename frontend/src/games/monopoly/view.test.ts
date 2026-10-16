@@ -44,6 +44,8 @@ function rawView(overrides: Record<string, unknown> = {}): Record<string, unknow
       id: 'chance-08',
       title: 'El banco te paga un dividendo de $50.',
     },
+    buildings: { '1': 2 },
+    bank: { houses: 30, hotels: 11 },
     auction: null,
     last_roll: [1, 2],
     pending: null,
@@ -82,6 +84,8 @@ describe('the monopoly view parser', () => {
     delete payload.decks
     delete payload.last_card
     delete payload.auction
+    delete payload.buildings
+    delete payload.bank
 
     expect(parseMonopolyView(payload)).toEqual({
       finished: false,
@@ -92,6 +96,8 @@ describe('the monopoly view parser', () => {
       owners: { '3': 'seat-0' },
       decks: null,
       last_card: null,
+      buildings: {},
+      bank: null,
       auction: null,
       last_roll: null,
       pending: null,
@@ -276,6 +282,57 @@ describe('the monopoly view parser', () => {
 
     expect(view).not.toBeNull()
     expect(view?.players.map((player) => player.jail_cards)).toEqual([0, 0])
+  })
+
+  it('reads the buildings map and the bank stock field by field', () => {
+    const view = parseMonopolyView(
+      rawView({ buildings: { '1': 2, '39': 5 }, bank: { houses: 29, hotels: 12 } }),
+    )
+
+    expect(view?.buildings).toEqual({ '1': 2, '39': 5 })
+    expect(view?.bank).toEqual({ houses: 29, hotels: 12 })
+  })
+
+  it('leaves the whole buildings map empty when any entry is malformed', () => {
+    // All-or-nothing, like ``decks``: one bad entry drops the whole map rather
+    // than showing a board with a level the server never reported.
+    expect(parseMonopolyView(rawView({ buildings: 'houses' }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: [] }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: { '1': 0 } }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: { '1': 6 } }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: { '1': 1.5 } }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: { '1': '2' } }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: { '40': 2 } }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: { '-1': 2 } }))?.buildings).toEqual({})
+    expect(parseMonopolyView(rawView({ buildings: { flat: 2 } }))?.buildings).toEqual({})
+    // The good entry goes down with the bad one: the map is one unit.
+    expect(parseMonopolyView(rawView({ buildings: { '1': 2, '3': 0 } }))?.buildings).toEqual({})
+  })
+
+  it('treats a payload without buildings and bank as unbuilt with no bank', () => {
+    const payload = rawView()
+    delete payload.buildings
+    delete payload.bank
+
+    const view = parseMonopolyView(payload)
+
+    expect(view).not.toBeNull()
+    expect(view?.buildings).toEqual({})
+    expect(view?.bank).toBeNull()
+  })
+
+  it('drops a malformed bank and keeps the rest of the view', () => {
+    expect(parseMonopolyView(rawView({ bank: 'pocket' }))?.bank).toBeNull()
+    expect(parseMonopolyView(rawView({ bank: { houses: -1, hotels: 12 } }))?.bank).toBeNull()
+    expect(parseMonopolyView(rawView({ bank: { houses: 30 } }))?.bank).toBeNull()
+    expect(parseMonopolyView(rawView({ bank: { houses: 30, hotels: 1.5 } }))?.bank).toBeNull()
+    expect(parseMonopolyView(rawView({ bank: { houses: '30', hotels: 12 } }))?.bank).toBeNull()
+
+    const view = parseMonopolyView(rawView({ bank: { houses: 30 } }))
+
+    expect(view).not.toBeNull()
+    expect(view?.players).toHaveLength(2)
+    expect(view?.buildings).toEqual({ '1': 2 })
   })
 
   it('never leaks the hidden deck order, wherever the payload puts it', () => {

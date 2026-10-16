@@ -1,5 +1,6 @@
 import type { MatchRuntimeView } from '../registry'
 import { BOARD_SIZE } from './board'
+import { HOTEL_LEVEL } from './deeds'
 
 /**
  * The phases the rules persist (S6 of ``monopoly.md`` plus the bidding phase
@@ -46,6 +47,17 @@ export type MonopolyLastCard = {
   deck: string
   id: string
   title: string
+}
+
+/**
+ * How much of the finite building stock is left in the bank's box (S8).
+ *
+ * The game starts with 32 houses and 12 hotels and every build and sell moves
+ * one of these counts, so the pair is what makes the printed scarcity visible.
+ */
+export type MonopolyBank = {
+  houses: number
+  hotels: number
 }
 
 /**
@@ -101,6 +113,14 @@ export type MonopolyView = MatchRuntimeView & {
   pending: MonopolyPending | null
   decks: MonopolyDecks | null
   last_card: MonopolyLastCard | null
+  /**
+   * The development level of every built street (S8), keyed by board index as
+   * a string because the state is ``jsonb``. An unbuilt street has no key and
+   * an empty map means nothing is built anywhere. Read it with
+   * ``String(index)``.
+   */
+  buildings: Record<string, number>
+  bank: MonopolyBank | null
   auction: MonopolyAuction | null
   actions: MonopolyAction[]
 }
@@ -161,6 +181,41 @@ function readDecks(value: unknown): MonopolyDecks | null {
   if (!isInteger(chance) || chance < 0) return null
   if (!isInteger(community_chest) || community_chest < 0) return null
   return { chance, community_chest }
+}
+
+/**
+ * Read the development level of every built street (S12).
+ *
+ * All-or-nothing, like ``decks``: a key that is not a board index or a level
+ * that is not an integer from one to five drops the **whole** map to ``{}``
+ * rather than keeping the entries it recognized. A payload without the field
+ * is simply unbuilt, which is what an old payload and an untouched board both
+ * mean. The keys stay strings because the state is ``jsonb``; the board reads
+ * them with ``String(index)``.
+ */
+function readBuildings(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {}
+  const buildings: Record<string, number> = {}
+  for (const [key, level] of Object.entries(value)) {
+    if (!/^\d+$/.test(key) || !isBoardIndex(Number(key))) return {}
+    if (!isInteger(level) || level < 1 || level > HOTEL_LEVEL) return {}
+    buildings[key] = level
+  }
+  return buildings
+}
+
+/**
+ * Read the building stock left in the bank, or ``null`` (S12).
+ *
+ * Two integer counts, zero or more; a missing or malformed object is ``null``
+ * and the panel omits its block rather than printing a number nobody sent.
+ */
+function readBank(value: unknown): MonopolyBank | null {
+  if (!isRecord(value)) return null
+  const { houses, hotels } = value
+  if (!isInteger(houses) || houses < 0) return null
+  if (!isInteger(hotels) || hotels < 0) return null
+  return { houses, hotels }
 }
 
 /** Read the last card turned up, or ``null`` when nothing usable was drawn. */
@@ -300,10 +355,10 @@ function readActions(value: unknown): MonopolyAction[] {
  * Past those identifiers it degrades instead of rejecting, exactly as every
  * other parser in this folder does: a malformed optional field costs that
  * field, never the whole screen. ``turn``, ``last_roll``, ``pending``,
- * ``decks``, ``last_card`` and ``auction`` become ``null``, ``actions`` loses
- * only its bad entries, a seat's ``jail_cards`` becomes ``0``, and an optional
- * field of the wrong type is left out so the component's own fallback covers
- * it.
+ * ``decks``, ``last_card``, ``bank`` and ``auction`` become ``null``,
+ * ``buildings`` becomes ``{}``, ``actions`` loses only its bad entries, a
+ * seat's ``jail_cards`` becomes ``0``, and an optional field of the wrong type
+ * is left out so the component's own fallback covers it.
  */
 export function parseMonopolyView(raw: unknown): MonopolyView | null {
   if (!isRecord(raw)) return null
@@ -334,6 +389,8 @@ export function parseMonopolyView(raw: unknown): MonopolyView | null {
     pending: readPending(raw.pending),
     decks: readDecks(raw.decks),
     last_card: readLastCard(raw.last_card),
+    buildings: readBuildings(raw.buildings),
+    bank: readBank(raw.bank),
     auction: readAuction(raw.auction),
     actions: readActions(raw.actions),
   }

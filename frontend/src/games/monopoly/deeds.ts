@@ -99,6 +99,47 @@ export function rentForLevel(deed: Deed, level: number): number {
   return deed.houseRents[level - 1]
 }
 
+/**
+ * The cost price of a street's buildings at ``level`` (S5).
+ *
+ * Level 5 is a hotel and is worth **five** houses: its seat paid four houses
+ * (returned to the bank when the hotel went up) plus the hotel's own price.
+ * This is the only place the equivalence lives, so the rent, the tax and the
+ * bankruptcy cannot drift. Raises for a level off the scale.
+ */
+export function developmentCost(deed: Deed, level: number): number {
+  if (!Number.isInteger(level) || level < 0 || level > HOTEL_LEVEL) {
+    throw new Error(`development level out of range: ${level}`)
+  }
+  return deed.houseCost * level
+}
+
+/**
+ * The cash one sold level returns to its owner (S4/S5).
+ *
+ * Vending is the reverse of buying, level by level, at one half of the price
+ * paid. Every ``houseCost`` on this board is even, so the half is an integer
+ * and there is no rounding to choose.
+ */
+export function sellBack(deed: Deed): number {
+  return deed.houseCost / 2
+}
+
+/**
+ * The Spanish label of a built level: ``1 casa`` … ``4 casas`` and ``Hotel``.
+ *
+ * It lives beside the level constants because it names the same scale the rest
+ * of this module prices, and the board and the panel must say it the same way.
+ * Raises for level 0, where nothing is built and there is nothing to announce.
+ */
+export function levelLabel(level: number): string {
+  if (!Number.isInteger(level) || level < 1 || level > HOTEL_LEVEL) {
+    throw new Error(`development level out of range: ${level}`)
+  }
+  if (level === HOTEL_LEVEL) return 'Hotel'
+  return `${level} ${level === 1 ? 'casa' : 'casas'}`
+}
+
 /** Return the printed purchase price of a purchasable space. */
 export function purchasePrice(index: number): number {
   const space = spaceAt(index)

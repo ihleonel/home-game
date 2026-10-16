@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ColorGroup } from './board'
 import { PURCHASABLE_INDEXES, RAILROAD_INDEXES, STREET_INDEXES, UTILITY_INDEXES, streetIndexes } from './board'
 import {
+  HOTEL_LEVEL,
+  MAX_HOUSE_LEVEL,
   RAILROAD_MORTGAGE,
   RAILROAD_PRICE,
   RAILROAD_RENTS,
@@ -10,9 +12,12 @@ import {
   UTILITY_MORTGAGE,
   UTILITY_PRICE,
   deedFor,
+  developmentCost,
+  levelLabel,
   mortgageValue,
   purchasePrice,
   rentForLevel,
+  sellBack,
 } from './deeds'
 
 /**
@@ -134,6 +139,62 @@ describe('the monopoly deed economy', () => {
     const deed = deedFor(1)
     expect(() => rentForLevel(deed, -1)).toThrow()
     expect(() => rentForLevel(deed, 6)).toThrow()
+  })
+
+  it('prices the development of a street as so many house costs', () => {
+    const deed = deedFor(1)
+
+    expect(developmentCost(deed, 0)).toBe(0)
+    expect(developmentCost(deed, 1)).toBe(deed.houseCost)
+    expect(developmentCost(deed, 4)).toBe(deed.houseCost * 4)
+    expect(developmentCost(deed, HOTEL_LEVEL)).toBe(deed.houseCost * 5)
+  })
+
+  it('values a hotel at five houses on every street', () => {
+    for (const deed of STREET_DEEDS) {
+      expect(developmentCost(deed, HOTEL_LEVEL)).toBe(deed.houseCost * 5)
+    }
+  })
+
+  it('rejects a development cost off the scale', () => {
+    const deed = deedFor(1)
+    expect(() => developmentCost(deed, -1)).toThrow()
+    expect(() => developmentCost(deed, 6)).toThrow()
+  })
+
+  it('pays back half the house cost for one sold level', () => {
+    for (const deed of STREET_DEEDS) {
+      expect(sellBack(deed)).toBe(deed.houseCost / 2)
+      expect(Number.isInteger(sellBack(deed))).toBe(true)
+    }
+  })
+
+  it('matches selling level by level with half of the development value', () => {
+    for (const deed of STREET_DEEDS) {
+      for (let level = 1; level <= HOTEL_LEVEL; level += 1) {
+        const sold = Array.from({ length: level }, () => sellBack(deed)).reduce(
+          (total, value) => total + value,
+          0,
+        )
+        expect([deed.index, level, sold]).toEqual([
+          deed.index,
+          level,
+          Math.trunc(developmentCost(deed, level) / 2),
+        ])
+      }
+    }
+  })
+
+  it('labels a built level in Spanish, the hotel included', () => {
+    expect(levelLabel(1)).toBe('1 casa')
+    expect(levelLabel(2)).toBe('2 casas')
+    expect(levelLabel(MAX_HOUSE_LEVEL)).toBe('4 casas')
+    expect(levelLabel(HOTEL_LEVEL)).toBe('Hotel')
+  })
+
+  it('rejects a label for a level nothing is built at', () => {
+    expect(() => levelLabel(0)).toThrow()
+    expect(() => levelLabel(6)).toThrow()
   })
 
   it('prices a railroad and scales its rent with how many are held', () => {
