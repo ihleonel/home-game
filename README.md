@@ -105,8 +105,11 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   channel. A seat with an open debt does not take part in a trade while that debt is open -- its
   ways out stay the window's four -- and an offer dies with either of its two seats, or with the
   match.
-  The printed rule that sends houses and hotels to auction when the bank's box runs out is still
-  absent, and the option is simply not offered.
+  The printed rule that sends the last houses and hotels to auction is deliberately not
+  implemented: when the bank's box runs out the build option is simply not offered, and while it
+  still holds pieces the first seat that asks takes the piece at its printed price, so turn order
+  is what settles who gets the last house. That is a recorded deviation, not a missing rule -- it
+  is listed with its decision in `PENDING.md`, and no future increment owes it.
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
   printed price, owner and development level, carries the tokens of the seats standing on it and the

@@ -7,11 +7,13 @@ threaded through as an opaque mapping, exactly like ``ta_te_ti``.
 The rules cover the playable core and the increments that followed it: dice,
 movement, GO, purchases, the auction a decline opens, rents by development
 level, house and hotel building with the bank's finite stock, both decks,
-taxes, jail, bankruptcy, elimination and the end of the match. Mortgages and
-trading are later increments and are deliberately absent (S16 of
-``monopoly.md``): an unaffordable debt goes straight to bankruptcy because the
-raise-cash route does not exist yet, and the scarcity auction of houses and
-hotels is not implemented (S13 of ``monopoly-building.md``).
+taxes, jail, bankruptcy, elimination, the end of the match, mortgages with the
+raise-cash window, and trading between seats. Two deviations from the print are
+deliberate and documented: when the bank's stock of houses or hotels runs out
+the build option is simply not offered, and the print's scarcity auction of the
+last houses and hotels is **not** implemented -- the first seat that asks takes
+the piece at its printed price, so turn order is what settles it (S13 of
+``monopoly-building.md``).
 
 The edition is the classic 1999-2007 rulebook (S2): $1.500 to start, Income Tax
 at $200 or 10 % of total worth, Luxury Tax at $75.
