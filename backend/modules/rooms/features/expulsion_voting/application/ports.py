@@ -32,6 +32,14 @@ class ExpulsionVotingPorts(Protocol):
 
     def pending_vote_for_update(self, room_id: int) -> VoteRecord | None: ...
 
+    def pending_vote_target_ids_for_update(self, room_id: int) -> tuple[int, ...]: ...
+
+    def connected_voter_ids_for_update(self, room_id: int) -> tuple[int, ...]: ...
+
+    def absence_is_spent_for_update(
+        self, room_id: int, participant_id: int, disconnected_at
+    ) -> bool: ...
+
     def pending_vote_for_target_for_update(
         self, room_id: int, target_id: int
     ) -> VoteRecord | None: ...
@@ -43,7 +51,12 @@ class ExpulsionVotingPorts(Protocol):
     def session_was_removed(self, room_id: int, participant_id: int) -> bool: ...
 
     def create_vote(
-        self, room_id: int, target_id: int, caller_id: int
+        self,
+        room_id: int,
+        target_ids: tuple[int, ...],
+        *,
+        caller_id: int | None = None,
+        origin: str = 'automatic',
     ) -> VoteRecord: ...
 
     def create_ballots(self, vote_id: int, voter_ids: tuple[int, ...]) -> None: ...

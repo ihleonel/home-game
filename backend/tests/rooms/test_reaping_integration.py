@@ -18,13 +18,14 @@ from django.utils import timezone
 
 from modules.games.models import Match
 from modules.rooms.constants import RECONNECT_GRACE_SECONDS
+from modules.rooms.connections import register_connection, unregister_connection
 from modules.rooms.features.reaping.domain.entities import ReapOutcome
 from modules.rooms.features.reaping.domain.rules import GRACE, STARTUP, staleness_cutoff
 from modules.rooms.features.reaping.infrastructure.django_gateway import (
     DjangoRoomReapingGateway,
 )
 from modules.rooms.interfaces.composition import compose_room_dependencies
-from modules.rooms.models import ExpulsionVote, Participant, Room
+from modules.rooms.models import ExpulsionVote, ExpulsionVoteTarget, Participant, Room
 
 BROADCAST_PATH = 'modules.rooms.infrastructure.events.broadcast_room_event'
 
@@ -321,9 +322,9 @@ class ReapingIntegrationTests(TestCase):
         ghost.refresh_from_db()
         self.assertIsNotNone(ghost.left_at)
 
-    def test_pending_expulsion_vote_involving_the_reaped_participant_is_cancelled(
-        self,
-    ):
+    def test_pending_vote_target_is_left_alone_by_the_sweep(self):
+        # The sweep owns this state now (S3): a target already covered by a
+        # pending vote is not reaped out from under it.
         room = create_room()
         ghost = create_participant(
             room,
@@ -338,9 +339,9 @@ class ReapingIntegrationTests(TestCase):
         )
         vote = ExpulsionVote.objects.create(
             room=room,
-            target=ghost,
             initiated_by=initiator,
         )
+        ExpulsionVoteTarget.objects.create(vote=vote, participant=ghost)
         dependencies = compose_room_dependencies()
 
         with patch(BROADCAST_PATH):
@@ -348,9 +349,9 @@ class ReapingIntegrationTests(TestCase):
                 dependencies.reaping.reap(room_id=room.pk)
 
         vote.refresh_from_db()
-        self.assertEqual(vote.status, ExpulsionVote.Status.CANCELLED)
-        self.assertTrue(vote.resolution_reason)
-        self.assertIsNotNone(vote.resolved_at)
+        self.assertEqual(vote.status, ExpulsionVote.Status.PENDING)
+        ghost.refresh_from_db()
+        self.assertIsNone(ghost.left_at)
         self.assertTrue(Room.objects.filter(pk=room.pk).exists())
 
 
@@ -500,3 +501,210 @@ class DjangoRoomReapingGatewayTests(TestCase):
             gateway.active_room_ids(), (first.pk, second.pk, third.pk)
         )
         self.assertEqual(gateway.active_room_ids(room_id=second.pk), (second.pk,))
+
+
+class SweepVotingIntegrationTests(TestCase):
+    """The composed ``reap()`` now votes, not only reaps (S3, S4).
+
+    The connected electorate comes from the in-process connection registry, so
+    these tests register real-format connections exactly as the socket path
+    does.
+    """
+
+    def setUp(self):
+        self.connections = []
+
+    def tearDown(self):
+        for room_id, session_id, channel_name in self.connections:
+            unregister_connection(room_id, session_id, channel_name)
+
+    def connect(self, participant):
+        channel_name = f'sweep-{participant.public_id}'
+        session_id = str(participant.session_id)
+        register_connection(participant.room_id, session_id, channel_name)
+        self.connections.append(
+            (participant.room_id, session_id, channel_name)
+        )
+        return participant
+
+    def test_two_absences_with_one_connected_voter_are_reaped_not_voted(self):
+        room = create_room()
+        first = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Ghost One',
+        )
+        second = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Ghost Two',
+        )
+        voter = self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter'
+            )
+        )
+        dependencies = compose_room_dependencies()
+
+        with patch(BROADCAST_PATH):
+            with self.captureOnCommitCallbacks(execute=True):
+                outcome = dependencies.reaping.reap(room_id=room.pk)
+
+        self.assertEqual(outcome, ReapOutcome(1, 2, 0))
+        self.assertFalse(ExpulsionVote.objects.exists())
+        for ghost in (first, second):
+            ghost.refresh_from_db()
+            self.assertIsNotNone(ghost.left_at)
+        voter.refresh_from_db()
+        self.assertIsNone(voter.left_at)
+        self.assertTrue(Room.objects.filter(pk=room.pk).exists())
+
+    def test_two_absences_with_two_connected_voters_open_one_automatic_batch(self):
+        room = create_room()
+        first = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Ghost One',
+        )
+        second = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Ghost Two',
+        )
+        first_voter = self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter One'
+            )
+        )
+        second_voter = self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter Two'
+            )
+        )
+        dependencies = compose_room_dependencies()
+
+        with patch(BROADCAST_PATH):
+            with self.captureOnCommitCallbacks(execute=True):
+                outcome = dependencies.reaping.reap(room_id=room.pk)
+
+        self.assertEqual(outcome, ReapOutcome(0, 0, 0))
+        vote = ExpulsionVote.objects.get()
+        self.assertEqual(vote.status, ExpulsionVote.Status.PENDING)
+        self.assertEqual(vote.origin, ExpulsionVote.Origin.AUTOMATIC)
+        self.assertIsNone(vote.initiated_by_id)
+        self.assertEqual(
+            set(vote.targets.values_list('participant_id', flat=True)),
+            {first.pk, second.pk},
+        )
+        self.assertEqual(
+            set(vote.ballots.values_list('voter_id', flat=True)),
+            {first_voter.pk, second_voter.pk},
+        )
+        for ghost in (first, second):
+            ghost.refresh_from_db()
+            self.assertIsNone(ghost.left_at)
+
+    def test_a_second_absence_while_a_vote_is_pending_does_not_break_the_constraint(self):
+        room = create_room()
+        covered = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Covered',
+        )
+        newcomer = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Newcomer',
+        )
+        self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter One'
+            )
+        )
+        self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter Two'
+            )
+        )
+        vote = compose_room_dependencies().expulsion_voting.create_vote(
+            room.pk, (covered.pk,), origin='automatic'
+        )
+        dependencies = compose_room_dependencies()
+
+        with patch(BROADCAST_PATH):
+            with self.captureOnCommitCallbacks(execute=True):
+                outcome = dependencies.reaping.reap(room_id=room.pk)
+
+        self.assertEqual(outcome, ReapOutcome(0, 0, 0))
+        self.assertEqual(ExpulsionVote.objects.count(), 1)
+        stored = ExpulsionVote.objects.get(pk=vote.id)
+        self.assertEqual(stored.status, ExpulsionVote.Status.PENDING)
+        for ghost in (covered, newcomer):
+            ghost.refresh_from_db()
+            self.assertIsNone(ghost.left_at)
+
+    def test_zero_connected_voters_with_only_absences_deletes_the_room(self):
+        room = create_room()
+        create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+        )
+        create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Second',
+        )
+        dependencies = compose_room_dependencies()
+
+        with patch(BROADCAST_PATH):
+            with self.captureOnCommitCallbacks(execute=True):
+                outcome = dependencies.reaping.reap(room_id=room.pk)
+
+        self.assertEqual(outcome, ReapOutcome(1, 2, 1))
+        self.assertFalse(ExpulsionVote.objects.exists())
+        self.assertFalse(Room.objects.filter(pk=room.pk).exists())
+
+    def test_a_pending_vote_target_survives_the_next_sweep(self):
+        # The measured ``target_left`` regression: the sweep owns the state, so
+        # a target already covered by a pending vote is left alone instead of
+        # being reaped out from under the vote.
+        room = create_room()
+        ghost = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Ghost',
+        )
+        voter = self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter'
+            )
+        )
+        second_voter = self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter Two'
+            )
+        )
+        gateway = compose_room_dependencies().expulsion_voting
+        vote = gateway.create_vote(room.pk, (ghost.pk,), origin='automatic')
+        dependencies = compose_room_dependencies()
+
+        with patch(BROADCAST_PATH):
+            with self.captureOnCommitCallbacks(execute=True):
+                outcome = dependencies.reaping.reap(room_id=room.pk)
+
+        self.assertEqual(outcome, ReapOutcome(0, 0, 0))
+        ghost.refresh_from_db()
+        self.assertIsNone(ghost.left_at)
+        stored = ExpulsionVote.objects.get(pk=vote.id)
+        self.assertEqual(stored.status, ExpulsionVote.Status.PENDING)
+        self.assertIsNone(voter.left_at)
+        self.assertIsNone(second_voter.left_at)

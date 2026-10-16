@@ -16,7 +16,8 @@ from django.utils import timezone
 from modules.games.duelo import rules
 from modules.games.models import Match, MatchSeat
 from modules.rooms.constants import RECONNECT_GRACE_SECONDS
-from modules.rooms.models import Participant, Room
+from modules.rooms.connections import register_connection, unregister_connection
+from modules.rooms.models import ExpulsionVote, Participant, Room
 
 
 def create_room(game_id='duelo'):
@@ -328,3 +329,41 @@ class ReapRoomsCommandTests(TestCase):
         self.assertIn('rooms deleted: 2', output)
         self.assertFalse(Room.objects.filter(pk=first_room.pk).exists())
         self.assertFalse(Room.objects.filter(pk=second_room.pk).exists())
+
+
+class ReapRoomsSweepTests(TestCase):
+    def test_command_starts_an_automatic_vote_when_the_quorum_is_connected(self):
+        room = create_room()
+        ghost = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+        )
+        voters = [
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name=name
+            )
+            for name in ('Voter One', 'Voter Two')
+        ]
+        connections = []
+        for voter in voters:
+            channel_name = f'reap-{voter.public_id}'
+            session_id = str(voter.session_id)
+            register_connection(room.pk, session_id, channel_name)
+            connections.append((room.pk, session_id, channel_name))
+        try:
+            output = run_command()
+        finally:
+            for room_id, session_id, channel_name in connections:
+                unregister_connection(room_id, session_id, channel_name)
+
+        self.assertIn('rooms deleted: 0', output)
+        vote = ExpulsionVote.objects.get()
+        self.assertEqual(vote.origin, ExpulsionVote.Origin.AUTOMATIC)
+        self.assertIsNone(vote.initiated_by_id)
+        self.assertEqual(
+            list(vote.targets.values_list('participant_id', flat=True)),
+            [ghost.pk],
+        )
+        ghost.refresh_from_db()
+        self.assertIsNone(ghost.left_at)

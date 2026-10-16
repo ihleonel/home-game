@@ -40,10 +40,9 @@ class ExpulsionVoteCancellation:
         vote = self.ports.pending_vote_for_room_for_update(room_id)
         if vote is None:
             return None
-        participant_is_target = vote.target_id == participant_id
+        participant_is_target = participant_id in vote.target_ids
         reason = membership_cancellation_reason(
-            vote.target_id,
-            participant_id,
+            participant_is_target,
             (
                 False
                 if participant_is_target

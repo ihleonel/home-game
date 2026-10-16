@@ -1,5 +1,6 @@
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from unittest.mock import call
 from uuid import uuid4
 
 from django.test import SimpleTestCase
@@ -60,7 +61,7 @@ class ExpulsionVotingDomainTests(SimpleTestCase):
 
 class ExpulsionVotingUseCaseTests(SimpleTestCase):
     def test_target_departure_cancels_without_checking_voter_electorate(self):
-        vote = VoteRecord(41, uuid4(), 'pending', 24, 12)
+        vote = VoteRecord(41, uuid4(), 'pending', (24,), 12)
         ports = _ports(
             pending_vote_for_room_for_update=vote,
             save_vote_resolution=None,
@@ -79,7 +80,7 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
         )
 
     def test_eligible_voter_departure_uses_fixed_ballot_to_select_cancel_reason(self):
-        vote = VoteRecord(41, uuid4(), 'pending', 99, 12)
+        vote = VoteRecord(41, uuid4(), 'pending', (99,), 12)
         ports = _ports(
             pending_vote_for_room_for_update=vote,
             participant_has_ballot=True,
@@ -112,7 +113,7 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
             presence='reconnecting',
             disconnected_at=_now() - timedelta(seconds=61),
         )
-        vote = VoteRecord(41, uuid4(), 'pending', target.id, caller.id)
+        vote = VoteRecord(41, uuid4(), 'pending', (target.id,), caller.id)
         ports = _ports(
             active_room_for_session_for_update=12,
             participant_for_session_for_update=caller,
@@ -142,9 +143,63 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
         )
         self.assertEqual(ports.timeline[-1], 'commit')
 
+    def test_batch_approval_emits_one_removal_per_target_in_order(self):
+        caller = _participant(2)
+        first = _participant(3, presence='inactive')
+        second = _participant(4, presence='inactive')
+        vote = VoteRecord(41, uuid4(), 'pending', (first.id, second.id), 1)
+        now = _now()
+        ports = _ports(
+            room_for_vote_for_update=12,
+            vote_for_public_ref_for_update=vote,
+            participant_for_session_for_update=caller,
+            has_connection=True,
+            ballot_for_voter_for_update=BallotRecord(51, None),
+            participant_by_id_for_update=deque((first, second)),
+            now=now,
+            save_ballot=None,
+            ballot_counts=(1, 0, 1),
+            remove_target=None,
+            save_vote_resolution=None,
+            vote_snapshot={'status': 'approved'},
+            room_snapshot={'room': 'without-targets'},
+            schedule_room_event=None,
+        )
+
+        response = cast_ballot(
+            ports,
+            vote.public_id,
+            {'session_id': caller.session_id, 'choice': 'yes'},
+        )
+
+        self.assertEqual(response['vote']['status'], 'approved')
+        self.assertEqual(
+            ports.remove_target.call_args_list,
+            [call(first.id, now), call(second.id, now)],
+        )
+        self.assertEqual(
+            ports.schedule_room_event.call_args_list,
+            [
+                call(
+                    12,
+                    'expulsion_vote_approved',
+                    {'room': 'without-targets'},
+                    departed_session_id=first.session_id,
+                    vote={'status': 'approved'},
+                ),
+                call(
+                    12,
+                    'expulsion_vote_approved',
+                    {'room': 'without-targets'},
+                    departed_session_id=second.session_id,
+                    vote={'status': 'approved'},
+                ),
+            ],
+        )
+
     def test_unanimous_yes_removes_target_and_publishes_departure(self):
         caller, target = _participant(2), _participant(3, presence='inactive')
-        vote = VoteRecord(41, uuid4(), 'pending', target.id, 1)
+        vote = VoteRecord(41, uuid4(), 'pending', (target.id,), 1)
         ballot = BallotRecord(51, None)
         now = _now()
         ports = _ports(
@@ -182,7 +237,7 @@ class ExpulsionVotingUseCaseTests(SimpleTestCase):
 
     def test_reconnected_target_cancels_pending_vote_without_casting_ballot(self):
         caller, target = _participant(2), _participant(3, presence='online')
-        vote = VoteRecord(41, uuid4(), 'pending', target.id, 1)
+        vote = VoteRecord(41, uuid4(), 'pending', (target.id,), 1)
         ports = _ports(
             room_for_vote_for_update=12,
             vote_for_public_ref_for_update=vote,

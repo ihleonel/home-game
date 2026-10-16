@@ -1,18 +1,21 @@
-"""Management command that reaps ghost memberships and rooms.
+"""Management command that sweeps ghost memberships, rooms and votes.
 
 Safe to run from a separate process while a server is live: staleness is
 derived from the persisted ``presence`` and ``disconnected_at`` columns, never
 from the in-process connection registry, so this sweep does not depend on
 sharing memory with the sockets.
 
-It also resolves seats already abandoned in a running match before reaping, so
+It also resolves seats already abandoned in a running match before sweeping, so
 a process restart in the middle of the reconnect grace window -- which loses
 the in-process timer -- does not leave the match ``in_progress`` and the room
-unreapable.
+unsweepable.
 
-``--startup`` selects the presence-agnostic ``STARTUP`` policy instead of the
-reconnect grace window because nobody can hold a socket to a process that has
-just started; it is meant to run once before the server accepts connections.
+Under the grace policy the same sweep reaps a stale membership or, when the
+room holds the connected vote quorum, includes it in one automatic expulsion
+vote (S3, S5). ``--startup`` selects the presence-agnostic ``STARTUP`` policy
+instead, which reaps everything and never votes because nobody can hold a
+socket to a process that has just started; it is meant to run once before the
+server accepts connections.
 """
 
 from django.core.management.base import BaseCommand
@@ -24,8 +27,9 @@ from modules.rooms.interfaces.composition import compose_room_dependencies
 
 class Command(BaseCommand):
     help = (
-        'Reap ghost memberships and rooms left behind by disconnected '
-        'participants, resolving the seats they abandoned in a running match.'
+        'Sweep ghost memberships, rooms and automatic expulsion votes left '
+        'behind by disconnected participants, resolving the seats they '
+        'abandoned in a running match.'
     )
 
     def add_arguments(self, parser):

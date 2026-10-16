@@ -46,7 +46,7 @@ class DjangoRoomReapingGateway:
                 room_id__in=room_ids,
                 left_at__isnull=True,
             )
-            .order_by('pk')
+            .order_by('joined_at', 'pk')
         )
         if policy == GRACE:
             participants = participants.filter(
@@ -75,6 +75,7 @@ class DjangoRoomReapingGateway:
                 presence=participant.presence,
                 disconnected_at=participant.disconnected_at,
                 updated_at=participant.updated_at,
+                joined_at=participant.joined_at,
             )
             for participant in participants
         )

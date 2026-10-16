@@ -18,7 +18,13 @@ from modules.rooms.features.presence.domain.rules import (
     remaining_seconds,
 )
 from modules.rooms.features.readiness.domain.rules import readiness_change
-from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from modules.rooms.models import (
+    ExpulsionBallot,
+    ExpulsionVote,
+    ExpulsionVoteTarget,
+    Participant,
+    Room,
+)
 from modules.rooms.serializers import RoomRequestSerializer, RoomSerializer
 
 
@@ -333,9 +339,9 @@ class EventSnapshotContractTests(TestCase):
         )
         vote = ExpulsionVote.objects.create(
             room=room,
-            target=target,
             initiated_by=caller,
         )
+        ExpulsionVoteTarget.objects.create(vote=vote, participant=target)
         ExpulsionBallot.objects.create(vote=vote, voter=caller)
 
         # Both readers are held to one clock: the countdown is the same field

@@ -157,7 +157,7 @@ class RoomSerializer(serializers.ModelSerializer):
                 room=room,
                 status=ExpulsionVote.Status.PENDING,
             )
-            .select_related('target', 'initiated_by')
+            .select_related('initiated_by')
             .first()
         )
         return expulsion_vote_snapshot(vote) if vote is not None else None

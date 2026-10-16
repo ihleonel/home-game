@@ -73,7 +73,9 @@ def start_vote(ports: ExpulsionVotingPorts, data):
         if not electorate.participant_ids:
             raise VotingConflict('No hay votantes conectados disponibles.')
 
-        vote = ports.create_vote(room_id, target.id, caller.id)
+        vote = ports.create_vote(
+            room_id, (target.id,), caller_id=caller.id, origin='manual'
+        )
         ports.create_ballots(vote.id, electorate.participant_ids)
         vote_summary = ports.vote_snapshot(vote.id)
         response = {'room': ports.room_snapshot(room_id), 'vote': vote_summary}
@@ -108,7 +110,7 @@ def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
             lambda: ports.has_connection(room_id, str(caller.session_id)),
         ):
             raise VotingPermissionDenied('Solo los participantes conectados de la sala pueden votar.')
-        if is_self_target(caller.id, vote.target_id):
+        if caller.id in vote.target_ids:
             raise VotingPermissionDenied('La persona propuesta no puede votar sobre su propia expulsión.')
 
         ballot = ports.ballot_for_voter_for_update(vote.id, caller.id)
@@ -119,11 +121,22 @@ def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
         if not ballot_is_unanswered(ballot.choice):
             raise VotingConflict('Cada participante con derecho a voto solo puede votar una vez.')
 
-        target = ports.participant_by_id_for_update(vote.target_id)
+        targets = tuple(
+            ports.participant_by_id_for_update(target_id)
+            for target_id in vote.target_ids
+        )
         inactivity_checked_at = ports.now()
-        if not is_inactive_target(target, inactivity_checked_at):
+        reconnected = next(
+            (
+                target
+                for target in targets
+                if not is_inactive_target(target, inactivity_checked_at)
+            ),
+            None,
+        )
+        if reconnected is not None:
             cancelled_vote = ExpulsionVoteCancellation(ports).for_target(
-                room_id, target.id, 'target_reconnected'
+                room_id, reconnected.id, 'target_reconnected'
             )
             snapshot = ports.room_snapshot(room_id)
             vote_summary = cancelled_vote or ports.vote_snapshot(vote.id)
@@ -136,10 +149,11 @@ def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
             )
             return response
 
-        if target.presence == 'reconnecting' and grace_has_expired(
-            target, ports.now()
-        ):
-            ports.mark_target_inactive(target.id)
+        for target in targets:
+            if target.presence == 'reconnecting' and grace_has_expired(
+                target, ports.now()
+            ):
+                ports.mark_target_inactive(target.id)
         ports.save_ballot(ballot.id, data['choice'], ports.now())
 
         if data['choice'] == 'no':
@@ -149,10 +163,16 @@ def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
         resolution = resolve_ballot(
             data['choice'], yes_count, no_count, eligible_count
         )
-        departed_session_id = None
+        departure_session_ids = ()
         if resolution.remove_target:
-            ports.remove_target(target.id, ports.now())
-            departed_session_id = target.session_id
+            # The wire keeps one ``departed_session_id`` per event, so every
+            # expelled target gets its own removal event in the order the
+            # targets are removed. One target stays one event.
+            departure_session_ids = tuple(
+                target.session_id for target in targets
+            )
+            for target in targets:
+                ports.remove_target(target.id, ports.now())
         if resolution.status != 'pending':
             ports.save_vote_resolution(
                 vote.id, resolution.status, resolution.reason, ports.now()
@@ -161,11 +181,21 @@ def cast_ballot(ports: ExpulsionVotingPorts, vote_ref, data):
         vote_summary = ports.vote_snapshot(vote.id)
         snapshot = ports.room_snapshot(room_id)
         response = {'room': snapshot, 'vote': vote_summary}
-        ports.schedule_room_event(
-            room_id,
-            resolution.event_name,
-            snapshot,
-            departed_session_id=departed_session_id,
-            vote=vote_summary,
-        )
+        if departure_session_ids:
+            for departed_session_id in departure_session_ids:
+                ports.schedule_room_event(
+                    room_id,
+                    resolution.event_name,
+                    snapshot,
+                    departed_session_id=departed_session_id,
+                    vote=vote_summary,
+                )
+        else:
+            ports.schedule_room_event(
+                room_id,
+                resolution.event_name,
+                snapshot,
+                departed_session_id=None,
+                vote=vote_summary,
+            )
     return response

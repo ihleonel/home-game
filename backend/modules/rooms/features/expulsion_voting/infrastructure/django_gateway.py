@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from ....infrastructure.connections import has_room_connection
 from ....infrastructure.events import room_snapshot, schedule_room_event
-from ....models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from ....models import ExpulsionBallot, ExpulsionVote, ExpulsionVoteTarget, Participant, Room
 from ...membership.domain.rules import PLAYER_ROLE
 from .snapshot import expulsion_vote_snapshot
 from ..domain.entities import BallotRecord, VoteParticipant, VoteRecord
@@ -79,19 +79,64 @@ class DjangoExpulsionVotingGateway:
         return self._vote_state(vote) if vote else None
 
     def pending_vote_for_target_for_update(self, room_id, target_id):
-        vote = ExpulsionVote.objects.select_for_update().filter(
-            room_id=room_id,
-            target_id=target_id,
-            status=ExpulsionVote.Status.PENDING,
-        ).select_related('target', 'initiated_by').first()
+        vote = (
+            ExpulsionVote.objects.select_for_update()
+            .filter(
+                room_id=room_id,
+                targets__participant_id=target_id,
+                status=ExpulsionVote.Status.PENDING,
+            )
+            .first()
+        )
         return self._vote_state(vote) if vote else None
 
     def pending_vote_for_room_for_update(self, room_id):
         vote = ExpulsionVote.objects.select_for_update().filter(
             room_id=room_id,
             status=ExpulsionVote.Status.PENDING,
-        ).select_related('target', 'initiated_by').first()
+        ).first()
         return self._vote_state(vote) if vote else None
+
+    def pending_vote_target_ids_for_update(self, room_id):
+        return tuple(
+            ExpulsionVote.objects.filter(
+                room_id=room_id,
+                status=ExpulsionVote.Status.PENDING,
+            ).values_list('targets__participant_id', flat=True)
+        )
+
+    def connected_voter_ids_for_update(self, room_id):
+        rows = (
+            Participant.objects.filter(
+                room_id=room_id,
+                left_at__isnull=True,
+                presence=Participant.Presence.ONLINE,
+                role=PLAYER_ROLE,
+            )
+            .order_by('pk')
+            .values_list('pk', 'session_id')
+        )
+        return tuple(
+            participant_id
+            for participant_id, session_id in rows
+            if has_room_connection(room_id, str(session_id))
+        )
+
+    def absence_is_spent_for_update(self, room_id, participant_id, disconnected_at):
+        # The query encodes the same rule as the pure ``absence_is_spent``:
+        # only a resolved vote that started at or after this absence's
+        # ``disconnected_at`` covers it, and a cancelled one never does.
+        if disconnected_at is None:
+            return False
+        return ExpulsionVote.objects.filter(
+            room_id=room_id,
+            targets__participant_id=participant_id,
+            status__in=(
+                ExpulsionVote.Status.APPROVED,
+                ExpulsionVote.Status.REJECTED,
+            ),
+            started_at__gte=disconnected_at,
+        ).exists()
 
     def participant_has_ballot(self, vote_id, participant_id):
         return ExpulsionBallot.objects.filter(
@@ -102,15 +147,23 @@ class DjangoExpulsionVotingGateway:
     def session_was_removed(self, room_id, participant_id):
         return ExpulsionVote.objects.filter(
             room_id=room_id,
-            target_id=participant_id,
+            targets__participant_id=participant_id,
             status=ExpulsionVote.Status.APPROVED,
         ).exists()
 
-    def create_vote(self, room_id, target_id, caller_id):
+    def create_vote(
+        self, room_id, target_ids, *, caller_id=None, origin='automatic'
+    ):
         vote = ExpulsionVote.objects.create(
             room_id=room_id,
-            target_id=target_id,
             initiated_by_id=caller_id,
+            origin=origin,
+        )
+        ExpulsionVoteTarget.objects.bulk_create(
+            [
+                ExpulsionVoteTarget(vote_id=vote.pk, participant_id=target_id)
+                for target_id in target_ids
+            ]
         )
         return self._vote_state(vote)
 
@@ -123,7 +176,7 @@ class DjangoExpulsionVotingGateway:
         vote = ExpulsionVote.objects.select_for_update().filter(
             room_id=room_id,
             public_id=vote_ref,
-        ).select_related('target', 'initiated_by').first()
+        ).first()
         return self._vote_state(vote) if vote else None
 
     def ballot_for_voter_for_update(self, vote_id, voter_id):
@@ -169,9 +222,7 @@ class DjangoExpulsionVotingGateway:
         vote.save(update_fields=('status', 'resolution_reason', 'resolved_at'))
 
     def vote_snapshot(self, vote_id):
-        vote = ExpulsionVote.objects.select_related('target', 'initiated_by').get(
-            pk=vote_id
-        )
+        vote = ExpulsionVote.objects.get(pk=vote_id)
         return expulsion_vote_snapshot(vote)
 
     def room_snapshot(self, room_id):
@@ -215,6 +266,10 @@ class DjangoExpulsionVotingGateway:
             id=vote.pk,
             public_id=vote.public_id,
             status=vote.status,
-            target_id=vote.target_id,
+            target_ids=tuple(
+                vote.targets.order_by(
+                    'participant__joined_at', 'participant__pk'
+                ).values_list('participant_id', flat=True)
+            ),
             initiated_by_id=vote.initiated_by_id,
         )
