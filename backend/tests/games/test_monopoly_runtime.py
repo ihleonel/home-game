@@ -2,7 +2,7 @@
 
 The definition is exercised through the framework-free use cases
 (``start_match`` / ``submit_action`` / ``abandon_seat``) so the runtime's own
-gates -- ``NotYourTurn``, ``IllegalAction`` and ``StaleVersion`` -- are proven
+gates -- ``IllegalAction`` and ``StaleVersion`` -- are proven
 against the real game, not a fake. The dice are scripted, so the whole trace is
 deterministic.
 
@@ -15,6 +15,7 @@ which is exactly how a missing ``rng`` in the action view stayed invisible.
 
 from django.test import SimpleTestCase
 
+from modules.games.contracts import ActionSpec, Fact, Transition, seat_id
 from modules.games.monopoly.game import MonopolyDefinition
 from modules.games.registry import GameRegistry
 from modules.games.runtime.application.abandon_seat import abandon_seat
@@ -22,7 +23,6 @@ from modules.games.runtime.application.start_match import start_match
 from modules.games.runtime.application.submit_action import submit_action
 from modules.games.runtime.domain.errors import (
     IllegalAction,
-    NotYourTurn,
     StaleVersion,
 )
 from tests.games.support import FakeLifecycle, FakeProjector, FakeStore
@@ -108,7 +108,7 @@ class MonopolyRuntimeTests(SimpleTestCase):
         self.assertEqual(published['views']['seat-0']['you'], 'seat-0')
         self.assertEqual(
             [action['name'] for action in published['views']['seat-0']['actions']],
-            ['roll'],
+            ['roll', 'propose'],
         )
         self.assertNotIn('you', published['views'][None])
         self.assertEqual(published['views'][None]['actions'], [])
@@ -147,11 +147,24 @@ class MonopolyRuntimeTests(SimpleTestCase):
         self.assertEqual(len(record.state['seats']), 8)
         self.assertEqual(record.state['turn'], 'seat-0')
 
-    def test_an_off_turn_seat_is_rejected_with_not_your_turn(self):
-        with self.assertRaises(NotYourTurn) as caught:
+    def test_an_off_turn_seat_negotiates_but_cannot_roll(self):
+        # Every solvent seat is active (D1), so an off-turn seat is no longer
+        # ``NotYourTurn``: it is offered the trade actions, and its illegal
+        # action is rejected because the engine never offered it ``roll``.
+        with self.assertRaises(IllegalAction) as caught:
             self._submit('p1', 'roll')
 
+        self.assertEqual(caught.exception.action_name, 'roll')
         self.assertEqual(caught.exception.seat_id, 'seat-1')
+
+        proposed = self._submit(
+            'p1',
+            'propose',
+            value='to=seat-0;give=;cash=100|want=;cash=0',
+        )
+
+        self.assertEqual(proposed.state['offers']['1']['proposer'], 'seat-1')
+        self.assertEqual(proposed.state['offers']['1']['receiver'], 'seat-0')
 
     def test_an_action_the_seat_was_not_offered_is_rejected(self):
         # No purchase is pending, so `buy` is not among the seat's actions.
@@ -300,6 +313,52 @@ class MonopolyRuntimeTests(SimpleTestCase):
             ),
         )
 
+    def test_a_trade_through_the_runtime_settles_and_publishes_the_offer(self):
+        current = self._seed_managing_brown()
+        current.state['owners']['6'] = 'seat-1'
+        current.state['players']['seat-1']['properties'] = [6]
+
+        proposed = self._submit(
+            'p0',
+            'propose',
+            value='to=seat-1;give=1;cash=0|want=6;cash=0',
+        )
+
+        published = self.projector.publishes[-1]
+        self.assertEqual(proposed.state['offers']['1']['proposer'], 'seat-0')
+        self.assertEqual(
+            published['views']['seat-0']['offers'][0]['valid'], True
+        )
+        self.assertEqual(published['views'][None]['offers'][0]['id'], '1')
+        accept = next(
+            action
+            for action in published['views']['seat-1']['actions']
+            if action['name'] == 'accept'
+        )
+        self.assertEqual(accept['options'], ['1'])
+
+        accepted = self._submit('p1', 'accept', value='1')
+
+        self.assertEqual(accepted.state['owners']['1'], 'seat-1')
+        self.assertEqual(accepted.state['owners']['6'], 'seat-0')
+        self.assertEqual(
+            sorted(accepted.state['players']['seat-0']['properties']), [3, 6]
+        )
+        self.assertEqual(accepted.state['offers'], {})
+        self.assertEqual(
+            [fact['name'] for fact in self.projector.publishes[-1]['facts']],
+            ['offer_accepted', 'trade_settled'],
+        )
+
+    def test_a_malformed_proposal_is_an_illegal_action_through_the_runtime(self):
+        self._seed_managing_brown()
+
+        with self.assertRaises(IllegalAction) as caught:
+            self._submit('p0', 'propose', value='not-a-proposal')
+
+        self.assertEqual(caught.exception.action_name, 'propose')
+        self.assertEqual(caught.exception.seat_id, 'seat-0')
+
     def test_the_debt_window_is_driven_through_the_runtime(self):
         current = self._current()
         current.state['phase'] = 'raising_cash'
@@ -365,3 +424,202 @@ class MonopolyRuntimeTests(SimpleTestCase):
         self.assertEqual(self.definition.outcome(final.state).reason, 'win_by_abandon')
         self.assertEqual(self.projector.publishes[-1]['event'], 'match_finished')
         self.assertEqual(final.state['turn'], None)
+
+
+class FreeformDefinition:
+    """Runtime probe whose single action carries a composed value (S3).
+
+    The channel is generic runtime behaviour, not a Monopoly rule, so the test
+    drives a definition that isolates it: one freeform action whose engine
+    optionally raises ``ValueError`` so the masking rule can be observed.
+    """
+
+    game_id = 'freeform-probe'
+    label = 'Freeform probe'
+    description = 'Test double: a single freeform action.'
+    min_seats = 2
+    max_seats = 2
+    seat_options = ()
+
+    def __init__(self):
+        self.apply_calls = []
+
+    def start(self, seats, rng):
+        return {
+            'seat_ids': [seat_id(seat.index) for seat in seats],
+            'submitted': {},
+        }
+
+    def active_seats(self, state):
+        return tuple(
+            seat for seat in state['seat_ids'] if seat not in state['submitted']
+        )
+
+    def legal_actions(self, state, seat):
+        if seat not in state['seat_ids'] or seat in state['submitted']:
+            return ()
+        return (ActionSpec(name='submit', freeform=True, prompt='Send a value.'),)
+
+    def apply(self, state, seat, action, rng):
+        self.apply_calls.append((seat, action.value))
+        if action.value == 'engine-rejects':
+            raise ValueError('the engine rejected the composed value')
+        return Transition(
+            state={
+                **state,
+                'submitted': {**state['submitted'], seat: action.value},
+            },
+            facts=(Fact(name='submitted', seat=seat, detail={'value': action.value}),),
+        )
+
+    def abandon(self, state, seat, rng):
+        return Transition(state=state, facts=())
+
+    def view(self, state, seat):
+        return {'submitted': dict(state['submitted'])}
+
+    def is_finished(self, state):
+        return len(state['submitted']) == len(state['seat_ids'])
+
+    def outcome(self, state):
+        return None
+
+
+class FreeformChannelRuntimeTests(SimpleTestCase):
+    """The runtime accepts a composed value only for a freeform spec (S3)."""
+
+    def setUp(self):
+        self.definition = FreeformDefinition()
+        self.registry = GameRegistry((self.definition,))
+        self.store = FakeStore()
+        self.projector = FakeProjector()
+        self.lifecycle = FakeLifecycle()
+        self.record = start_match(
+            room_id=11,
+            game_id='freeform-probe',
+            seats=((0, 'p0', 'red'), (1, 'p1', 'blue')),
+            store=self.store,
+            registry=self.registry,
+            projector=self.projector,
+        )
+
+    def _submit(self, participant_ref, value, expected_version=None):
+        current = self.store.records[self.record.match_ref]
+        return submit_action(
+            match_ref=self.record.match_ref,
+            participant_ref=participant_ref,
+            action_name='submit',
+            action_value=value,
+            expected_version=(
+                current.version if expected_version is None else expected_version
+            ),
+            store=self.store,
+            registry=self.registry,
+            projector=self.projector,
+            lifecycle=self.lifecycle,
+        )
+
+    def test_a_freeform_spec_accepts_any_non_empty_string(self):
+        result = self._submit('p0', 'anything the client composed')
+
+        self.assertEqual(
+            result.state['submitted']['seat-0'], 'anything the client composed'
+        )
+
+    def test_a_freeform_spec_rejects_none_and_the_empty_string(self):
+        for value in (None, ''):
+            with self.subTest(value=value):
+                with self.assertRaises(IllegalAction):
+                    self._submit('p0', value)
+        self.assertEqual(self.definition.apply_calls, [])
+
+    def test_an_engine_rejection_of_a_freeform_value_is_a_client_error(self):
+        with self.assertRaises(IllegalAction) as caught:
+            self._submit('p0', 'engine-rejects')
+
+        self.assertEqual(caught.exception.action_name, 'submit')
+        self.assertEqual(caught.exception.seat_id, 'seat-0')
+
+    def test_a_long_value_round_trips_into_the_audit_row(self):
+        value = 'x' * 240
+
+        self._submit('p0', value)
+
+        self.assertEqual(self.store.actions[0]['action'].value, value)
+
+
+class NonFreeformRuntimeTests(SimpleTestCase):
+    """A non-freeform spec keeps the enumerated/None contract (S3)."""
+
+    game_id = 'options-probe'
+
+    class _OptionsDefinition(FreeformDefinition):
+        game_id = 'options-probe'
+
+        def legal_actions(self, state, seat):
+            if seat not in state['seat_ids'] or seat in state['submitted']:
+                return ()
+            return (
+                ActionSpec(name='submit', options=('low', 'high')),
+                ActionSpec(name='pass'),
+            )
+
+        def apply(self, state, seat, action, rng):
+            self.apply_calls.append((seat, action.value))
+            if action.value == 'high':
+                raise ValueError('a programming error, not a client error')
+            return Transition(
+                state={
+                    **state,
+                    'submitted': {**state['submitted'], seat: action.value},
+                },
+                facts=(Fact(name='submitted', seat=seat, detail={}),),
+            )
+
+    def setUp(self):
+        self.definition = self._OptionsDefinition()
+        self.registry = GameRegistry((self.definition,))
+        self.store = FakeStore()
+        self.projector = FakeProjector()
+        self.lifecycle = FakeLifecycle()
+        self.record = start_match(
+            room_id=12,
+            game_id='options-probe',
+            seats=((0, 'p0', 'red'), (1, 'p1', 'blue')),
+            store=self.store,
+            registry=self.registry,
+            projector=self.projector,
+        )
+
+    def _submit(self, name, value):
+        current = self.store.records[self.record.match_ref]
+        return submit_action(
+            match_ref=self.record.match_ref,
+            participant_ref='p0',
+            action_name=name,
+            action_value=value,
+            expected_version=current.version,
+            store=self.store,
+            registry=self.registry,
+            projector=self.projector,
+            lifecycle=self.lifecycle,
+        )
+
+    def test_an_enumerated_spec_keeps_its_options_check(self):
+        with self.assertRaises(IllegalAction):
+            self._submit('submit', 'medium')
+        self.assertEqual(self.definition.apply_calls, [])
+
+    def test_a_spec_without_options_still_requires_none(self):
+        with self.assertRaises(IllegalAction):
+            self._submit('pass', 'anything')
+        self.assertEqual(self.definition.apply_calls, [])
+        # A null value is still accepted for the optionless spec.
+        result = self._submit('pass', None)
+        self.assertEqual(result.state['submitted']['seat-0'], None)
+
+    def test_a_programming_error_from_apply_is_never_masked(self):
+        with self.assertRaises(ValueError):
+            self._submit('submit', 'high')
+
+        self.assertEqual(self.definition.apply_calls, [('seat-0', 'high')])

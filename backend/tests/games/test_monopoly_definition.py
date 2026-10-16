@@ -149,19 +149,29 @@ class MonopolyDefinitionTests(SimpleTestCase):
                 with self.assertRaises(ValueError):
                     self.definition.start(seats, StubRng())
 
-    def test_active_seats_is_the_seat_on_turn(self):
+    def test_active_seats_is_every_solvent_seat(self):
         state = self._start(first='seat-1')
-        self.assertEqual(self.definition.active_seats(state), ('seat-1',))
+        # Every solvent seat is active so it can negotiate out of turn; the
+        # phase's own actions stay with the seat on turn (D1).
+        self.assertEqual(
+            self.definition.active_seats(state), ('seat-0', 'seat-1')
+        )
 
-    def test_legal_actions_are_emitted_only_for_the_seat_on_turn(self):
+    def test_the_phase_actions_belong_to_the_seat_on_turn(self):
         state = self._start()
         self.assertEqual(
             tuple(
                 spec.name for spec in self.definition.legal_actions(state, 'seat-0')
             ),
-            ('roll',),
+            ('roll', 'propose'),
         )
-        self.assertEqual(self.definition.legal_actions(state, 'seat-1'), ())
+        # A seat that is not the phase actor still gets the trade action.
+        self.assertEqual(
+            tuple(
+                spec.name for spec in self.definition.legal_actions(state, 'seat-1')
+            ),
+            ('propose',),
+        )
 
     def test_apply_drives_the_match_through_the_contract(self):
         state = self._start()
@@ -225,7 +235,7 @@ class MonopolyDefinitionTests(SimpleTestCase):
         # roster and the seat's own actions, so no card id list can leak.
         self.assertEqual(
             sorted(key for key in view if isinstance(view[key], list)),
-            ['actions', 'players'],
+            ['actions', 'offers', 'players'],
         )
 
     def test_the_opening_view_has_no_buildings_and_the_full_bank(self):
@@ -289,11 +299,22 @@ class MonopolyDefinitionTests(SimpleTestCase):
                     'name': 'roll',
                     'prompt': 'Tirá los dados.',
                     'options': [],
-                }
+                    'freeform': False,
+                },
+                {
+                    'name': 'propose',
+                    'prompt': self.definition.legal_actions(
+                        state, 'seat-0'
+                    )[1].prompt,
+                    'options': [],
+                    'freeform': True,
+                },
             ],
         )
         idle_view = self.definition.view(state, 'seat-1')
-        self.assertEqual(idle_view['actions'], [])
+        self.assertEqual(
+            [action['name'] for action in idle_view['actions']], ['propose']
+        )
         spectator_view = self.definition.view(state, None)
         self.assertEqual(spectator_view['actions'], [])
         self.assertNotIn('you', spectator_view)
@@ -306,7 +327,7 @@ class MonopolyDefinitionTests(SimpleTestCase):
         self.assertEqual(player_view['pending'], {'kind': 'purchase', 'space': 3})
         self.assertEqual(
             [action['name'] for action in player_view['actions']],
-            ['buy', 'decline'],
+            ['buy', 'decline', 'propose'],
         )
         self.assertEqual(player_view['last_roll'], [1, 2])
         self.assertEqual(
@@ -367,6 +388,91 @@ class MonopolyDefinitionTests(SimpleTestCase):
         for view in (seat_view, spectator_view):
             self.assertEqual(view['mortgaged'], {})
             self.assertIsNone(view['debt'])
+
+    def _trade_scene(self):
+        state = self._start()
+        state['owners'] = {
+            '1': 'seat-0',
+            '3': 'seat-0',
+            '6': 'seat-1',
+            '8': 'seat-1',
+        }
+        state['players']['seat-0']['properties'] = [1, 3]
+        state['players']['seat-1']['properties'] = [6, 8]
+        state['phase'] = 'managing'
+        state['turn'] = 'seat-0'
+        return state
+
+    def test_the_view_publishes_the_offers_in_id_order_with_their_validity(self):
+        state = self._trade_scene()
+        state = self.definition.apply(
+            state,
+            'seat-0',
+            Action(name='propose', value='to=seat-1;give=1;cash=0|want=6;cash=0'),
+            None,
+        ).state
+        # seat-1 becomes active as the receiver of offer 1 and may propose back.
+        state = self.definition.apply(
+            state,
+            'seat-1',
+            Action(name='propose', value='to=seat-0;give=8;cash=0|want=3;cash=0'),
+            None,
+        ).state
+        expected = [
+            {
+                'id': '1',
+                'proposer': 'seat-0',
+                'receiver': 'seat-1',
+                'give': {'properties': [1], 'cash': 0},
+                'want': {'properties': [6], 'cash': 0},
+                'valid': True,
+            },
+            {
+                'id': '2',
+                'proposer': 'seat-1',
+                'receiver': 'seat-0',
+                'give': {'properties': [8], 'cash': 0},
+                'want': {'properties': [3], 'cash': 0},
+                'valid': True,
+            },
+        ]
+
+        self.assertEqual(self.definition.view(state, 'seat-0')['offers'], expected)
+        self.assertEqual(self.definition.view(state, 'seat-1')['offers'], expected)
+        self.assertEqual(self.definition.view(state, None)['offers'], expected)
+
+    def test_the_view_marks_a_stale_offer_as_not_valid(self):
+        state = self._trade_scene()
+        state = self.definition.apply(
+            state,
+            'seat-0',
+            Action(name='propose', value='to=seat-1;give=1;cash=0|want=6;cash=0'),
+            None,
+        ).state
+        stale = copy.deepcopy(state)
+        stale['owners']['1'] = 'seat-1'
+        stale['players']['seat-0']['properties'].remove(1)
+        stale['players']['seat-1']['properties'].append(1)
+
+        offers = self.definition.view(stale, 'seat-1')['offers']
+
+        self.assertEqual(len(offers), 1)
+        self.assertEqual(offers[0]['id'], '1')
+        self.assertIs(offers[0]['valid'], False)
+
+    def test_the_view_offers_survive_a_json_round_trip(self):
+        state = self._trade_scene()
+        state = self.definition.apply(
+            state,
+            'seat-0',
+            Action(name='propose', value='to=seat-1;give=1;cash=0|want=6;cash=0'),
+            None,
+        ).state
+        before = self.definition.view(state, None)
+
+        round_tripped = json.loads(json.dumps(state))
+
+        self.assertEqual(self.definition.view(round_tripped, None), before)
 
     def test_the_view_publishes_the_mortgaged_map(self):
         state = self._start()

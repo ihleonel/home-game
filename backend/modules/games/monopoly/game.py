@@ -123,6 +123,7 @@ class MonopolyDefinition:
             },
             'last_card': self._card_view(state),
             'auction': self._auction_view(state),
+            'offers': self._offers_view(state),
             'last_roll': (
                 None if state['last_roll'] is None else list(state['last_roll'])
             ),
@@ -150,6 +151,7 @@ class MonopolyDefinition:
                 'name': spec.name,
                 'prompt': spec.prompt,
                 'options': list(spec.options),
+                'freeform': spec.freeform,
             }
             for spec in rules.legal_actions(state, seat)
         ]
@@ -192,6 +194,32 @@ class MonopolyDefinition:
             'creditor': debt['creditor'],
             'amount': debt['amount'],
         }
+
+    def _offers_view(self, state: Mapping) -> list[dict]:
+        """Every live offer, in id order, with its recomputed validity (S10).
+
+        ``valid`` is exactly :func:`rules.offer_is_valid`, the same function
+        that decides whether ``accept`` is offered, so the panel can never
+        accept an offer the engine would reject. It is public to the seat and
+        the spectator alike: all of Monopoly's state is public.
+        """
+        return [
+            {
+                'id': offer['id'],
+                'proposer': offer['proposer'],
+                'receiver': offer['receiver'],
+                'give': {
+                    'properties': list(offer['give']['properties']),
+                    'cash': offer['give']['cash'],
+                },
+                'want': {
+                    'properties': list(offer['want']['properties']),
+                    'cash': offer['want']['cash'],
+                },
+                'valid': rules.offer_is_valid(state, offer),
+            }
+            for offer in rules.offers_in_id_order(state)
+        ]
 
     def _auction_view(self, state: Mapping) -> dict | None:
         """The open auction, or ``null``.

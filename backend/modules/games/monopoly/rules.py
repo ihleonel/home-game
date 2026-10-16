@@ -74,6 +74,18 @@ ACTION_UNMORTGAGE = 'unmortgage'
 ACTION_PAY_DEBT = 'pay_debt'
 ACTION_DECLARE_BANKRUPTCY = 'declare_bankruptcy'
 
+# The four trade actions (S5). They are available in every phase, so they are
+# never gated by ``_require_phase``; their own handlers decide who may act.
+ACTION_PROPOSE = 'propose'
+ACTION_ACCEPT = 'accept'
+ACTION_REJECT = 'reject'
+ACTION_WITHDRAW = 'withdraw'
+
+# The canonical composed value of ``propose`` (S3), published in its prompt so
+# the panel can compose a value the engine accepts.
+PROPOSE_GRAMMAR = 'to=<seat>;give=<idx,idx>;cash=<int>|want=<idx,idx>;cash=<int>'
+PROPOSE_PROMPT = f'Proponé un trato con la forma {PROPOSE_GRAMMAR}.'
+
 # The ladder a bid may climb by: the high bid plus each of these, filtered by
 # the bidder's cash. The printed rules allow any price and the runtime only
 # accepts an enumerated option list, so the ladder is the documented adaptation
@@ -135,6 +147,8 @@ def initial_state(
         'decks': _deck_order(decks),
         'last_card': None,
         'auction': None,
+        'offers': {},
+        'offer_seq': 0,
         'phase': PHASE_AWAITING_ROLL,
         'turn': first_seat,
         'last_roll': None,
@@ -213,12 +227,25 @@ def outcome(state: Mapping) -> Outcome | None:
 def active_seats(state: Mapping) -> tuple[str, ...]:
     """Return the seats that may act right now, in seat order.
 
-    Only one seat acts at a time, except while an auction is open: there every
-    solvent seat that has not passed may bid, which is the multi-seat shape the
-    runtime contract always allowed and the auction is the first rule to use.
+    While the match runs **every solvent seat** may act, because a trade can be
+    proposed at any moment, out of turn included (D1). The phase's own actions
+    are still gated to the phase's actor by :func:`legal_actions`, so an
+    off-turn seat only ever receives the trade actions. The order is not
+    significant to the runtime; this returns seat order so a test can read it
+    deterministically.
     """
     if is_finished(state):
         return ()
+    return solvent_seats(state)
+
+
+def _phase_actors(state: Mapping) -> tuple[str, ...]:
+    """The seats a phase of its own gives actions to, before any trade.
+
+    This is the old single-seat (and auction) gate, split out so
+    :func:`active_seats` can add offer participants without also handing them
+    the phase's own actions.
+    """
     if state['phase'] == PHASE_AWAITING_BID:
         return eligible_bidders(state)
     turn = state['turn']
@@ -355,6 +382,290 @@ def _raising_cash_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
     return tuple(specs)
 
 
+def offers_in_id_order(state: Mapping) -> list:
+    """Return the live offers sorted by numeric id, tolerating old states."""
+    offers = state.get('offers') or {}
+    return [offers[offer_id] for offer_id in sorted(offers, key=int)]
+
+
+def _offer_ids_in_order(offers: list) -> tuple[str, ...]:
+    return tuple(offer['id'] for offer in offers)
+
+
+def _is_debtor(state: Mapping, seat: str) -> bool:
+    """Whether ``seat`` is the seat whose debt is still open (S7)."""
+    debt = state.get('debt')
+    return debt is not None and debt.get('seat') == seat
+
+
+def _require_not_debtor(state: Mapping, seat: str) -> None:
+    """A seat with an open debt never trades: it must resolve the debt."""
+    if _is_debtor(state, seat):
+        raise ValueError(f'{seat!r} cannot trade while a debt is open')
+
+
+def _interest_total(state: Mapping, indexes) -> int:
+    """The 10 % interest a receiver owes for its mortgaged properties (S6)."""
+    mortgaged = state.get('mortgaged') or {}
+    return sum(
+        deeds.mortgage_lift_cost(index) - deeds.mortgage_value(index)
+        for index in indexes
+        if mortgaged.get(str(index))
+    )
+
+
+def offer_is_valid(state: Mapping, offer: Mapping) -> bool:
+    """Whether ``offer``'s terms are legal on the current state (S4).
+
+    The same function gates ``accept`` and paints the view's ``valid`` flag, so
+    a stale offer cannot be accepted through a panel that was rendered from an
+    older state. Every index is read against the real state, never against
+    what the view published.
+    """
+    give = offer['give']
+    want = offer['want']
+    give_properties = list(give['properties'])
+    want_properties = list(want['properties'])
+    proposer = offer['proposer']
+    receiver = offer['receiver']
+
+    if proposer not in state['players'] or state['players'][proposer]['eliminated']:
+        return False
+    if receiver not in state['players'] or state['players'][receiver]['eliminated']:
+        return False
+    if len(set(give_properties)) != len(give_properties):
+        return False
+    if len(set(want_properties)) != len(want_properties):
+        return False
+    if set(give_properties) & set(want_properties):
+        return False
+
+    for index in give_properties:
+        if state['owners'].get(str(index)) != proposer:
+            return False
+    for index in want_properties:
+        if state['owners'].get(str(index)) != receiver:
+            return False
+
+    # No street of a built colour group may be traded: the print sends the
+    # buildings to the bank first. A railroad or a utility has no group and
+    # satisfies the condition on its own.
+    for index in give_properties + want_properties:
+        group = board.group_of(index)
+        if group is not None and any(
+            _level(state, other) > 0 for other in board.street_indexes(group)
+        ):
+            return False
+
+    if (
+        not give_properties
+        and not want_properties
+        and give['cash'] <= 0
+        and want['cash'] <= 0
+    ):
+        return False
+
+    proposer_player = state['players'][proposer]
+    receiver_player = state['players'][receiver]
+    if proposer_player['cash'] < give['cash']:
+        return False
+    if receiver_player['cash'] < want['cash']:
+        return False
+
+    # The cash each side has *after* the exchange has to cover the interest of
+    # what it receives (S4/S6): nobody keeps what they cannot sustain.
+    proposer_after = proposer_player['cash'] - give['cash'] + want['cash']
+    receiver_after = receiver_player['cash'] - want['cash'] + give['cash']
+    if proposer_after < _interest_total(state, want_properties):
+        return False
+    if receiver_after < _interest_total(state, give_properties):
+        return False
+    return True
+
+
+def _trade_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
+    """The trade actions ``seat`` may take: propose, accept/reject, withdraw.
+
+    ``propose`` is always available to a seat that can act, while ``accept``,
+    ``reject`` and ``withdraw`` list the ids of the offers this seat receives
+    or made, in id order. ``accept`` only names the offers S4 still declares
+    legal.
+    """
+    if _is_debtor(state, seat):
+        return ()
+    offers = offers_in_id_order(state)
+    received = [offer for offer in offers if offer['receiver'] == seat]
+    sent = [offer for offer in offers if offer['proposer'] == seat]
+
+    specs = [ActionSpec(name=ACTION_PROPOSE, freeform=True, prompt=PROPOSE_PROMPT)]
+    acceptable = tuple(
+        offer['id'] for offer in received if offer_is_valid(state, offer)
+    )
+    if acceptable:
+        specs.append(
+            ActionSpec(name=ACTION_ACCEPT, options=acceptable, prompt='Aceptá un trato.')
+        )
+    if received:
+        specs.append(
+            ActionSpec(
+                name=ACTION_REJECT,
+                options=_offer_ids_in_order(received),
+                prompt='Rechazá un trato.',
+            )
+        )
+    if sent:
+        specs.append(
+            ActionSpec(
+                name=ACTION_WITHDRAW,
+                options=_offer_ids_in_order(sent),
+                prompt='Retirá un trato.',
+            )
+        )
+    return tuple(specs)
+
+
+def _parse_field(chunk: str, key: str) -> str:
+    """Return the value of ``key`` in ``chunk`` (``key=value``), or raise."""
+    prefix = f'{key}='
+    if not chunk.startswith(prefix):
+        raise ValueError(f'invalid proposal field: {chunk!r}')
+    return chunk[len(prefix):]
+
+
+def _parse_indexes(raw: str) -> list[int]:
+    """Parse a comma-separated list of board indexes, possibly empty."""
+    if raw == '':
+        return []
+    indexes = []
+    for piece in raw.split(','):
+        if not piece.isdigit():
+            raise ValueError(f'invalid property index: {piece!r}')
+        index = int(piece)
+        if not 0 <= index < board.BOARD_SIZE:
+            raise ValueError(f'property index out of the board: {index!r}')
+        if index in indexes:
+            raise ValueError(f'repeated property index: {index!r}')
+        indexes.append(index)
+    return sorted(indexes)
+
+
+def _parse_amount(raw: str) -> int:
+    """Parse a never-empty non-negative whole amount."""
+    if not raw.isdigit():
+        raise ValueError(f'invalid cash amount: {raw!r}')
+    return int(raw)
+
+
+def _parse_proposal(state: Mapping, seat: str, value) -> dict:
+    """Parse the composed ``propose`` value into ``{receiver, give, want}``.
+
+    The grammar is S3's: ``to=<seat>;give=<idx,idx>;cash=<int>|<same for want>``.
+    Any other shape raises ``ValueError``; the runtime turns that into a client
+    error because the spec is freeform.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError(f'invalid proposal: {value!r}')
+    if ' ' in value:
+        raise ValueError(f'proposal contains spaces: {value!r}')
+    give_part, separator, want_part = value.partition('|')
+    if not separator or '|' in want_part:
+        raise ValueError(f'invalid proposal: {value!r}')
+
+    give_chunks = give_part.split(';')
+    want_chunks = want_part.split(';')
+    if len(give_chunks) != 3 or len(want_chunks) != 2:
+        raise ValueError(f'invalid proposal: {value!r}')
+
+    receiver = _parse_field(give_chunks[0], 'to')
+    give = {
+        'properties': _parse_indexes(_parse_field(give_chunks[1], 'give')),
+        'cash': _parse_amount(_parse_field(give_chunks[2], 'cash')),
+    }
+    want = {
+        'properties': _parse_indexes(_parse_field(want_chunks[0], 'want')),
+        'cash': _parse_amount(_parse_field(want_chunks[1], 'cash')),
+    }
+    if receiver == seat:
+        raise ValueError(f'{seat!r} cannot propose a trade to itself')
+    if receiver not in solvent_seats(state):
+        raise ValueError(f'{receiver!r} is not a solvent seat')
+    return {'receiver': receiver, 'give': give, 'want': want}
+
+
+def _require_offer(state: Mapping, offer_id) -> dict:
+    """Return the live offer ``offer_id`` names, or raise."""
+    offers = state.get('offers') or {}
+    if not isinstance(offer_id, str) or offer_id not in offers:
+        raise ValueError(f'unknown offer: {offer_id!r}')
+    return offers[offer_id]
+
+
+def _transfer_property(state, index: int, from_seat: str, to_seat: str) -> None:
+    """Move a property between two seats, ownership map and list together."""
+    state['owners'][str(index)] = to_seat
+    state['players'][from_seat]['properties'].remove(index)
+    state['players'][to_seat]['properties'].append(index)
+
+
+def _charge_trade_interest(state, payer: str, indexes, events) -> None:
+    """Charge ``payer`` 10 % of each mortgaged property it received (S6).
+
+    The rounding is the same ceiling of a tenth of the printed mortgage value
+    the mortgage increment uses, announced with ``reason: 'trade'``.
+    """
+    mortgaged = state.get('mortgaged') or {}
+    for index in sorted(indexes):
+        if not mortgaged.get(str(index)):
+            continue
+        amount = deeds.mortgage_lift_cost(index) - deeds.mortgage_value(index)
+        state['players'][payer]['cash'] -= amount
+        events.append(
+            Fact(
+                name='interest_paid',
+                seat=payer,
+                detail={'space': index, 'amount': amount, 'reason': 'trade'},
+            )
+        )
+
+
+def _settle_trade(state, offer: Mapping, events) -> None:
+    """Exchange the properties and the cash of an accepted offer (S6)."""
+    proposer = offer['proposer']
+    receiver = offer['receiver']
+    give = offer['give']
+    want = offer['want']
+
+    state['players'][proposer]['cash'] += want['cash'] - give['cash']
+    state['players'][receiver]['cash'] += give['cash'] - want['cash']
+    for index in give['properties']:
+        _transfer_property(state, index, proposer, receiver)
+    for index in want['properties']:
+        _transfer_property(state, index, receiver, proposer)
+
+    # Each side pays the bank the 10 % interest of the mortgaged properties it
+    # receives (S6); S4 already proved the post-exchange cash covers it.
+    _charge_trade_interest(state, proposer, want['properties'], events)
+    _charge_trade_interest(state, receiver, give['properties'], events)
+
+    offers = dict(state.get('offers') or {})
+    offers.pop(offer['id'], None)
+    state['offers'] = offers
+    events.append(
+        Fact(name='offer_accepted', seat=receiver, detail={'offer': offer['id']})
+    )
+    events.append(
+        Fact(
+            name='trade_settled',
+            seat=receiver,
+            detail={
+                'offer': offer['id'],
+                'proposer': proposer,
+                'receiver': receiver,
+            },
+        )
+    )
+
+
 def total_worth(state: Mapping, seat: str) -> int:
     """Return cash plus the printed prices of the seat's properties and builds.
 
@@ -376,16 +687,32 @@ def total_worth(state: Mapping, seat: str) -> int:
 
 
 def legal_actions(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
-    """Return the actions ``seat`` may take right now, and nothing else."""
+    """Return the actions ``seat`` may take right now, and nothing else.
+
+    The phase's own actions are appended to the trade actions of the offers the
+    seat is a party to, never replaced by them: the seat on turn negotiates
+    without losing ``roll``/``buy``/``end_turn`` (S5).
+    """
     if is_finished(state) or seat not in state['players']:
         return ()
     if seat not in active_seats(state):
         return ()
+    return _phase_specs(state, seat) + _trade_specs(state, seat)
 
+
+def _phase_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
+    """The phase's own actions for ``seat``, excluding the trade actions.
+
+    A seat that only joins through an offer is not the phase's actor and must
+    not receive the turn's actions; only the seat on turn (or an auction's
+    eligible bidder) does.
+    """
     player = state['players'][seat]
     phase = state['phase']
     if phase == PHASE_AWAITING_BID:
         return _bid_specs(state, seat)
+    if seat not in _phase_actors(state):
+        return ()
     if phase == PHASE_AWAITING_ROLL:
         specs = [ActionSpec(name=ACTION_ROLL, prompt='Tirá los dados.')]
         if player['in_jail'] and player['jail_cards']:
@@ -462,11 +789,14 @@ def apply_action(
         raise ValueError('the match is already finished')
     if seat not in state['players']:
         raise ValueError(f'unknown seat: {seat!r}')
-    if seat not in active_seats(state):
-        raise ValueError(f'{seat!r} cannot act right now')
     handler = _HANDLERS.get(action.name)
     if handler is None:
         raise ValueError(f'unknown action: {action.name!r}')
+    if action.name not in {spec.name for spec in legal_actions(state, seat)}:
+        # Every solvent seat is active, so the phase gate cannot rely on
+        # ``active_seats`` alone: the engine accepts only an action it actually
+        # offered this seat, and the phase's actions belong to its actor.
+        raise ValueError(f'{seat!r} cannot act right now')
     return _with_finish_fact(handler(state, seat, action, rng))
 
 
@@ -529,6 +859,8 @@ def _with_finish_fact(transition: Transition) -> Transition:
     """
     if not is_finished(transition.state):
         return transition
+    # A finished match keeps no negotiation open (S7): every offer dies with it.
+    transition.state['offers'] = {}
     finished = outcome(transition.state)
     winner = None if finished is None else finished.winner_seat
     return Transition(
@@ -1409,8 +1741,21 @@ def _eliminate(state, seat: str, creditor, events=None) -> None:
     player['in_jail'] = False
     player['jail_turns'] = 0
     player['eliminated'] = True
+    # An offer is between two live seats: a seat that leaves the match takes
+    # every offer that names it, as proposer or as receiver (S7).
+    _drop_offers_naming(state, seat)
     if creditor is not None:
         _charge_settlement_interest(state, creditor, transferred, events)
+
+
+def _drop_offers_naming(state, seat: str) -> None:
+    """Delete every live offer that names ``seat`` on either side."""
+    offers = state.get('offers') or {}
+    state['offers'] = {
+        offer_id: offer
+        for offer_id, offer in offers.items()
+        if offer['proposer'] != seat and offer['receiver'] != seat
+    }
 
 
 def _charge_settlement_interest(state, creditor, indexes, events) -> None:
@@ -1862,6 +2207,92 @@ def _apply_declare_bankruptcy(state: Mapping, seat: str, action, rng) -> Transit
     return Transition(state=state, facts=tuple(events))
 
 
+def _apply_propose(state: Mapping, seat: str, action, rng) -> Transition:
+    """Store a new offer composed by the client (S3, S4)."""
+    _require_not_debtor(state, seat)
+    parsed = _parse_proposal(state, seat, action.value)
+    offer = {
+        'id': '',
+        'proposer': seat,
+        'receiver': parsed['receiver'],
+        'give': parsed['give'],
+        'want': parsed['want'],
+    }
+    if not offer_is_valid(state, offer):
+        raise ValueError(f'illegal offer terms: {action.value!r}')
+    state = _copy(state)
+    sequence = state.get('offer_seq') or 0
+    offers = dict(state.get('offers') or {})
+    offer['id'] = str(sequence + 1)
+    offers[offer['id']] = offer
+    state['offers'] = offers
+    state['offer_seq'] = sequence + 1
+    return Transition(
+        state=state,
+        facts=(
+            Fact(
+                name='offer_proposed',
+                seat=seat,
+                detail={
+                    'offer': offer['id'],
+                    'proposer': seat,
+                    'receiver': offer['receiver'],
+                    'give': offer['give'],
+                    'want': offer['want'],
+                },
+            ),
+        ),
+    )
+
+
+def _apply_reject(state: Mapping, seat: str, action, rng) -> Transition:
+    """Delete an offer the receiver turns down (S5, S7)."""
+    _require_not_debtor(state, seat)
+    offer = _require_offer(state, action.value)
+    if offer['receiver'] != seat:
+        raise ValueError(f'{seat!r} did not receive offer {action.value!r}')
+    state = _copy(state)
+    offers = dict(state.get('offers') or {})
+    offers.pop(offer['id'], None)
+    state['offers'] = offers
+    return Transition(
+        state=state,
+        facts=(Fact(name='offer_rejected', seat=seat, detail={'offer': offer['id']}),),
+    )
+
+
+def _apply_withdraw(state: Mapping, seat: str, action, rng) -> Transition:
+    """Delete the proposer's own offer before it is answered (S5, S7)."""
+    _require_not_debtor(state, seat)
+    offer = _require_offer(state, action.value)
+    if offer['proposer'] != seat:
+        raise ValueError(f'{seat!r} did not make offer {action.value!r}')
+    state = _copy(state)
+    offers = dict(state.get('offers') or {})
+    offers.pop(offer['id'], None)
+    state['offers'] = offers
+    return Transition(
+        state=state,
+        facts=(
+            Fact(name='offer_withdrawn', seat=seat, detail={'offer': offer['id']}),
+        ),
+    )
+
+
+def _apply_accept(state: Mapping, seat: str, action, rng) -> Transition:
+    """Accept an offer and settle it, if S4 still holds (S5, S6)."""
+    _require_not_debtor(state, seat)
+    offer = _require_offer(state, action.value)
+    if offer['receiver'] != seat:
+        raise ValueError(f'{seat!r} did not receive offer {action.value!r}')
+    if not offer_is_valid(state, offer):
+        raise ValueError(f'offer {offer["id"]!r} is no longer valid')
+    state = _copy(state)
+    events = []
+    _settle_trade(state, offer, events)
+    return Transition(state=state, facts=tuple(events))
+
+
 _HANDLERS = {
     ACTION_ROLL: _apply_roll,
     ACTION_BID: _apply_bid,
@@ -1879,4 +2310,8 @@ _HANDLERS = {
     ACTION_UNMORTGAGE: _apply_unmortgage,
     ACTION_PAY_DEBT: _apply_pay_debt,
     ACTION_DECLARE_BANKRUPTCY: _apply_declare_bankruptcy,
+    ACTION_PROPOSE: _apply_propose,
+    ACTION_ACCEPT: _apply_accept,
+    ACTION_REJECT: _apply_reject,
+    ACTION_WITHDRAW: _apply_withdraw,
 }

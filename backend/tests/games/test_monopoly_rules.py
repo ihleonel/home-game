@@ -240,7 +240,7 @@ class MonopolyTurnTests(MonopolyRulesTestCase):
         self.assertEqual(first.state['doubles_count'], 1)
         self.assertEqual(first.state['turn'], 'seat-0')
         self.assertEqual(first.state['phase'], rules.PHASE_AWAITING_ROLL)
-        self.assertEqual(self._names(first.state, 'seat-0'), ('roll',))
+        self.assertEqual(self._names(first.state, 'seat-0'), ('roll', 'propose'))
         second = self._roll(first.state, 'seat-0', 1, 2)
         self.assertEqual(second.state['players']['seat-0']['position'], 23)
         self.assertEqual(second.state['doubles_count'], 1)
@@ -326,7 +326,7 @@ class MonopolyTurnTests(MonopolyRulesTestCase):
     def test_end_turn_passes_the_turn_and_clears_the_turn_markers(self):
         state = self._place(self._open(), 'seat-0', 15)
         stopped = self._roll(state, 'seat-0', 2, 3).state
-        self.assertEqual(self._names(stopped, 'seat-0'), ('end_turn',))
+        self.assertEqual(self._names(stopped, 'seat-0'), ('end_turn', 'propose'))
         ended = self._act(stopped, 'seat-0', 'end_turn')
         self.assertEqual(ended.state['turn'], 'seat-1')
         self.assertEqual(ended.state['phase'], rules.PHASE_AWAITING_ROLL)
@@ -335,10 +335,12 @@ class MonopolyTurnTests(MonopolyRulesTestCase):
         self.assertIsNone(ended.state['pending'])
         self.assertEqual(self._facts(ended), (('turn_ended', 'seat-0', {}),))
 
-    def test_legal_actions_are_empty_for_the_idle_seat(self):
+    def test_an_idle_seat_is_offered_the_trade_action_only(self):
+        # Every solvent seat is active while the match runs: seat-1 may initiate
+        # a trade out of turn, but the roll still belongs to seat-0.
         state = self._open()
-        self.assertEqual(self._names(state, 'seat-1'), ())
-        self.assertEqual(self._names(state, 'seat-0'), ('roll',))
+        self.assertEqual(self._names(state, 'seat-1'), ('propose',))
+        self.assertEqual(self._names(state, 'seat-0'), ('roll', 'propose'))
 
     def test_an_action_out_of_turn_or_out_of_phase_is_rejected(self):
         state = self._open()
@@ -377,7 +379,11 @@ class MonopolyJailTests(MonopolyRulesTestCase):
         )
 
     def test_the_fine_is_offered_on_the_first_two_jail_turns_only(self):
-        for jail_turns, expected in ((0, ('roll', 'pay_jail_fine')), (1, ('roll', 'pay_jail_fine')), (2, ('roll',))):
+        for jail_turns, expected in (
+            (0, ('roll', 'pay_jail_fine', 'propose')),
+            (1, ('roll', 'pay_jail_fine', 'propose')),
+            (2, ('roll', 'propose')),
+        ):
             with self.subTest(jail_turns=jail_turns):
                 state = self._jailed(jail_turns=jail_turns)
                 self.assertEqual(self._names(state, 'seat-0'), expected)
@@ -398,7 +404,7 @@ class MonopolyJailTests(MonopolyRulesTestCase):
     def test_paying_the_fine_is_not_offered_without_the_cash(self):
         state = self._jailed()
         poor = self._cash(state, 'seat-0', rules.JAIL_FINE - 1)
-        self.assertEqual(self._names(poor, 'seat-0'), ('roll',))
+        self.assertEqual(self._names(poor, 'seat-0'), ('roll', 'propose'))
         with self.assertRaises(ValueError):
             self._act(poor, 'seat-0', 'pay_jail_fine')
 
@@ -480,7 +486,10 @@ class MonopolyPurchaseTests(MonopolyRulesTestCase):
         transition = self._roll(self._open(), 'seat-0', 1, 2)
         self.assertEqual(transition.state['phase'], rules.PHASE_AWAITING_DECISION)
         self.assertEqual(transition.state['pending'], {'kind': 'purchase', 'space': 3})
-        self.assertEqual(self._names(transition.state, 'seat-0'), ('buy', 'decline'))
+        self.assertEqual(
+            self._names(transition.state, 'seat-0'),
+            ('buy', 'decline', 'propose'),
+        )
         self.assertIn(
             ('purchase_offered', 'seat-0', {'space': 3}), self._facts(transition)
         )
@@ -521,7 +530,7 @@ class MonopolyPurchaseTests(MonopolyRulesTestCase):
 
     def test_buy_is_not_offered_without_the_cash(self):
         state = self._roll(self._cash(self._open(), 'seat-0', 10), 'seat-0', 1, 2).state
-        self.assertEqual(self._names(state, 'seat-0'), ('decline',))
+        self.assertEqual(self._names(state, 'seat-0'), ('decline', 'propose'))
         with self.assertRaises(ValueError):
             self._act(state, 'seat-0', 'buy')
 
@@ -535,7 +544,7 @@ class MonopolyPurchaseTests(MonopolyRulesTestCase):
         self.assertEqual(bought.state['phase'], rules.PHASE_AWAITING_ROLL)
         self.assertEqual(bought.state['turn'], 'seat-0')
         self.assertIs(bought.state['extra_roll'], False)
-        self.assertEqual(self._names(bought.state, 'seat-0'), ('roll',))
+        self.assertEqual(self._names(bought.state, 'seat-0'), ('roll', 'propose'))
 
     def test_declining_a_double_landing_grants_the_extra_roll_after_the_auction(self):
         state = self._place(self._open(), 'seat-0', 4)
@@ -623,7 +632,7 @@ class MonopolyTaxTests(MonopolyRulesTestCase):
         self.assertEqual(transition.state['pending'], {'kind': 'income_tax', 'space': 4})
         self.assertEqual(
             self._names(transition.state, 'seat-0'),
-            ('pay_income_tax_fixed', 'pay_income_tax_percent'),
+            ('pay_income_tax_fixed', 'pay_income_tax_percent', 'propose'),
         )
 
     def test_the_fixed_income_tax_costs_two_hundred(self):
@@ -735,14 +744,14 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_build_and_sell_are_only_offered_in_the_managing_phase(self):
         state = self._own_group(self._open(), (1, 3))
-        self.assertEqual(self._names(state, 'seat-0'), ('roll',))
+        self.assertEqual(self._names(state, 'seat-0'), ('roll', 'propose'))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='sell', value='1'), None)
 
         pending = self._roll(self._open(), 'seat-0', 1, 2).state
-        self.assertEqual(self._names(pending, 'seat-0'), ('buy', 'decline'))
+        self.assertEqual(self._names(pending, 'seat-0'), ('buy', 'decline', 'propose'))
         with self.assertRaises(ValueError):
             rules.apply_action(pending, 'seat-0', Action(name='build', value='1'), None)
         with self.assertRaises(ValueError):
@@ -750,7 +759,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_a_build_needs_the_whole_colour_group(self):
         state = self._managing(self._give(self._open(), 3, 'seat-0'))
-        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn'))
+        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn', 'propose'))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='build', value='3'), None)
 
@@ -778,7 +787,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_a_house_cannot_be_built_without_a_house_in_the_bank(self):
         state = self._scene(houses=0)
-        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn'))
+        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn', 'propose'))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
 
@@ -814,13 +823,14 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_a_build_is_not_offered_without_the_cash(self):
         state = self._scene(cash=49)
-        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn'))
+        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn', 'propose'))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
 
     def test_build_is_never_offered_to_another_seat(self):
         state = self._scene()
-        self.assertEqual(self._names(state, 'seat-1'), ())
+        # The other seat is active to negotiate, but build stays with the turn.
+        self.assertEqual(self._names(state, 'seat-1'), ('propose',))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-1', Action(name='build', value='1'), None)
 
@@ -867,7 +877,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_sell_is_never_offered_to_another_seat(self):
         state = self._scene(levels={1: 1})
-        self.assertEqual(self._names(state, 'seat-1'), ())
+        self.assertEqual(self._names(state, 'seat-1'), ('propose',))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-1', Action(name='sell', value='1'), None)
 
@@ -1133,7 +1143,7 @@ class MonopolyBankruptcyTests(MonopolyRulesTestCase):
         transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
         self.assertEqual(self._names(transition.state, 'seat-0'), ())
         self.assertEqual(transition.state['turn'], 'seat-1')
-        self.assertEqual(self._names(transition.state, 'seat-1'), ('roll',))
+        self.assertEqual(self._names(transition.state, 'seat-1'), ('roll', 'propose'))
 
 
 class MonopolyFinishTests(MonopolyRulesTestCase):
@@ -1168,7 +1178,7 @@ class MonopolyFinishTests(MonopolyRulesTestCase):
         self.assertEqual(transition.state['turn'], 'seat-1')
         self.assertEqual(transition.state['phase'], rules.PHASE_AWAITING_ROLL)
         self.assertIsNone(transition.state['debt'])
-        self.assertEqual(self._names(transition.state, 'seat-1'), ('roll',))
+        self.assertEqual(self._names(transition.state, 'seat-1'), ('roll', 'propose'))
 
     def test_a_running_match_has_no_outcome(self):
         self.assertIsNone(rules.outcome(self._open()))
@@ -1201,8 +1211,8 @@ class MonopolyAuctionTests(MonopolyRulesTestCase):
         state = self._auction()
 
         self.assertEqual(rules.active_seats(state), ('seat-0', 'seat-1'))
-        self.assertEqual(self._names(state, 'seat-0'), ('bid', 'pass'))
-        self.assertEqual(self._names(state, 'seat-1'), ('bid', 'pass'))
+        self.assertEqual(self._names(state, 'seat-0'), ('bid', 'pass', 'propose'))
+        self.assertEqual(self._names(state, 'seat-1'), ('bid', 'pass', 'propose'))
 
     def test_the_bid_ladder_offers_absolute_amounts_over_the_current_bid(self):
         state = self._auction()
@@ -1231,13 +1241,13 @@ class MonopolyAuctionTests(MonopolyRulesTestCase):
     def test_a_seat_that_cannot_outbid_anyone_can_only_pass(self):
         state = self._cash(self._bid(self._auction(), 'seat-0', 100).state, 'seat-1', 50)
 
-        self.assertEqual(self._names(state, 'seat-1'), ('pass',))
+        self.assertEqual(self._names(state, 'seat-1'), ('pass', 'propose'))
 
     def test_the_high_bidder_may_raise_but_never_pass(self):
         state = self._bid(self._auction(), 'seat-0', 10).state
 
-        self.assertEqual(self._names(state, 'seat-0'), ('bid',))
-        self.assertEqual(self._names(state, 'seat-1'), ('bid', 'pass'))
+        self.assertEqual(self._names(state, 'seat-0'), ('bid', 'propose'))
+        self.assertEqual(self._names(state, 'seat-1'), ('bid', 'pass', 'propose'))
         with self.assertRaises(ValueError):
             self._act(state, 'seat-0', 'pass')
 
@@ -1248,7 +1258,7 @@ class MonopolyAuctionTests(MonopolyRulesTestCase):
         raised = self._bid(passed, 'seat-0', 10).state
 
         self.assertEqual(raised['auction']['passed'], [])
-        self.assertEqual(self._names(raised, 'seat-1'), ('bid', 'pass'))
+        self.assertEqual(self._names(raised, 'seat-1'), ('bid', 'pass', 'propose'))
 
     def test_the_last_standing_high_bidder_wins_and_pays_the_bank(self):
         state = self._bid(self._auction(), 'seat-0', 100).state
@@ -1318,7 +1328,8 @@ class MonopolyAuctionTests(MonopolyRulesTestCase):
     def test_a_seat_that_already_passed_cannot_bid_or_pass_again(self):
         state = self._pass(self._auction(), 'seat-1')
 
-        self.assertEqual(self._names(state, 'seat-1'), ())
+        # A passed bidder keeps its trade action, but may not bid again.
+        self.assertEqual(self._names(state, 'seat-1'), ('propose',))
         with self.assertRaises(ValueError):
             self._bid(state, 'seat-1', 10)
         with self.assertRaises(ValueError):
@@ -1326,7 +1337,7 @@ class MonopolyAuctionTests(MonopolyRulesTestCase):
 
     def test_no_auction_action_is_accepted_outside_the_bidding_phase(self):
         state = self._open()
-        self.assertEqual(self._names(state, 'seat-0'), ('roll',))
+        self.assertEqual(self._names(state, 'seat-0'), ('roll', 'propose'))
         with self.assertRaises(ValueError):
             self._act(state, 'seat-0', 'pass')
         with self.assertRaises(ValueError):
@@ -1954,7 +1965,7 @@ class MonopolyMortgageTests(MonopolyRulesTestCase):
 
     def test_mortgage_is_not_offered_for_a_space_owned_by_another_seat(self):
         state = self._managing(self._own(self._open(), 1, seat='seat-1'))
-        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        self.assertEqual(self._names(state, 'seat-0'), ('end_turn', 'propose'))
         self._rejected(state, 'seat-0', 'mortgage', '1')
 
     def test_mortgage_is_rejected_in_awaiting_roll(self):
@@ -2495,3 +2506,624 @@ class MonopolySettlementInterestTests(MonopolyRulesTestCase):
         self.assertIn(
             ('bankrupt', 'seat-1', {'creditor': None}), self._facts(transition)
         )
+
+
+class MonopolyTradeTests(MonopolyRulesTestCase):
+    """Offers between two seats: state, grammar, legality and the four actions
+    (S2 to S5 and S8 of ``monopoly-trade.md``)."""
+
+    def _managing(self, state, seat='seat-0'):
+        state = copy.deepcopy(state)
+        state['phase'] = rules.PHASE_MANAGING
+        state['turn'] = seat
+        return state
+
+    def _rolling(self, state, seat='seat-0'):
+        state = copy.deepcopy(state)
+        state['phase'] = rules.PHASE_AWAITING_ROLL
+        state['turn'] = seat
+        return state
+
+    def _value(self, to, give=(), cash=0, want=(), want_cash=0):
+        give_list = ','.join(str(index) for index in give)
+        want_list = ','.join(str(index) for index in want)
+        return (
+            f'to={to};give={give_list};cash={cash}'
+            f'|want={want_list};cash={want_cash}'
+        )
+
+    def _propose(self, state, value, seat='seat-0'):
+        return rules.apply_action(
+            state, seat, Action(name='propose', value=value), None
+        )
+
+    def _apply(self, state, seat, name, value):
+        return rules.apply_action(
+            state, seat, Action(name=name, value=value), None
+        )
+
+    def _rejected(self, state, seat, name, value=None):
+        before = copy.deepcopy(state)
+        with self.assertRaises(ValueError):
+            rules.apply_action(
+                state, seat, Action(name=name, value=value), None
+            )
+        self.assertEqual(state, before)
+
+    def _scene(self):
+        """seat-0 owns brown 1 and 3; seat-1 owns light-blue 6 and 8."""
+        state = self._open()
+        state = self._give(state, 1, 'seat-0')
+        state = self._give(state, 3, 'seat-0')
+        state = self._give(state, 6, 'seat-1')
+        state = self._give(state, 8, 'seat-1')
+        return self._managing(state)
+
+    def _proposed(self, offer):
+        state = self._scene()
+        return self._propose(state, offer).state
+
+    # --- S2: the state keys ---------------------------------------------
+
+    def test_initial_state_carries_an_empty_offer_map_and_a_zero_sequence(self):
+        state = self._open()
+        self.assertEqual(state['offers'], {})
+        self.assertEqual(state['offer_seq'], 0)
+
+    def test_a_state_saved_before_the_increment_reads_without_offers(self):
+        state = self._scene()
+        del state['offers']
+        del state['offer_seq']
+
+        transition = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        )
+
+        self.assertEqual(transition.state['offer_seq'], 1)
+        self.assertIn('1', transition.state['offers'])
+
+    # --- S3: the grammar -------------------------------------------------
+
+    def test_a_proposal_stores_board_ordered_terms_and_the_first_id(self):
+        state = self._scene()
+
+        transition = self._propose(
+            state, 'to=seat-1;give=3,1;cash=50|want=8,6;cash=25'
+        )
+
+        offer = {
+            'id': '1',
+            'proposer': 'seat-0',
+            'receiver': 'seat-1',
+            'give': {'properties': [1, 3], 'cash': 50},
+            'want': {'properties': [6, 8], 'cash': 25},
+        }
+        self.assertEqual(transition.state['offers'], {'1': offer})
+        self.assertEqual(transition.state['offer_seq'], 1)
+        self.assertEqual(
+            self._facts(transition),
+            (
+                (
+                    'offer_proposed',
+                    'seat-0',
+                    {
+                        'offer': '1',
+                        'proposer': 'seat-0',
+                        'receiver': 'seat-1',
+                        'give': {'properties': [1, 3], 'cash': 50},
+                        'want': {'properties': [6, 8], 'cash': 25},
+                    },
+                ),
+            ),
+        )
+
+    def test_each_new_proposal_gets_the_next_id(self):
+        state = self._scene()
+        first = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        second = self._propose(
+            first, self._value('seat-1', give=(3,), want=(8,))
+        ).state
+
+        self.assertEqual(sorted(second['offers']), ['1', '2'])
+        self.assertEqual(second['offer_seq'], 2)
+        self.assertEqual(second['offers']['2']['id'], '2')
+
+    def test_the_propose_prompt_publishes_the_grammar_as_freeform(self):
+        spec = next(
+            spec
+            for spec in rules.legal_actions(self._scene(), 'seat-0')
+            if spec.name == 'propose'
+        )
+
+        self.assertIs(spec.freeform, True)
+        self.assertIn(
+            'to=<seat>;give=<idx,idx>;cash=<int>|want=<idx,idx>;cash=<int>',
+            spec.prompt,
+        )
+
+    def test_a_malformed_composed_value_is_rejected(self):
+        state = self._scene()
+        malformed = (
+            '',
+            'to=seat-1;give=1;cash=0|want=6',
+            'to=seat-1;give=1;cash=0',
+            'to=seat-1;give=1;cash=|want=6;cash=0',
+            'to=seat-1;give=1,;cash=0|want=6;cash=0',
+            'to=seat-1;give=1;cash=-1|want=6;cash=0',
+            'to=seat-1;give=1;cash=1.5|want=6;cash=0',
+            'to=seat-1;give=40;cash=0|want=6;cash=0',
+            'to=seat-1;give=1;cash=0|want=6;cash=0;extra=1',
+            'to=seat-1;give=1;cash=0|want=6,6;cash=0',
+            'to=seat-1;give=1;cash=0|want=6;cash=0|extra',
+            'to=;give=1;cash=0|want=6;cash=0',
+            'to=seat-1;give=1 ;cash=0|want=6;cash=0',
+        )
+        for value in malformed:
+            with self.subTest(value=value):
+                self._rejected(state, 'seat-0', 'propose', value)
+
+    def test_the_receiver_must_be_another_solvent_seat(self):
+        state = self._scene()
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-9', give=(1,))
+        )
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-0', give=(1,))
+        )
+        eliminated = copy.deepcopy(state)
+        eliminated['players']['seat-1']['eliminated'] = True
+        self._rejected(
+            eliminated, 'seat-0', 'propose', self._value('seat-1', give=(1,))
+        )
+
+    # --- S4: the terms ----------------------------------------------------
+
+    def test_an_empty_offer_is_rejected(self):
+        state = self._scene()
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1')
+        )
+
+    def test_an_index_the_proposer_or_receiver_does_not_own_is_rejected(self):
+        state = self._scene()
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1', give=(6,))
+        )
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1', want=(1,))
+        )
+
+    def test_a_duplicated_or_doubled_index_is_rejected(self):
+        state = self._scene()
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1', give=(1, 1))
+        )
+        state_with_double = self._scene()
+        state_with_double = self._give(state_with_double, 1, 'seat-1')
+        self._rejected(
+            state_with_double,
+            'seat-0',
+            'propose',
+            self._value('seat-1', give=(1,), want=(1,)),
+        )
+
+    def test_a_group_with_buildings_blocks_the_offer_on_either_side(self):
+        state = copy.deepcopy(self._scene())
+        state['buildings'] = {'1': 1}
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1', give=(3,))
+        )
+        receiver_built = copy.deepcopy(self._scene())
+        receiver_built['buildings'] = {'6': 1}
+        self._rejected(
+            receiver_built,
+            'seat-0',
+            'propose',
+            self._value('seat-1', want=(8,)),
+        )
+
+    def test_the_cash_each_side_pays_must_be_covered(self):
+        state = self._scene()
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1', give=(1,), cash=1501)
+        )
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1', want=(6,), want_cash=1501)
+        )
+
+    def test_a_side_that_cannot_sustain_a_mortgaged_property_cannot_receive_it(self):
+        state = self._mortgaged(self._scene(), 1)
+        broke = self._cash(state, 'seat-1', 2)  # interest on 1 is 3
+        self._rejected(
+            broke, 'seat-0', 'propose', self._value('seat-1', give=(1,))
+        )
+        funded = self._cash(state, 'seat-1', 3)
+        transition = self._propose(
+            funded, self._value('seat-1', give=(1,), cash=3)
+        )
+        self.assertIn('1', transition.state['offers'])
+
+    # --- S5: the four actions and the seat set ---------------------------
+
+    def test_active_seats_is_every_solvent_seat(self):
+        state = self._open(('seat-0', 'seat-1', 'seat-2'))
+
+        self.assertEqual(rules.active_seats(state), ('seat-0', 'seat-1', 'seat-2'))
+
+    def test_legal_actions_appends_the_trade_actions_to_the_phase(self):
+        state = self._proposed(self._value('seat-1', give=(1,), want=(6,)))
+
+        proposer = self._names(state, 'seat-0')
+        receiver = self._names(state, 'seat-1')
+
+        self.assertEqual(
+            proposer,
+            ('build', 'mortgage', 'end_turn', 'propose', 'withdraw'),
+        )
+        self.assertEqual(receiver, ('propose', 'accept', 'reject'))
+
+    def test_the_seat_on_turn_keeps_its_phase_actions_while_negotiating(self):
+        state = self._rolling(
+            self._proposed(self._value('seat-1', give=(1,), want=(6,)))
+        )
+
+        self.assertEqual(
+            self._names(state, 'seat-0'), ('roll', 'propose', 'withdraw')
+        )
+
+    def test_accept_and_reject_are_offered_for_each_received_offer_in_id_order(self):
+        state = self._scene()
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        state = self._propose(
+            state, self._value('seat-1', give=(3,), want=(8,))
+        ).state
+
+        self.assertEqual(self._options(state, 'seat-1', 'accept'), ('1', '2'))
+        self.assertEqual(self._options(state, 'seat-1', 'reject'), ('1', '2'))
+        self.assertEqual(self._options(state, 'seat-0', 'withdraw'), ('1', '2'))
+
+    def test_accept_is_offered_only_for_offers_that_are_still_valid(self):
+        state = self._scene()
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(8,))
+        ).state
+        accepted = self._apply(state, 'seat-1', 'accept', '1').state
+
+        self.assertEqual(self._options(accepted, 'seat-1', 'accept'), ())
+        self.assertEqual(self._options(accepted, 'seat-1', 'reject'), ('2',))
+        self.assertEqual(self._options(accepted, 'seat-0', 'withdraw'), ('2',))
+
+    def test_a_rejected_offer_disappears(self):
+        state = self._proposed(self._value('seat-1', give=(1,), want=(6,)))
+
+        transition = self._apply(state, 'seat-1', 'reject', '1')
+
+        self.assertEqual(transition.state['offers'], {})
+        self.assertEqual(
+            self._facts(transition),
+            (('offer_rejected', 'seat-1', {'offer': '1'}),),
+        )
+
+    def test_a_withdrawn_offer_disappears(self):
+        state = self._proposed(self._value('seat-1', give=(1,), want=(6,)))
+
+        transition = self._apply(state, 'seat-0', 'withdraw', '1')
+
+        self.assertEqual(transition.state['offers'], {})
+        self.assertEqual(
+            self._facts(transition),
+            (('offer_withdrawn', 'seat-0', {'offer': '1'}),),
+        )
+
+    def test_the_four_actions_are_accepted_outside_the_turn_phases(self):
+        # The receiver is never on turn, yet may reject; the proposer is on
+        # turn in awaiting_roll, a phase that used to reject any trade action.
+        state = self._rolling(
+            self._proposed(self._value('seat-1', give=(1,), want=(6,)))
+        )
+
+        withdrawn = self._apply(state, 'seat-0', 'withdraw', '1')
+        self.assertEqual(withdrawn.state['offers'], {})
+
+    def test_rejecting_an_unknown_offer_is_rejected(self):
+        state = self._proposed(self._value('seat-1', give=(1,), want=(6,)))
+        self._rejected(state, 'seat-1', 'reject', '9')
+        self._rejected(state, 'seat-0', 'withdraw', '9')
+
+    def test_only_the_receiver_accepts_and_only_the_proposer_withdraws(self):
+        state = self._proposed(self._value('seat-1', give=(1,), want=(6,)))
+        self._rejected(state, 'seat-0', 'accept', '1')
+        self._rejected(state, 'seat-1', 'withdraw', '1')
+
+    # --- S8: several offers ----------------------------------------------
+
+    def test_a_proposer_can_hold_several_open_offers_at_once(self):
+        state = self._scene()
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        state = self._propose(
+            state, self._value('seat-1', give=(3,), want=(8,))
+        ).state
+
+        self.assertEqual(len(state['offers']), 2)
+        self.assertEqual(self._options(state, 'seat-1', 'accept'), ('1', '2'))
+
+    # --- S6: the transfer -------------------------------------------------
+
+    def test_accept_swaps_properties_and_cash_between_the_two_seats(self):
+        state = self._propose(
+            self._scene(),
+            self._value('seat-1', give=(1,), cash=100, want=(6,), want_cash=50),
+        ).state
+
+        transition = self._apply(state, 'seat-1', 'accept', '1')
+
+        self.assertEqual(
+            transition.state['players']['seat-0']['cash'], 1500 - 100 + 50
+        )
+        self.assertEqual(
+            transition.state['players']['seat-1']['cash'], 1500 - 50 + 100
+        )
+        self.assertEqual(
+            sorted(transition.state['players']['seat-0']['properties']), [3, 6]
+        )
+        self.assertEqual(
+            sorted(transition.state['players']['seat-1']['properties']), [1, 8]
+        )
+        self.assertEqual(transition.state['owners']['1'], 'seat-1')
+        self.assertEqual(transition.state['owners']['6'], 'seat-0')
+        self.assertEqual(transition.state['offers'], {})
+        self.assertEqual(transition.state['offer_seq'], 1)
+
+    def test_accept_announces_the_offer_and_the_settlement(self):
+        state = self._propose(
+            self._scene(), self._value('seat-1', give=(1,), want=(6,))
+        ).state
+
+        transition = self._apply(state, 'seat-1', 'accept', '1')
+
+        self.assertEqual(
+            self._facts(transition),
+            (
+                ('offer_accepted', 'seat-1', {'offer': '1'}),
+                (
+                    'trade_settled',
+                    'seat-1',
+                    {'offer': '1', 'proposer': 'seat-0', 'receiver': 'seat-1'},
+                ),
+            ),
+        )
+
+    def test_accept_charges_each_side_the_interest_of_what_it_receives(self):
+        state = self._mortgaged(self._scene(), 1, 6)
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+
+        transition = self._apply(state, 'seat-1', 'accept', '1')
+
+        # seat-0 receives Oriental (mortgage 50 -> 5); seat-1 receives
+        # Mediterranean (mortgage 30 -> 3).
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1500 - 5)
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1500 - 3)
+        facts = self._facts(transition)
+        self.assertEqual(
+            facts[0],
+            ('interest_paid', 'seat-0', {'space': 6, 'amount': 5, 'reason': 'trade'}),
+        )
+        self.assertEqual(
+            facts[1],
+            ('interest_paid', 'seat-1', {'space': 1, 'amount': 3, 'reason': 'trade'}),
+        )
+        self.assertEqual(
+            facts[2],
+            ('offer_accepted', 'seat-1', {'offer': '1'}),
+        )
+
+    def test_trade_interest_rounds_up_per_property(self):
+        state = self._give(self._scene(), 37, 'seat-1')
+        state = self._mortgaged(state, 37)
+        state = self._propose(
+            state, self._value('seat-1', want=(37,))
+        ).state
+
+        transition = self._apply(state, 'seat-1', 'accept', '1')
+
+        # Park Place prints 175: a tenth is 17.5, rounded up to 18.
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1500 - 18)
+        self.assertIn(
+            ('interest_paid', 'seat-0', {'space': 37, 'amount': 18, 'reason': 'trade'}),
+            self._facts(transition),
+        )
+
+    def test_a_mortgaged_property_transfers_still_mortgaged(self):
+        state = self._mortgaged(self._scene(), 1, 6)
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+
+        transition = self._apply(state, 'seat-1', 'accept', '1')
+
+        self.assertEqual(transition.state['mortgaged'], {'1': True, '6': True})
+        self.assertEqual(transition.state['owners']['1'], 'seat-1')
+        self.assertEqual(transition.state['owners']['6'], 'seat-0')
+
+    def test_accepting_a_stale_offer_is_rejected_without_touching_the_state(self):
+        state = self._propose(
+            self._scene(), self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        stale = copy.deepcopy(state)
+        stale['owners']['1'] = 'seat-1'
+        stale['players']['seat-0']['properties'].remove(1)
+        stale['players']['seat-1']['properties'].append(1)
+        before = copy.deepcopy(stale)
+
+        with self.assertRaises(ValueError):
+            self._apply(stale, 'seat-1', 'accept', '1')
+
+        self.assertEqual(stale, before)
+        self.assertIn('1', stale['offers'])
+
+    def test_a_second_accept_of_the_same_property_is_rejected(self):
+        state = self._scene()
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(8,))
+        ).state
+        first = self._apply(state, 'seat-1', 'accept', '1').state
+        self.assertEqual(sorted(first['offers']), ['2'])
+        before = copy.deepcopy(first)
+
+        with self.assertRaises(ValueError):
+            self._apply(first, 'seat-1', 'accept', '2')
+
+        self.assertEqual(first, before)
+
+    # --- S7: the life of an offer -----------------------------------------
+
+    def test_eliminating_a_seat_drops_every_offer_that_names_it(self):
+        state = self._open(('seat-0', 'seat-1', 'seat-2'))
+        state = self._give(state, 1, 'seat-0')
+        state = self._give(state, 3, 'seat-0')
+        state = self._give(state, 6, 'seat-1')
+        state = self._give(state, 8, 'seat-1')
+        state = self._give(state, 11, 'seat-2')
+        state = self._give(state, 13, 'seat-2')
+        state = self._managing(state)
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        state = self._propose(
+            state,
+            self._value('seat-2', give=(8,), want=(11,)),
+            seat='seat-1',
+        ).state
+        self.assertEqual(sorted(state['offers']), ['1', '2'])
+
+        result = rules.abandon(state, 'seat-0')
+
+        # Offer 2, between seat-1 and seat-2, survives the expulsion.
+        self.assertEqual(sorted(result.state['offers']), ['2'])
+
+    def test_finishing_the_match_clears_the_offers(self):
+        state = self._propose(
+            self._scene(), self._value('seat-1', give=(1,), want=(6,))
+        ).state
+
+        final = rules.abandon(state, 'seat-1')
+
+        self.assertIs(rules.is_finished(final.state), True)
+        self.assertEqual(final.state['offers'], {})
+
+    def test_a_seat_with_an_open_debt_receives_no_trade_action(self):
+        state = self._open(('seat-0', 'seat-1', 'seat-2'))
+        state = self._give(state, 1, 'seat-0')
+        state = self._give(state, 3, 'seat-0')
+        state = self._give(state, 6, 'seat-1')
+        state = self._give(state, 8, 'seat-1')
+        state = self._give(state, 11, 'seat-2')
+        state = self._give(state, 13, 'seat-2')
+        state = self._managing(state)
+        state = self._propose(
+            state, self._value('seat-1', give=(1,), want=(6,))
+        ).state
+        state = self._propose(
+            state,
+            self._value('seat-2', give=(8,), want=(11,)),
+            seat='seat-1',
+        ).state
+        state = copy.deepcopy(state)
+        state['phase'] = rules.PHASE_RAISING_CASH
+        state['turn'] = 'seat-0'
+        state['debt'] = {
+            'seat': 'seat-0',
+            'creditor': 'seat-1',
+            'amount': 50,
+            'resume': {'kind': 'settle_step', 'extra': False},
+            'fact': None,
+        }
+
+        names = self._names(state, 'seat-0')
+        for name in ('propose', 'accept', 'reject', 'withdraw'):
+            with self.subTest(name=name):
+                self.assertNotIn(name, names)
+        self._rejected(
+            state, 'seat-0', 'propose', self._value('seat-1', give=(1,))
+        )
+        # The other seats keep negotiating while the debt is open.
+        self.assertIn('withdraw', self._names(state, 'seat-1'))
+        self.assertIn('accept', self._names(state, 'seat-2'))
+
+    # --- D1: an off-turn solvent seat negotiates (follow-up) ----------------
+
+    def test_an_off_turn_seat_is_offered_only_the_trade_actions(self):
+        managing = self._scene()  # turn is seat-0
+        self.assertEqual(self._names(managing, 'seat-1'), ('propose',))
+        for name in ('roll', 'buy', 'end_turn', 'build'):
+            with self.subTest(name=name):
+                self.assertNotIn(name, self._names(managing, 'seat-1'))
+
+        rolling = self._rolling(self._scene())  # turn is seat-0
+        self.assertEqual(self._names(rolling, 'seat-1'), ('propose',))
+
+    def test_an_off_turn_seat_may_propose_and_the_offer_settles(self):
+        proposed = self._propose(
+            self._scene(),
+            self._value('seat-0', give=(6,), want=(1,)),
+            seat='seat-1',
+        )
+
+        self.assertEqual(proposed.state['offers']['1']['proposer'], 'seat-1')
+        self.assertEqual(
+            self._facts(proposed),
+            (
+                (
+                    'offer_proposed',
+                    'seat-1',
+                    {
+                        'offer': '1',
+                        'proposer': 'seat-1',
+                        'receiver': 'seat-0',
+                        'give': {'properties': [6], 'cash': 0},
+                        'want': {'properties': [1], 'cash': 0},
+                    },
+                ),
+            ),
+        )
+
+        accepted = self._apply(proposed.state, 'seat-0', 'accept', '1')
+
+        self.assertEqual(accepted.state['owners']['6'], 'seat-0')
+        self.assertEqual(accepted.state['owners']['1'], 'seat-1')
+        self.assertEqual(
+            sorted(accepted.state['players']['seat-0']['properties']), [3, 6]
+        )
+        self.assertEqual(
+            sorted(accepted.state['players']['seat-1']['properties']), [1, 8]
+        )
+        self.assertEqual(accepted.state['offers'], {})
+
+    def test_an_off_turn_seat_cannot_take_the_phase_actions(self):
+        managing = self._scene()  # turn is seat-0
+        self._rejected(managing, 'seat-1', 'end_turn')
+        self._rejected(managing, 'seat-1', 'build', '6')
+
+        rolling = self._rolling(self._scene())  # turn is seat-0
+        self._rejected(rolling, 'seat-1', 'roll')
+
+    def test_a_seat_that_does_not_hold_the_pending_purchase_cannot_buy(self):
+        pending = self._roll(self._open(), 'seat-0', 1, 2).state
+
+        self.assertEqual(self._names(pending, 'seat-1'), ('propose',))
+        self._rejected(pending, 'seat-1', 'buy')
+        self._rejected(pending, 'seat-1', 'decline')
