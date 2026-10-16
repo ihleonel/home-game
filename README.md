@@ -44,8 +44,10 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   `RandomSource` exactly as `ta-te-ti`'s does.
   Bankruptcy follows the printed rule's creditor split: a debt to another player hands that
   player the debtor's cash and properties, while a debt to the bank takes the cash out of the
-  game and returns the properties to the bank unowned. The raise-cash route does not exist yet,
-  so an unaffordable debt goes straight to bankruptcy.
+  game and returns the properties to the bank unowned -- and that last part is one of the recorded
+  deviations below, since the print auctions those properties at once. An unaffordable charge opens
+  the raise-cash window instead of ending the seat on the spot, so a debt reaches bankruptcy when
+  the seat declares it, never automatically.
   The Chance and Community Chest decks are dealt: landing on either space turns up the top card
   of its own deck, resolves it and recycles it to the bottom, and the classic United States set
   of 32 cards is transcribed with a test that pins it card by card. Everything a card prints is
@@ -112,14 +114,17 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   channel. A seat with an open debt does not take part in a trade while that debt is open -- its
   ways out stay the window's four -- and an offer dies with either of its two seats, or with the
   match.
-  Two printed rules are deliberately not implemented, and both are recorded deviations rather than
-  missing work. The last houses and hotels are not sent to auction: when the bank's box runs out the
-  build option is simply not offered, and while it still holds pieces the first seat that asks takes
-  the piece at its printed price, so turn order settles who gets the last house. And there is no turn
-  clock: with everyone in the same house the table can nudge whoever is idle, and the automatic
-  endings stay reserved for a seat that actually disconnects; what is still to design for a match
-  nobody can advance is the expulsion vote, a human decision instead of a timer. Both are listed
-  with their decisions in `PENDING.md`.
+  Three deliberate deviations are recorded rather than left as missing work, because each one is a
+  decision someone took and none of them is owed by a future increment: the last houses and hotels
+  are not sent to auction -- when the bank's box runs out the build option is simply not offered,
+  and while it still holds pieces the first seat that asks takes the piece at its printed price, so
+  turn order settles who gets the last house; there is no turn clock, because everyone plays from
+  the same house and the table can nudge whoever is idle, the automatic endings stay reserved for a
+  seat that really disconnects, and what is still to design for a match nobody can advance is the
+  expulsion vote, a human decision instead of a timer; and the properties a bankrupt seat turns over
+  to the bank are not auctioned at once, but return unowned and find their owner the way any
+  never-bought space does, a difference of moment rather than of economy. All three are listed with
+  their decisions in `PENDING.md`.
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
   printed price, owner and development level, carries the tokens of the seats standing on it and the

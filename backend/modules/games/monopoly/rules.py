@@ -8,12 +8,14 @@ The rules cover the playable core and the increments that followed it: dice,
 movement, GO, purchases, the auction a decline opens, rents by development
 level, house and hotel building with the bank's finite stock, both decks,
 taxes, jail, bankruptcy, elimination, the end of the match, mortgages with the
-raise-cash window, and trading between seats. Two deviations from the print are
+raise-cash window, and trading between seats. Three deviations from the print are
 deliberate and documented: when the bank's stock of houses or hotels runs out
 the build option is simply not offered, and the print's scarcity auction of the
 last houses and hotels is **not** implemented -- the first seat that asks takes
 the piece at its printed price, so turn order is what settles it (S13 of
-``monopoly-building.md``).
+``monopoly-building.md``) -- and the properties a bankrupt seat turns over to
+the bank are left unowned instead of being auctioned at once, exactly like a
+space nobody ever bought (S11 of ``monopoly.md``).
 
 The edition is the classic 1999-2007 rulebook (S2): $1.500 to start, Income Tax
 at $200 or 10 % of total worth, Luxury Tax at $75.
@@ -1714,7 +1716,9 @@ def _eliminate(state, seat: str, creditor, events=None) -> None:
     paid for those buildings, and then pays the 10 % interest of every
     mortgaged property it received (S9); when the creditor is the bank (taxes,
     fines and the disconnection expulsion) the buildings simply return and
-    nothing is paid, and the properties are left unowned as S11 and S14 say.
+    nothing is paid, and the properties are left unowned as S11 and S14 say --
+    the print auctions them at once and S11 records that deviation, so what a
+    bank-held space needs is no different from a space nobody ever bought.
 
     ``events`` is optional because the settlement is also reachable from
     :func:`abandon`; when it is a player that receives mortgaged property the
