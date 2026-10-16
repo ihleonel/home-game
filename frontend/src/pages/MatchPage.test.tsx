@@ -118,7 +118,6 @@ function sessionFor(gameId: string, view: unknown): RoomSessionContextValue {
     toggleReady: async () => {},
     requestPlayerSeat: async () => {},
     leaveRoom: async () => {},
-    startExpulsionVote: async () => {},
     castExpulsionBallot: async () => {},
     submitAction: async () => {},
     submitPick: async () => {},

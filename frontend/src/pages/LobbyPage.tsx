@@ -7,7 +7,7 @@ import { IdentityForm } from '../components/IdentityForm'
 import { Roster } from '../components/Roster'
 import { SpectatorActions } from '../components/SpectatorActions'
 import { YourRoomActions } from '../components/YourRoomActions'
-import { markerLabel, roomSummary, splitRoomParticipants } from '../lib/format'
+import { markerLabel, roomSummary, splitRoomParticipants, expulsionVoteTargets } from '../lib/format'
 import { readStoredIdentity } from '../lib/session'
 import type { GuestIdentity } from '../lib/session'
 import { useCatalog } from '../state/catalogContext'
@@ -41,7 +41,6 @@ export function LobbyPage() {
     toggleReady,
     requestPlayerSeat,
     leaveRoom,
-    startExpulsionVote,
     castExpulsionBallot,
     createOrJoin,
     setActionError,
@@ -54,6 +53,10 @@ export function LobbyPage() {
   const [joining, setJoining] = useState(false)
 
   const activeGame = games.find((game) => game.id === room?.game_id)
+  // The open vote is a batch, but an older payload may still carry the single
+  // ``target_ref``: the tolerant reader keeps such a vote from crashing the
+  // screen while the deployment catches up (S5/S9).
+  const voteTargets = activeExpulsionVote ? expulsionVoteTargets(activeExpulsionVote) : []
 
   if (!room) return <Navigate to="/" replace />
   if (matchInProgress && matchRendererAvailable) {
@@ -126,34 +129,21 @@ export function LobbyPage() {
             : roomSummary(players.length, spectators.length)}
         </div>
 
-        <Roster
-          busy={busy}
-          canStartExpulsionVote={(participant) =>
-            !activeExpulsionVote &&
-            isJoined &&
-            roomSession !== null &&
-            // A spectator is never a voter, so offering the action would only
-            // produce a rejection: the backend electorate excludes it (S7).
-            currentParticipant?.role === 'player' &&
-            currentParticipant?.presence === 'online' &&
-            participant.role === 'player' &&
-            participant.presence === 'inactive' &&
-            participant.participant_ref !== roomSession.participantRef}
-          game={activeGame}
-          onStartExpulsionVote={(participantRef) => void startExpulsionVote(participantRef)}
-          participants={room.participants}
-        />
-
         {activeExpulsionVote && (
           <ExpulsionVotePanel
             busy={busy}
             canVote={Boolean(currentBallot) && currentParticipant?.presence === 'online'}
-            isTarget={roomSession?.participantRef === activeExpulsionVote.target_ref}
+            isTarget={
+              roomSession !== null && voteTargets.includes(roomSession.participantRef)
+            }
             onCast={(choice) => void castExpulsionBallot(activeExpulsionVote.vote_ref, choice)}
             ownBallot={currentBallot}
+            participants={room.participants}
             vote={activeExpulsionVote}
           />
         )}
+
+        <Roster game={activeGame} participants={room.participants} />
 
         {isJoined && !matchRendererAvailable && (
           <section className="match-unavailable" aria-labelledby="match-unavailable-title">

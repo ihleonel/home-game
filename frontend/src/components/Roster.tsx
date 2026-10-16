@@ -5,17 +5,11 @@ import { readRemainingSeconds, useReconnectCountdown } from '../lib/reconnectCou
 type RosterProps = {
   game: Game | undefined
   participants: Participant[]
-  canStartExpulsionVote: (participant: Participant) => boolean
-  busy: boolean
-  onStartExpulsionVote: (participantRef: string) => void
 }
 
 type RosterPlayerProps = {
   game: Game | undefined
   participant: Participant
-  canStartExpulsionVote: (participant: Participant) => boolean
-  busy: boolean
-  onStartExpulsionVote: (participantRef: string) => void
 }
 
 /**
@@ -28,13 +22,7 @@ type RosterPlayerProps = {
  * while there is time left; at zero the badge falls back to the presence the
  * server sent, so it never promises an expulsion at that exact instant (S8).
  */
-function RosterPlayer({
-  game,
-  participant,
-  canStartExpulsionVote,
-  busy,
-  onStartExpulsionVote,
-}: RosterPlayerProps) {
+function RosterPlayer({ game, participant }: RosterPlayerProps) {
   const reconnectSeconds = useReconnectCountdown(
     participant.presence === 'reconnecting'
       ? readRemainingSeconds(participant.remaining_seconds)
@@ -60,27 +48,17 @@ function RosterPlayer({
           </span>
         )}
       </span>
-      {participant.role === 'player' && canStartExpulsionVote(participant) && (
-        <button
-          className="button button-quiet vote-start-button"
-          disabled={busy}
-          onClick={() => onStartExpulsionVote(participant.participant_ref)}
-          type="button"
-        >
-          Iniciar votación de expulsión
-        </button>
-      )}
     </li>
   )
 }
 
-export function Roster({
-  game,
-  participants,
-  canStartExpulsionVote,
-  busy,
-  onStartExpulsionVote,
-}: RosterProps) {
+/**
+ * The room list.
+ *
+ * No participant action starts the expulsion vote any more (S9/D3): the sweep
+ * opens it on its own, so the roster only shows who is in the room.
+ */
+export function Roster({ game, participants }: RosterProps) {
   return (
     <section className="roster-section" aria-labelledby="roster-title">
       <div className="section-heading">
@@ -91,11 +69,8 @@ export function Roster({
         <ul className="roster-list">
           {participants.map((participant, index) => (
             <RosterPlayer
-              busy={busy}
-              canStartExpulsionVote={canStartExpulsionVote}
               game={game}
               key={`${participant.joined_at}-${index}`}
-              onStartExpulsionVote={onStartExpulsionVote}
               participant={participant}
             />
           ))}

@@ -273,30 +273,6 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function startExpulsionVote(targetRef: string): Promise<void> {
-    if (!roomSession) return
-    setPendingAction('vote')
-    setActionError(null)
-    try {
-      const response = await requestJson<VoteResponse>('/api/rooms/expulsion-votes/', {
-        method: 'POST',
-        body: JSON.stringify({
-          session_id: roomSession.sessionId,
-          target_ref: targetRef,
-        }),
-      })
-      setRoom(response.room)
-      setVoteNotice(expulsionVoteMessage(response.vote))
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'No se ha podido iniciar la votación.')
-      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
-        void refreshActiveRoom(roomSession.gameId)
-      }
-    } finally {
-      setPendingAction(null)
-    }
-  }
-
   async function castExpulsionBallot(
     voteRef: string,
     choice: 'yes' | 'no',
@@ -685,7 +661,6 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
         toggleReady,
         requestPlayerSeat,
         leaveRoom,
-        startExpulsionVote,
         castExpulsionBallot,
         submitAction,
         submitPick,

@@ -78,7 +78,6 @@ export type RoomSessionContextValue = {
   toggleReady: () => Promise<void>
   requestPlayerSeat: () => Promise<void>
   leaveRoom: () => Promise<void>
-  startExpulsionVote: (targetRef: string) => Promise<void>
   castExpulsionBallot: (voteRef: string, choice: 'yes' | 'no') => Promise<void>
   submitAction: (name: string, value: string | null) => Promise<void>
   submitPick: (value: string) => Promise<void>
