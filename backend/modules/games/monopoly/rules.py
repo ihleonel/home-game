@@ -47,11 +47,13 @@ STARTING_HOTELS = 12
 _RAILROAD_DOUBLED = 'railroad_doubled'
 CARD_UTILITY_MULTIPLIER = 10
 
-# The three phases the state persists (S6). Resolving a space happens inside
-# the same transition as the roll, so it is not a phase of its own.
+# The three phases the state persists (S6 of ``monopoly.md``), plus the auction
+# phase the third increment adds (S2 of ``monopoly-auction.md``). Resolving a
+# space happens inside the same transition as the roll, so it is not a phase.
 PHASE_AWAITING_ROLL = 'awaiting_roll'
 PHASE_AWAITING_DECISION = 'awaiting_decision'
 PHASE_MANAGING = 'managing'
+PHASE_AWAITING_BID = 'awaiting_bid'
 
 ACTION_ROLL = 'roll'
 ACTION_PAY_JAIL_FINE = 'pay_jail_fine'
@@ -61,6 +63,14 @@ ACTION_PAY_INCOME_TAX_FIXED = 'pay_income_tax_fixed'
 ACTION_PAY_INCOME_TAX_PERCENT = 'pay_income_tax_percent'
 ACTION_END_TURN = 'end_turn'
 ACTION_USE_JAIL_CARD = 'use_jail_card'
+ACTION_BID = 'bid'
+ACTION_PASS = 'pass'
+
+# The ladder a bid may climb by: the high bid plus each of these, filtered by
+# the bidder's cash. The printed rules allow any price and the runtime only
+# accepts an enumerated option list, so the ladder is the documented adaptation
+# (S4 of ``monopoly-auction.md``).
+_BID_STEPS = (1, 10, 50, 100)
 
 # Spaces that stop the token without asking anything. The two card spaces are
 # deliberately absent: they draw, and the draw is what resolves them.
@@ -114,6 +124,7 @@ def initial_state(
         'bank': {'houses': STARTING_HOUSES, 'hotels': STARTING_HOTELS},
         'decks': _deck_order(decks),
         'last_card': None,
+        'auction': None,
         'phase': PHASE_AWAITING_ROLL,
         'turn': first_seat,
         'last_roll': None,
@@ -171,6 +182,67 @@ def outcome(state: Mapping) -> Outcome | None:
     return Outcome(winner_seat=winner, reason=reason)
 
 
+def active_seats(state: Mapping) -> tuple[str, ...]:
+    """Return the seats that may act right now, in seat order.
+
+    Only one seat acts at a time, except while an auction is open: there every
+    solvent seat that has not passed may bid, which is the multi-seat shape the
+    runtime contract always allowed and the auction is the first rule to use.
+    """
+    if is_finished(state):
+        return ()
+    if state['phase'] == PHASE_AWAITING_BID:
+        return eligible_bidders(state)
+    turn = state['turn']
+    return () if turn is None else (turn,)
+
+
+def eligible_bidders(state: Mapping) -> tuple[str, ...]:
+    """Return the seats still bidding, in seat order.
+
+    A seat that passed is out until somebody bids again, because a fresh bid
+    reopens the auction for everyone. An eliminated seat is never a bidder.
+    """
+    auction = state.get('auction')
+    if auction is None:
+        return ()
+    passed = auction['passed']
+    return tuple(seat for seat in solvent_seats(state) if seat not in passed)
+
+
+def _bid_amounts(state: Mapping, seat: str) -> tuple[int, ...]:
+    """The bids ``seat`` may place: the high bid plus the ladder, within cash."""
+    auction = state['auction']
+    cash = state['players'][seat]['cash']
+    return tuple(
+        amount
+        for amount in (auction['high_bid'] + step for step in _BID_STEPS)
+        if amount <= cash
+    )
+
+
+def _bid_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
+    """The bids and the pass this seat may take in the open auction."""
+    if seat not in eligible_bidders(state):
+        return ()
+    specs = []
+    amounts = _bid_amounts(state, seat)
+    if amounts:
+        specs.append(
+            ActionSpec(
+                name=ACTION_BID,
+                options=tuple(str(amount) for amount in amounts),
+                prompt='Pujá',
+            )
+        )
+    # A bid cannot be withdrawn, so the seat holding the high bid may only
+    # raise it: the auction ends when the others pass, never by the leader
+    # walking away from its own bid.
+    if state['auction']['high_bidder'] != seat:
+        specs.append(ActionSpec(name=ACTION_PASS, prompt='Pasá la subasta.'))
+    return tuple(specs)
+
+
 def total_worth(state: Mapping, seat: str) -> int:
     """Return cash plus the printed prices of the seat's properties.
 
@@ -187,13 +259,13 @@ def legal_actions(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
     """Return the actions ``seat`` may take right now, and nothing else."""
     if is_finished(state) or seat not in state['players']:
         return ()
-    if state['turn'] != seat:
-        return ()
-    player = state['players'][seat]
-    if player['eliminated']:
+    if seat not in active_seats(state):
         return ()
 
+    player = state['players'][seat]
     phase = state['phase']
+    if phase == PHASE_AWAITING_BID:
+        return _bid_specs(state, seat)
     if phase == PHASE_AWAITING_ROLL:
         specs = [ActionSpec(name=ACTION_ROLL, prompt='Tirá los dados.')]
         if player['in_jail'] and player['jail_cards']:
@@ -267,12 +339,12 @@ def apply_action(
         raise ValueError('the match is already finished')
     if seat not in state['players']:
         raise ValueError(f'unknown seat: {seat!r}')
-    if state['turn'] != seat:
-        raise ValueError(f'not {seat!r} turn')
+    if seat not in active_seats(state):
+        raise ValueError(f'{seat!r} cannot act right now')
     handler = _HANDLERS.get(action.name)
     if handler is None:
         raise ValueError(f'unknown action: {action.name!r}')
-    return _with_finish_fact(handler(state, seat, rng))
+    return _with_finish_fact(handler(state, seat, action, rng))
 
 
 def abandon(state: Mapping, seat: str) -> Transition:
@@ -303,7 +375,15 @@ def abandon(state: Mapping, seat: str) -> Transition:
         state['turn'] = None
         state['pending'] = None
         state['extra_roll'] = False
+        state['auction'] = None
         state['phase'] = PHASE_AWAITING_ROLL
+    elif state['auction'] is not None:
+        # The auction owns the phase, so the turn is parked while it is open. It
+        # only moves if the expelled seat was holding it, and the auction is
+        # re-checked because losing a bidder can be what ends it (S6).
+        if state['turn'] == seat:
+            state['turn'] = _next_solvent_seat(state, seat)
+        _resolve_auction_if_due(state, events)
     elif state['turn'] == seat:
         _pass_turn(state, events)
 
@@ -379,7 +459,7 @@ def _throw(state, seat: str, rng, events):
     return faces, doubles
 
 
-def _apply_roll(state: Mapping, seat: str, rng) -> Transition:
+def _apply_roll(state: Mapping, seat: str, action, rng) -> Transition:
     _require_phase(state, PHASE_AWAITING_ROLL)
     if rng is None:
         raise ValueError('rolling requires a RandomSource')
@@ -856,7 +936,7 @@ def _eliminate(state, seat: str, creditor) -> None:
     player['eliminated'] = True
 
 
-def _apply_pay_jail_fine(state: Mapping, seat: str, rng) -> Transition:
+def _apply_pay_jail_fine(state: Mapping, seat: str, action, rng) -> Transition:
     _require_phase(state, PHASE_AWAITING_ROLL)
     player = state['players'][seat]
     if not player['in_jail'] or player['jail_turns'] >= JAIL_TURNS_LIMIT - 1:
@@ -874,7 +954,7 @@ def _apply_pay_jail_fine(state: Mapping, seat: str, rng) -> Transition:
     )
 
 
-def _apply_buy(state: Mapping, seat: str, rng) -> Transition:
+def _apply_buy(state: Mapping, seat: str, action, rng) -> Transition:
     _require_phase(state, PHASE_AWAITING_DECISION)
     index = _require_pending(state, 'purchase')['space']
     price = deeds.purchase_price(index)
@@ -892,22 +972,120 @@ def _apply_buy(state: Mapping, seat: str, rng) -> Transition:
     return Transition(state=state, facts=tuple(events))
 
 
-def _apply_decline(state: Mapping, seat: str, rng) -> Transition:
+def _apply_decline(state: Mapping, seat: str, action, rng) -> Transition:
     _require_phase(state, PHASE_AWAITING_DECISION)
     index = _require_pending(state, 'purchase')['space']
     state = _copy(state)
-    events = [
-        Fact(name='purchase_declined', seat=seat, detail={'space': index})
-    ]
-    _settle_turn(state, state['extra_roll'], events)
+    events = [Fact(name='purchase_declined', seat=seat, detail={'space': index})]
+    # Declining no longer frees the space: it sends it to the bank's auction
+    # (S1 of ``monopoly-auction.md``).
+    _open_auction(state, seat, index, events)
     return Transition(state=state, facts=tuple(events))
 
 
-def _apply_income_tax_fixed(state: Mapping, seat: str, rng) -> Transition:
+def _open_auction(state, seat: str, index: int, events) -> None:
+    """Send a declined property to the bank's auction (S1)."""
+    state['phase'] = PHASE_AWAITING_BID
+    state['pending'] = None
+    state['auction'] = {
+        'space': index,
+        'high_bid': 0,
+        'high_bidder': None,
+        'passed': [],
+    }
+    events.append(Fact(name='auction_opened', seat=seat, detail={'space': index}))
+
+
+def _apply_bid(state: Mapping, seat: str, action, rng) -> Transition:
+    _require_phase(state, PHASE_AWAITING_BID)
+    if seat not in eligible_bidders(state):
+        raise ValueError(f'{seat!r} cannot bid right now')
+    amount = _read_bid(state, seat, action)
+    state = _copy(state)
+    events = []
+    space = state['auction']['space']
+    state['auction']['high_bid'] = amount
+    state['auction']['high_bidder'] = seat
+    # A fresh bid reopens the auction for everyone who had stepped out (S3).
+    state['auction']['passed'] = []
+    events.append(
+        Fact(name='auction_bid', seat=seat, detail={'space': space, 'amount': amount})
+    )
+    _resolve_auction_if_due(state, events)
+    return Transition(state=state, facts=tuple(events))
+
+
+def _apply_pass(state: Mapping, seat: str, action, rng) -> Transition:
+    _require_phase(state, PHASE_AWAITING_BID)
+    if seat not in eligible_bidders(state):
+        raise ValueError(f'{seat!r} cannot pass right now')
+    if state['auction']['high_bidder'] == seat:
+        raise ValueError(f'{seat!r} holds the high bid and cannot withdraw it')
+    state = _copy(state)
+    events = []
+    space = state['auction']['space']
+    state['auction']['passed'] = list(state['auction']['passed']) + [seat]
+    events.append(Fact(name='auction_passed', seat=seat, detail={'space': space}))
+    _resolve_auction_if_due(state, events)
+    return Transition(state=state, facts=tuple(events))
+
+
+def _read_bid(state: Mapping, seat: str, action) -> int:
+    """Return the bid ``action`` carries, or raise when it is off the ladder."""
+    try:
+        amount = int(action.value)
+    except (TypeError, ValueError):
+        raise ValueError(f'invalid bid: {action.value!r}') from None
+    if amount not in _bid_amounts(state, seat):
+        raise ValueError(f'{seat!r} cannot bid {amount}')
+    return amount
+
+
+def _resolve_auction_if_due(state, events) -> bool:
+    """Close the auction when S5 says it is over; returns whether it closed."""
+    auction = state['auction']
+    bidder = auction['high_bidder']
+    remaining = eligible_bidders(state)
+    if bidder is not None:
+        if remaining != (bidder,):
+            return False
+        return _finish_auction(state, bidder, auction['high_bid'], events)
+    if remaining:
+        return False
+    return _finish_auction(state, None, 0, events)
+
+
+def _finish_auction(state, winner, amount: int, events) -> bool:
+    """Hand the property to the winner or back to the bank, and resume the turn."""
+    space = state['auction']['space']
+    turn_seat = state['turn']
+    state['auction'] = None
+    if winner is None:
+        events.append(
+            Fact(name='auction_unsold', seat=turn_seat, detail={'space': space})
+        )
+    else:
+        state['players'][winner]['cash'] -= amount
+        state['owners'][str(space)] = winner
+        state['players'][winner]['properties'].append(space)
+        events.append(
+            Fact(
+                name='auction_won',
+                seat=winner,
+                detail={'space': space, 'amount': amount},
+            )
+        )
+    # The turn never left its owner while the auction was open, so this puts it
+    # back exactly where it was: the extra roll of a double still stands.
+    _settle_turn(state, state['extra_roll'], events)
+    return True
+
+
+def _apply_income_tax_fixed(state: Mapping, seat: str, action, rng) -> Transition:
     return _pay_income_tax(state, seat, 'fixed', INCOME_TAX_FIXED)
 
 
-def _apply_income_tax_percent(state: Mapping, seat: str, rng) -> Transition:
+def _apply_income_tax_percent(state: Mapping, seat: str, action, rng) -> Transition:
     worth = total_worth(state, seat)
     # The match has no cents, and the printed rule rounds in no direction, so
     # the only clearly wrong option is paying less than a tenth (S10).
@@ -936,7 +1114,7 @@ def _pay_income_tax(state: Mapping, seat: str, option: str, amount: int) -> Tran
     return Transition(state=state, facts=tuple(events))
 
 
-def _apply_use_jail_card(state: Mapping, seat: str, rng) -> Transition:
+def _apply_use_jail_card(state: Mapping, seat: str, action, rng) -> Transition:
     """Use a held ``Get Out of Jail Free`` card: release, then throw normally.
 
     The card goes back to the bottom of the deck it came from, and the seat is
@@ -959,7 +1137,7 @@ def _apply_use_jail_card(state: Mapping, seat: str, rng) -> Transition:
     )
 
 
-def _apply_end_turn(state: Mapping, seat: str, rng) -> Transition:
+def _apply_end_turn(state: Mapping, seat: str, action, rng) -> Transition:
     _require_phase(state, PHASE_MANAGING)
     state = _copy(state)
     events = []
@@ -969,6 +1147,8 @@ def _apply_end_turn(state: Mapping, seat: str, rng) -> Transition:
 
 _HANDLERS = {
     ACTION_ROLL: _apply_roll,
+    ACTION_BID: _apply_bid,
+    ACTION_PASS: _apply_pass,
     ACTION_USE_JAIL_CARD: _apply_use_jail_card,
     ACTION_PAY_JAIL_FINE: _apply_pay_jail_fine,
     ACTION_BUY: _apply_buy,

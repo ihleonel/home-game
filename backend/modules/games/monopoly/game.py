@@ -64,16 +64,13 @@ class MonopolyDefinition:
         )
 
     def active_seats(self, state: Mapping) -> tuple[str, ...]:
-        """The seat on turn, or ``()`` once the match is finished.
+        """The seats that may act right now, or ``()`` once the match is over.
 
-        Only one seat acts at a time in this increment. Auctions and trades,
-        which let several seats act at once, are later increments and will
-        widen this tuple without changing how the runtime reads it.
+        While an auction is open several seats act at once -- every solvent
+        seat that has not passed -- which is the multi-seat shape the contract
+        always allowed. Every other phase has exactly one.
         """
-        if rules.is_finished(state):
-            return ()
-        turn = state['turn']
-        return () if turn is None else (turn,)
+        return rules.active_seats(state)
 
     def legal_actions(self, state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
         """Delegate to the pure rules."""
@@ -120,6 +117,7 @@ class MonopolyDefinition:
                 deck: len(order) for deck, order in state['decks'].items()
             },
             'last_card': self._card_view(state),
+            'auction': self._auction_view(state),
             'last_roll': (
                 None if state['last_roll'] is None else list(state['last_roll'])
             ),
@@ -173,6 +171,23 @@ class MonopolyDefinition:
             return None
         drawn_card = cards.card_for(drawn['id'])
         return {'deck': drawn_card.deck, 'id': drawn_card.id, 'title': drawn_card.title}
+
+    def _auction_view(self, state: Mapping) -> dict | None:
+        """The open auction, or ``null``.
+
+        ``waiting_for`` is what lets the table see who is still to bid; the bids
+        themselves are actions, which every eligible seat already receives in
+        its own view, so the frontend needs to know nothing about the auction.
+        """
+        auction = state.get('auction')
+        if auction is None:
+            return None
+        return {
+            'space': auction['space'],
+            'high_bid': auction['high_bid'],
+            'high_bidder': auction['high_bidder'],
+            'waiting_for': list(rules.eligible_bidders(state)),
+        }
 
 
 def _highest_throw(seat_ids: Sequence[str], rng) -> str:

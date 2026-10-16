@@ -175,16 +175,18 @@ class MonopolyRuntimeTests(SimpleTestCase):
         self._submit('p0', 'roll')                    # 6: Connecticut, double
         self._submit('p0', 'buy')                     # 7
         self._submit('p0', 'roll')                    # 8: Pennsylvania RR, double
-        self._submit('p0', 'decline')                 # 9
-        jailed = self._submit('p0', 'roll')           # 10: third double
+        self._submit('p0', 'decline')                 # 9: opens the auction
+        self._submit('p0', 'pass')                    # 10
+        self._submit('p1', 'pass')                    # 11: deserted, back to the turn
+        jailed = self._submit('p0', 'roll')           # 12: third double
         jail_facts = [fact['name'] for fact in self.projector.publishes[-1]['facts']]
-        self._submit('p1', 'roll')                    # 11: Vermont
-        self._submit('p1', 'buy')                     # 12
-        self._submit('p1', 'end_turn')                # 13
-        stayed = self._submit('p0', 'roll')           # 14: no double, stays in jail
+        self._submit('p1', 'roll')                    # 13: Vermont
+        self._submit('p1', 'buy')                     # 14
+        self._submit('p1', 'end_turn')                # 15
+        stayed = self._submit('p0', 'roll')           # 16: no double, stays in jail
 
-        self.assertEqual(jailed.version, 10)
-        self.assertEqual(self._current().version, 14)
+        self.assertEqual(jailed.version, 12)
+        self.assertEqual(self._current().version, 16)
         self.assertEqual(jailed.state['players']['seat-0']['in_jail'], True)
         self.assertEqual(jailed.state['doubles_count'], 0)
         self.assertEqual(jailed.state['turn'], 'seat-1')
@@ -203,7 +205,7 @@ class MonopolyRuntimeTests(SimpleTestCase):
         self.assertEqual(stayed.state['turn'], 'seat-1')
         self.assertEqual(
             [publish['event'] for publish in self.projector.publishes],
-            ['match_started'] + ['match_updated'] * 14,
+            ['match_started'] + ['match_updated'] * 16,
         )
 
     def test_the_published_facts_describe_each_step(self):

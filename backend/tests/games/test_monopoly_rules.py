@@ -398,8 +398,12 @@ class MonopolyJailTests(MonopolyRulesTestCase):
             self._facts(transition),
         )
         declined = self._act(transition.state, 'seat-0', 'decline')
-        self.assertEqual(declined.state['phase'], rules.PHASE_MANAGING)
-        ended = self._act(declined.state, 'seat-0', 'end_turn')
+        self.assertEqual(declined.state['phase'], rules.PHASE_AWAITING_BID)
+        unsold = self._act(
+            self._act(declined.state, 'seat-0', 'pass').state, 'seat-1', 'pass'
+        ).state
+        self.assertEqual(unsold['phase'], rules.PHASE_MANAGING)
+        ended = self._act(unsold, 'seat-0', 'end_turn')
         self.assertEqual(ended.state['turn'], 'seat-1')
 
     def test_a_jailed_seat_keeps_collecting_rent(self):
@@ -446,16 +450,25 @@ class MonopolyPurchaseTests(MonopolyRulesTestCase):
             (('property_bought', 'seat-0', {'space': 3, 'price': 60}),),
         )
 
-    def test_declining_leaves_the_property_unowned(self):
+    def test_declining_opens_an_auction_instead_of_freeing_the_space(self):
         state = self._roll(self._open(), 'seat-0', 1, 2).state
+
         transition = self._act(state, 'seat-0', 'decline')
+
         self.assertEqual(transition.state['owners'], {})
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1500)
         self.assertEqual(transition.state['players']['seat-0']['properties'], [])
-        self.assertEqual(transition.state['phase'], rules.PHASE_MANAGING)
+        self.assertEqual(transition.state['phase'], rules.PHASE_AWAITING_BID)
+        self.assertEqual(
+            transition.state['auction'],
+            {'space': 3, 'high_bid': 0, 'high_bidder': None, 'passed': []},
+        )
         self.assertEqual(
             self._facts(transition),
-            (('purchase_declined', 'seat-0', {'space': 3}),),
+            (
+                ('purchase_declined', 'seat-0', {'space': 3}),
+                ('auction_opened', 'seat-0', {'space': 3}),
+            ),
         )
 
     def test_buy_is_not_offered_without_the_cash(self):
@@ -476,12 +489,19 @@ class MonopolyPurchaseTests(MonopolyRulesTestCase):
         self.assertIs(bought.state['extra_roll'], False)
         self.assertEqual(self._names(bought.state, 'seat-0'), ('roll',))
 
-    def test_declining_a_double_landing_also_grants_the_extra_roll(self):
+    def test_declining_a_double_landing_grants_the_extra_roll_after_the_auction(self):
         state = self._place(self._open(), 'seat-0', 4)
         rolled = self._roll(state, 'seat-0', 1, 1)
         declined = self._act(rolled.state, 'seat-0', 'decline')
-        self.assertEqual(declined.state['phase'], rules.PHASE_AWAITING_ROLL)
-        self.assertEqual(declined.state['turn'], 'seat-0')
+        self.assertIs(declined.state['extra_roll'], True)
+        self.assertEqual(declined.state['phase'], rules.PHASE_AWAITING_BID)
+
+        unsold = self._act(
+            self._act(declined.state, 'seat-0', 'pass').state, 'seat-1', 'pass'
+        ).state
+
+        self.assertEqual(unsold['phase'], rules.PHASE_AWAITING_ROLL)
+        self.assertEqual(unsold['turn'], 'seat-0')
 
 
 class MonopolyRentTests(MonopolyRulesTestCase):
@@ -686,6 +706,172 @@ class MonopolyFinishTests(MonopolyRulesTestCase):
         self.assertNotIn(
             'match_finished', [fact[0] for fact in self._facts(transition)]
         )
+
+
+class MonopolyAuctionTests(MonopolyRulesTestCase):
+    """Bidding for a declined property (S1 to S6 of ``monopoly-auction.md``)."""
+
+    def _auction(self, seats=('seat-0', 'seat-1'), start=0, faces=(1, 2)):
+        """Decline Baltic (3) and leave the match in the bidding phase."""
+        state = self._place(self._open(seats), 'seat-0', start)
+        rolled = self._roll(state, 'seat-0', *faces)
+        return self._act(rolled.state, 'seat-0', 'decline').state
+
+    def _pass(self, state, seat):
+        return self._act(state, seat, 'pass').state
+
+    def _bid(self, state, seat, amount):
+        return rules.apply_action(state, seat, Action(name='bid', value=str(amount)), None)
+
+    def test_every_solvent_seat_may_bid_and_the_decliner_too(self):
+        state = self._auction()
+
+        self.assertEqual(rules.active_seats(state), ('seat-0', 'seat-1'))
+        self.assertEqual(self._names(state, 'seat-0'), ('bid', 'pass'))
+        self.assertEqual(self._names(state, 'seat-1'), ('bid', 'pass'))
+
+    def test_the_bid_ladder_offers_absolute_amounts_over_the_current_bid(self):
+        state = self._auction()
+        self.assertEqual(
+            rules.legal_actions(state, 'seat-0')[0].options, ('1', '10', '50', '100')
+        )
+
+        raised = self._bid(state, 'seat-0', 10).state
+
+        self.assertEqual(raised['auction']['high_bid'], 10)
+        self.assertEqual(raised['auction']['high_bidder'], 'seat-0')
+        self.assertEqual(
+            rules.legal_actions(raised, 'seat-0')[0].options,
+            ('11', '20', '60', '110'),
+        )
+
+    def test_the_ladder_stops_at_the_bidders_cash(self):
+        state = self._cash(self._auction(), 'seat-1', 60)
+        self.assertEqual(
+            rules.legal_actions(state, 'seat-1')[0].options, ('1', '10', '50')
+        )
+
+        poorer = self._cash(state, 'seat-1', 5)
+        self.assertEqual(rules.legal_actions(poorer, 'seat-1')[0].options, ('1',))
+
+    def test_a_seat_that_cannot_outbid_anyone_can_only_pass(self):
+        state = self._cash(self._bid(self._auction(), 'seat-0', 100).state, 'seat-1', 50)
+
+        self.assertEqual(self._names(state, 'seat-1'), ('pass',))
+
+    def test_the_high_bidder_may_raise_but_never_pass(self):
+        state = self._bid(self._auction(), 'seat-0', 10).state
+
+        self.assertEqual(self._names(state, 'seat-0'), ('bid',))
+        self.assertEqual(self._names(state, 'seat-1'), ('bid', 'pass'))
+        with self.assertRaises(ValueError):
+            self._act(state, 'seat-0', 'pass')
+
+    def test_a_bid_clears_the_passed_list(self):
+        passed = self._pass(self._auction(), 'seat-1')
+        self.assertEqual(passed['auction']['passed'], ['seat-1'])
+
+        raised = self._bid(passed, 'seat-0', 10).state
+
+        self.assertEqual(raised['auction']['passed'], [])
+        self.assertEqual(self._names(raised, 'seat-1'), ('bid', 'pass'))
+
+    def test_the_last_standing_high_bidder_wins_and_pays_the_bank(self):
+        state = self._bid(self._auction(), 'seat-0', 100).state
+
+        won = self._pass(state, 'seat-1')
+
+        self.assertIsNone(won['auction'])
+        self.assertEqual(won['owners'], {'3': 'seat-0'})
+        self.assertEqual(won['players']['seat-0']['properties'], [3])
+        self.assertEqual(won['players']['seat-0']['cash'], 1400)
+        self.assertEqual(won['phase'], rules.PHASE_MANAGING)
+        self.assertEqual(won['turn'], 'seat-0')
+
+    def test_the_winning_bid_is_announced(self):
+        state = self._bid(self._auction(), 'seat-0', 100).state
+
+        transition = self._act(state, 'seat-1', 'pass')
+
+        self.assertIn(
+            ('auction_won', 'seat-0', {'space': 3, 'amount': 100}),
+            self._facts(transition),
+        )
+
+    def test_a_deserted_auction_leaves_the_property_with_the_bank(self):
+        state = self._pass(self._pass(self._auction(), 'seat-0'), 'seat-1')
+
+        self.assertIsNone(state['auction'])
+        self.assertEqual(state['owners'], {})
+        self.assertEqual(state['players']['seat-0']['cash'], 1500)
+        self.assertEqual(state['phase'], rules.PHASE_MANAGING)
+        self.assertEqual(state['turn'], 'seat-0')
+
+    def test_a_deserted_auction_is_announced(self):
+        transition = self._act(
+            self._pass(self._auction(), 'seat-0'), 'seat-1', 'pass'
+        )
+
+        self.assertIn(
+            ('auction_unsold', 'seat-0', {'space': 3}), self._facts(transition)
+        )
+
+    def test_an_auction_outlives_the_extra_roll_of_a_double(self):
+        state = self._place(self._open(), 'seat-0', 4)
+        declined = self._act(
+            self._roll(state, 'seat-0', 1, 1).state, 'seat-0', 'decline'
+        ).state
+        self.assertIs(declined['extra_roll'], True)
+        self.assertEqual(declined['auction']['space'], 6)
+
+        won = self._bid(self._bid(declined, 'seat-0', 50).state, 'seat-1', 100).state
+        resolved = self._pass(won, 'seat-0')
+
+        self.assertIsNone(resolved['auction'])
+        self.assertEqual(resolved['owners'], {'6': 'seat-1'})
+        self.assertEqual(resolved['players']['seat-1']['cash'], 1400)
+        # The decliner kept the dice: the extra roll is what comes next.
+        self.assertEqual(resolved['phase'], rules.PHASE_AWAITING_ROLL)
+        self.assertEqual(resolved['turn'], 'seat-0')
+
+    def test_a_bid_outside_the_ladder_is_rejected(self):
+        state = self._auction()
+        with self.assertRaises(ValueError):
+            self._bid(state, 'seat-0', 7)
+        with self.assertRaises(ValueError):
+            self._bid(state, 'seat-0', 0)
+
+    def test_a_seat_that_already_passed_cannot_bid_or_pass_again(self):
+        state = self._pass(self._auction(), 'seat-1')
+
+        self.assertEqual(self._names(state, 'seat-1'), ())
+        with self.assertRaises(ValueError):
+            self._bid(state, 'seat-1', 10)
+        with self.assertRaises(ValueError):
+            self._pass(state, 'seat-1')
+
+    def test_no_auction_action_is_accepted_outside_the_bidding_phase(self):
+        state = self._open()
+        self.assertEqual(self._names(state, 'seat-0'), ('roll',))
+        with self.assertRaises(ValueError):
+            self._act(state, 'seat-0', 'pass')
+        with self.assertRaises(ValueError):
+            self._bid(state, 'seat-0', 10)
+
+    def test_an_expelled_bidder_leaves_the_auction_and_can_end_it(self):
+        """A seat that disconnects mid-auction stops being a bidder (S6)."""
+        state = self._auction(('seat-0', 'seat-1', 'seat-2'))
+        state = self._bid(state, 'seat-2', 50).state
+        state = self._pass(state, 'seat-1')
+
+        # seat-0 is the parked turn seat and an eligible bidder too, and with it
+        # gone the only bidder left is the one holding the high bid.
+        resolved = rules.abandon(state, 'seat-0').state
+
+        self.assertIsNone(resolved['auction'])
+        self.assertEqual(resolved['owners'], {'3': 'seat-2'})
+        self.assertEqual(resolved['players']['seat-2']['cash'], 1450)
+        self.assertEqual(self._names(resolved, 'seat-0'), ())
 
 
 class MonopolyAbandonTests(MonopolyRulesTestCase):
