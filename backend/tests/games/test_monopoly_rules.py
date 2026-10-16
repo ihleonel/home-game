@@ -8,6 +8,7 @@ and, where the rule ends the match, the resolved outcome.
 """
 
 import copy
+import json
 
 from django.test import SimpleTestCase
 
@@ -98,6 +99,15 @@ class MonopolyRulesTestCase(SimpleTestCase):
                 return spec.options
         return ()
 
+    def _mortgaged(self, state, *indexes):
+        """Force the mortgage state of ``indexes``, for scenes that need it."""
+        state = copy.deepcopy(state)
+        mortgaged = dict(state.get('mortgaged') or {})
+        for index in indexes:
+            mortgaged[str(index)] = True
+        state['mortgaged'] = mortgaged
+        return state
+
 
 class MonopolyPreparationTests(MonopolyRulesTestCase):
     def test_initial_state_is_the_documented_starting_position(self):
@@ -179,6 +189,7 @@ class MonopolyPreparationTests(MonopolyRulesTestCase):
                 'PHASE_AWAITING_DECISION': 'awaiting_decision',
                 'PHASE_MANAGING': 'managing',
                 'PHASE_AWAITING_BID': 'awaiting_bid',
+                'PHASE_RAISING_CASH': 'raising_cash',
             },
         )
 
@@ -445,18 +456,23 @@ class MonopolyJailTests(MonopolyRulesTestCase):
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1504)
         self.assertEqual(transition.state['players']['seat-1']['cash'], 1496)
 
-    def test_an_unaffordable_fine_bankrupts_the_seat_to_the_bank(self):
+    def test_an_unaffordable_fine_opens_the_debt_window(self):
         state = self._jailed(jail_turns=2)
         state = self._cash(state, 'seat-0', 10)
         state = self._give(state, 3, 'seat-0')
         transition = self._roll(state, 'seat-0', 2, 3)
-        self.assertIs(transition.state['players']['seat-0']['eliminated'], True)
-        self.assertEqual(transition.state['players']['seat-0']['cash'], 0)
-        self.assertEqual(transition.state['owners'], {})
-        self.assertEqual(transition.state['players']['seat-1']['cash'], 1500)
-        self.assertIs(rules.is_finished(transition.state), True)
-        self.assertIsNone(transition.state['turn'])
-        self.assertIn(('bankrupt', 'seat-0', {'creditor': None}), self._facts(transition))
+        self.assertEqual(transition.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertIs(transition.state['players']['seat-0']['in_jail'], True)
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 10)
+        self.assertEqual(transition.state['debt']['creditor'], None)
+        self.assertEqual(transition.state['debt']['amount'], rules.JAIL_FINE)
+        self.assertIn(
+            ('debt_incurred', 'seat-0', {'amount': rules.JAIL_FINE, 'creditor': None}),
+            self._facts(transition),
+        )
+        self.assertNotIn(
+            'bankrupt', [fact[0] for fact in self._facts(transition)]
+        )
 
 
 class MonopolyPurchaseTests(MonopolyRulesTestCase):
@@ -734,7 +750,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_a_build_needs_the_whole_colour_group(self):
         state = self._managing(self._give(self._open(), 3, 'seat-0'))
-        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn'))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='build', value='3'), None)
 
@@ -762,7 +778,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_a_house_cannot_be_built_without_a_house_in_the_bank(self):
         state = self._scene(houses=0)
-        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn'))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
 
@@ -798,7 +814,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
 
     def test_a_build_is_not_offered_without_the_cash(self):
         state = self._scene(cash=49)
-        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        self.assertEqual(self._names(state, 'seat-0'), ('mortgage', 'end_turn'))
         with self.assertRaises(ValueError):
             rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
 
@@ -976,7 +992,9 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
         state = self._give(state, 39, 'seat-1')
         state = self._place(state, 'seat-0', 36)
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
 
         debtor = transition.state['players']['seat-0']
         self.assertIs(debtor['eliminated'], True)
@@ -1001,7 +1019,9 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
         state = self._cash(state, 'seat-0', 10)
         state = self._place(state, 'seat-0', 33)
 
-        transition = self._roll(state, 'seat-0', 2, 3)
+        opened = self._roll(state, 'seat-0', 2, 3)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
 
         self.assertIs(transition.state['players']['seat-0']['eliminated'], True)
         self.assertEqual(transition.state['buildings'], {})
@@ -1065,7 +1085,9 @@ class MonopolyBankruptcyTests(MonopolyRulesTestCase):
         return self._give(state, 39, 'seat-1')
 
     def test_an_unaffordable_rent_transfers_everything_to_the_creditor(self):
-        transition = self._roll(self._boardwalk_rent_scene(), 'seat-0', 1, 2)
+        opened = self._roll(self._boardwalk_rent_scene(), 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
         debtor = transition.state['players']['seat-0']
         creditor = transition.state['players']['seat-1']
         self.assertIs(debtor['eliminated'], True)
@@ -1084,16 +1106,31 @@ class MonopolyBankruptcyTests(MonopolyRulesTestCase):
         state = self._place(self._open(), 'seat-0', 33)
         state = self._cash(state, 'seat-0', 10)
         state = self._give(state, 3, 'seat-0')
-        transition = self._roll(state, 'seat-0', 2, 3)
+        opened = self._roll(state, 'seat-0', 2, 3)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
         self.assertIs(transition.state['players']['seat-0']['eliminated'], True)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 0)
         self.assertEqual(transition.state['owners'], {})
         self.assertEqual(transition.state['players']['seat-1']['cash'], 1500)
         self.assertIn(('bankrupt', 'seat-0', {'creditor': None}), self._facts(transition))
 
+    def test_a_mortgaged_property_returned_to_the_bank_is_unmortgaged(self):
+        # The bank cannot hold a mortgage: a property it takes back has no owner
+        # to owe it, and whoever lands on it next buys a clean lot. The map is
+        # an invariant of ownership, never a property the space carries alone.
+        state = self._place(self._open(), 'seat-0', 33)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._mortgaged(self._give(state, 3, 'seat-0'), 3)
+        opened = self._roll(state, 'seat-0', 2, 3)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
+
+        self.assertEqual(transition.state['owners'], {})
+        self.assertEqual(transition.state['mortgaged'], {})
+
     def test_an_eliminated_seat_never_acts_again(self):
         scene = self._boardwalk_rent_scene(('seat-0', 'seat-1', 'seat-2'))
-        transition = self._roll(scene, 'seat-0', 1, 2)
+        opened = self._roll(scene, 'seat-0', 1, 2)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
         self.assertEqual(self._names(transition.state, 'seat-0'), ())
         self.assertEqual(transition.state['turn'], 'seat-1')
         self.assertEqual(self._names(transition.state, 'seat-1'), ('roll',))
@@ -1104,7 +1141,9 @@ class MonopolyFinishTests(MonopolyRulesTestCase):
         state = self._place(self._open(), 'seat-0', 36)
         state = self._cash(state, 'seat-0', 10)
         state = self._give(state, 39, 'seat-1')
-        transition = self._roll(state, 'seat-0', 1, 2)
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
         self.assertIs(rules.is_finished(transition.state), True)
         self.assertEqual(
             rules.outcome(transition.state),
@@ -1114,6 +1153,7 @@ class MonopolyFinishTests(MonopolyRulesTestCase):
             ('match_finished', None, {'winner': 'seat-1'}), self._facts(transition)
         )
         self.assertIsNone(transition.state['turn'])
+        self.assertIsNone(transition.state['debt'])
         self.assertEqual(self._names(transition.state, 'seat-1'), ())
 
     def test_a_three_seat_match_keeps_playing_after_one_elimination(self):
@@ -1121,11 +1161,13 @@ class MonopolyFinishTests(MonopolyRulesTestCase):
         state = self._place(state, 'seat-0', 36)
         state = self._cash(state, 'seat-0', 10)
         state = self._give(state, 39, 'seat-1')
-        transition = self._roll(state, 'seat-0', 1, 2)
+        opened = self._roll(state, 'seat-0', 1, 2)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
         self.assertIs(rules.is_finished(transition.state), False)
         self.assertIsNone(rules.outcome(transition.state))
         self.assertEqual(transition.state['turn'], 'seat-1')
         self.assertEqual(transition.state['phase'], rules.PHASE_AWAITING_ROLL)
+        self.assertIsNone(transition.state['debt'])
         self.assertEqual(self._names(transition.state, 'seat-1'), ('roll',))
 
     def test_a_running_match_has_no_outcome(self):
@@ -1326,6 +1368,35 @@ class MonopolyAbandonTests(MonopolyRulesTestCase):
         self.assertIn(
             ('match_finished', None, {'winner': 'seat-0'}), self._facts(transition)
         )
+
+    def test_abandoning_the_creditor_of_an_open_debt_owes_the_bank(self):
+        # The recipient leaves the match, so the money the debt carries leaves
+        # with it: the debtor owes the bank, never an eliminated seat.
+        state = rules.initial_state(('seat-0', 'seat-1', 'seat-2'), 'seat-0')
+        state = self._place(state, 'seat-0', 36)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 39, 'seat-1')
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['debt']['creditor'], 'seat-1')
+
+        transition = rules.abandon(opened.state, 'seat-1')
+
+        self.assertIs(rules.is_finished(transition.state), False)
+        self.assertEqual(transition.state['debt']['amount'], 50)
+        self.assertIsNone(transition.state['debt']['creditor'])
+
+    def test_abandon_that_ends_the_match_leaves_no_open_debt(self):
+        # A finished match publishes no window nobody can act on any more.
+        state = self._place(self._open(), 'seat-0', 36)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 39, 'seat-1')
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+
+        transition = rules.abandon(opened.state, 'seat-1')
+
+        self.assertIs(rules.is_finished(transition.state), True)
+        self.assertIsNone(transition.state['debt'])
 
     def test_abandon_of_a_three_seat_match_keeps_it_running(self):
         state = rules.initial_state(('seat-0', 'seat-1', 'seat-2'), 'seat-0')
@@ -1534,12 +1605,17 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
             self._facts(transition),
         )
 
-    def test_an_unaffordable_card_payment_bankrupts_to_the_bank(self):
+    def test_an_unaffordable_card_payment_opens_the_debt_window(self):
         state = self._cash(self._place(self._open(), 'seat-0', 14), 'seat-0', 10)
         state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-11')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
-
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertIn(
+            ('debt_incurred', 'seat-0', {'amount': 100, 'creditor': None}),
+            self._facts(opened),
+        )
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
         self.assertIs(transition.state['players']['seat-0']['eliminated'], True)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 0)
         self.assertEqual(transition.state['players']['seat-1']['cash'], 1500)
@@ -1550,8 +1626,8 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         """The printed rules do not cover several creditors at once (S10).
 
         The shares are paid in seat order and the first one that cannot be
-        afforded is the bankruptcy: that player becomes the creditor and the
-        later shares are never collected.
+        afforded opens the debt: that player is the creditor, and declaring
+        bankruptcy hands it everything.
         """
         state = self._open(('seat-0', 'seat-1', 'seat-2'))
         state = self._place(state, 'seat-0', 4)
@@ -1559,12 +1635,15 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         state = self._give(state, 6, 'seat-0')
         state = self._top_card(state, cards.CHANCE, 'chance-15')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(opened.state['debt']['creditor'], 'seat-1')
+        self.assertEqual(opened.state['debt']['amount'], 50)
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
 
         debtor = transition.state['players']['seat-0']
         self.assertIs(debtor['eliminated'], True)
         self.assertEqual(debtor['cash'], 0)
-        self.assertEqual(debtor['properties'], [])
         # The first share in seat order is the one that could not be paid.
         self.assertEqual(transition.state['players']['seat-1']['cash'], 1540)
         self.assertEqual(transition.state['players']['seat-1']['properties'], [6])
@@ -1750,3 +1829,645 @@ class MonopolyJailCardTests(MonopolyRulesTestCase):
             self._act(held_but_free, 'seat-0', 'use_jail_card')
         with self.assertRaises(ValueError):
             self._act(jailed_without, 'seat-0', 'use_jail_card')
+
+
+class MonopolyMortgageTests(MonopolyRulesTestCase):
+    """Mortgages and the mortgaged state (S2 to S6, S10 of
+    ``monopoly-mortgage.md``)."""
+
+    def _own(self, state, *indexes, seat='seat-0'):
+        for index in indexes:
+            state = self._give(state, index, seat)
+        return state
+
+    def _managing(self, state, seat='seat-0'):
+        state = copy.deepcopy(state)
+        state['phase'] = rules.PHASE_MANAGING
+        state['turn'] = seat
+        return state
+
+    def _rolling(self, state, seat='seat-1'):
+        state = copy.deepcopy(state)
+        state['phase'] = rules.PHASE_AWAITING_ROLL
+        state['turn'] = seat
+        return state
+
+    def _buildings(self, state, levels):
+        state = copy.deepcopy(state)
+        buildings = dict(state.get('buildings') or {})
+        for index, level in levels.items():
+            if level == 0:
+                buildings.pop(str(index), None)
+            else:
+                buildings[str(index)] = level
+        state['buildings'] = buildings
+        return state
+
+    def _rejected(self, state, seat, name, value=None):
+        """Apply an action the rules must reject and return the untouched state."""
+        before = copy.deepcopy(state)
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, seat, Action(name=name, value=value), None)
+        self.assertEqual(state, before)
+
+    def test_initial_state_carries_the_mortgaged_map_and_a_null_debt(self):
+        state = self._open()
+        self.assertEqual(state['mortgaged'], {})
+        self.assertIsNone(state['debt'])
+
+    def test_a_match_saved_before_the_increment_reads_as_unmortgaged(self):
+        state = self._managing(self._own(self._open(), 1, 3))
+        del state['mortgaged']
+        self.assertEqual(self._options(state, 'seat-0', 'mortgage'), ('1', '3'))
+        transition = rules.apply_action(
+            state, 'seat-0', Action(name='mortgage', value='1'), None
+        )
+        self.assertEqual(transition.state['mortgaged'], {'1': True})
+
+    def test_mortgage_is_offered_in_managing_for_owned_spaces(self):
+        state = self._managing(self._own(self._open(), 1, 3, 5, 12))
+        self.assertEqual(
+            self._options(state, 'seat-0', 'mortgage'), ('1', '3', '5', '12')
+        )
+
+    def test_mortgaging_pays_the_printed_value_and_keeps_the_owner(self):
+        state = self._managing(self._own(self._open(), 37, seat='seat-0'))
+
+        transition = rules.apply_action(
+            state, 'seat-0', Action(name='mortgage', value='37'), None
+        )
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1500 + 175)
+        self.assertEqual(transition.state['owners'], {'37': 'seat-0'})
+        self.assertEqual(transition.state['players']['seat-0']['properties'], [37])
+        self.assertEqual(transition.state['mortgaged'], {'37': True})
+        self.assertEqual(
+            self._facts(transition),
+            (('property_mortgaged', 'seat-0', {'space': 37, 'amount': 175}),),
+        )
+
+    def test_mortgage_of_a_railroad_and_a_utility_pays_their_values(self):
+        state = self._managing(self._own(self._open(), 5, 12))
+        railroad = rules.apply_action(
+            state, 'seat-0', Action(name='mortgage', value='5'), None
+        )
+        utility = rules.apply_action(
+            state, 'seat-0', Action(name='mortgage', value='12'), None
+        )
+        self.assertEqual(railroad.state['players']['seat-0']['cash'], 1600)
+        self.assertEqual(utility.state['players']['seat-0']['cash'], 1575)
+
+    def test_a_mortgaged_space_cannot_be_mortgaged_again(self):
+        state = self._managing(self._mortgaged(self._own(self._open(), 1, 3), 1))
+        self.assertEqual(self._options(state, 'seat-0', 'mortgage'), ('3',))
+        self._rejected(state, 'seat-0', 'mortgage', '1')
+
+    def test_mortgage_is_blocked_by_a_building_anywhere_in_the_group(self):
+        state = self._managing(self._buildings(self._own(self._open(), 1, 3), {3: 1}))
+        self.assertEqual(self._options(state, 'seat-0', 'mortgage'), ())
+        self._rejected(state, 'seat-0', 'mortgage', '1')
+        self._rejected(state, 'seat-0', 'mortgage', '3')
+
+    def test_mortgage_is_not_offered_for_a_space_owned_by_another_seat(self):
+        state = self._managing(self._own(self._open(), 1, seat='seat-1'))
+        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        self._rejected(state, 'seat-0', 'mortgage', '1')
+
+    def test_mortgage_is_rejected_in_awaiting_roll(self):
+        state = self._rolling(self._own(self._open(), 1, 3))
+        self.assertNotIn('mortgage', self._names(state, 'seat-0'))
+        self._rejected(state, 'seat-0', 'mortgage', '1')
+
+    def test_mortgage_options_are_board_indexes_and_reject_the_rest(self):
+        state = self._managing(self._own(self._open(), 1, 3))
+        for value in ('2', '39', 'x'):
+            with self.subTest(value=value):
+                self._rejected(state, 'seat-0', 'mortgage', value)
+
+    def test_unmortgage_costs_the_mortgage_plus_ten_percent_rounded_up(self):
+        state = self._managing(self._mortgaged(self._own(self._open(), 37), 37))
+        state = self._cash(state, 'seat-0', 300)
+        self.assertEqual(self._options(state, 'seat-0', 'unmortgage'), ('37',))
+
+        transition = rules.apply_action(
+            state, 'seat-0', Action(name='unmortgage', value='37'), None
+        )
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 300 - 193)
+        self.assertEqual(transition.state['mortgaged'], {})
+        self.assertEqual(transition.state['owners'], {'37': 'seat-0'})
+        self.assertEqual(
+            self._facts(transition),
+            (
+                (
+                    'property_unmortgaged',
+                    'seat-0',
+                    {'space': 37, 'mortgage': 175, 'interest': 18, 'amount': 193},
+                ),
+                (
+                    'interest_paid',
+                    'seat-0',
+                    {'space': 37, 'amount': 18, 'reason': 'unmortgage'},
+                ),
+            ),
+        )
+
+    def test_unmortgage_is_offered_exactly_when_the_cash_covers_the_cost(self):
+        short = self._cash(
+            self._managing(self._mortgaged(self._own(self._open(), 37), 37)),
+            'seat-0',
+            192,
+        )
+        exact = self._cash(short, 'seat-0', 193)
+        self.assertEqual(self._options(short, 'seat-0', 'unmortgage'), ())
+        self._rejected(short, 'seat-0', 'unmortgage', '37')
+        self.assertEqual(self._options(exact, 'seat-0', 'unmortgage'), ('37',))
+
+    def test_unmortgage_is_not_offered_in_awaiting_roll(self):
+        state = self._rolling(self._mortgaged(self._own(self._open(), 1), 1))
+        self.assertNotIn('unmortgage', self._names(state, 'seat-0'))
+        self._rejected(state, 'seat-0', 'unmortgage', '1')
+
+    def test_a_mortgaged_street_charges_no_rent(self):
+        state = self._own(self._open(first='seat-1'), 3)
+        state = self._rolling(self._mortgaged(state, 3))
+        state = self._place(state, 'seat-1', 0)
+
+        transition = self._roll(state, 'seat-1', 1, 2)
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1500)
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1500)
+        self.assertNotIn('rent_paid', [fact[0] for fact in self._facts(transition)])
+
+    def test_a_mortgaged_sibling_does_not_stop_the_set_rent(self):
+        state = self._own(self._open(first='seat-1'), 1, 3)
+        state = self._rolling(self._mortgaged(state, 1))
+        state = self._place(state, 'seat-1', 0)
+
+        transition = self._roll(state, 'seat-1', 1, 2)
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1508)
+        self.assertIn(
+            (
+                'rent_paid',
+                'seat-1',
+                {'from': 'seat-1', 'to': 'seat-0', 'space': 3, 'amount': 8},
+            ),
+            self._facts(transition),
+        )
+
+    def test_a_mortgaged_railroad_charges_no_rent_but_counts_for_the_rest(self):
+        lone = self._rolling(self._mortgaged(self._own(self._open(first='seat-1'), 5), 5))
+        lone = self._place(lone, 'seat-1', 2)
+        charged = self._own(self._open(first='seat-1'), 5, 15)
+        charged = self._rolling(self._mortgaged(charged, 15))
+        charged = self._place(charged, 'seat-1', 2)
+
+        no_rent = self._roll(lone, 'seat-1', 1, 2)
+        doubled = self._roll(charged, 'seat-1', 1, 2)
+
+        self.assertEqual(no_rent.state['players']['seat-0']['cash'], 1500)
+        self.assertNotIn('rent_paid', [fact[0] for fact in self._facts(no_rent)])
+        self.assertEqual(doubled.state['players']['seat-0']['cash'], 1550)
+
+    def test_a_mortgaged_utility_charges_no_rent_but_counts_for_the_rest(self):
+        lone = self._rolling(self._mortgaged(self._own(self._open(first='seat-1'), 12), 12))
+        lone = self._place(lone, 'seat-1', 7)
+        charged = self._own(self._open(first='seat-1'), 12, 28)
+        charged = self._rolling(self._mortgaged(charged, 28))
+        charged = self._place(charged, 'seat-1', 7)
+
+        no_rent = self._roll(lone, 'seat-1', 2, 3)
+        doubled = self._roll(charged, 'seat-1', 2, 3)
+
+        self.assertEqual(no_rent.state['players']['seat-0']['cash'], 1500)
+        self.assertNotIn('rent_paid', [fact[0] for fact in self._facts(no_rent)])
+        self.assertEqual(doubled.state['players']['seat-0']['cash'], 1550)
+
+    def test_a_card_destination_that_is_mortgaged_charges_no_rent(self):
+        state = self._own(self._open(), 39, seat='seat-1')
+        state = self._mortgaged(state, 39)
+        state = self._place(state, 'seat-0', 36)
+        state = self._top_card(state, cards.CHANCE, 'chance-01')
+
+        transition = self._roll(state, 'seat-0', 1, 2)
+
+        self.assertEqual(transition.state['players']['seat-0']['position'], 39)
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1500)
+        self.assertNotIn('rent_paid', [fact[0] for fact in self._facts(transition)])
+
+    def test_a_nearest_utility_card_to_a_mortgaged_utility_charges_nothing(self):
+        state = self._own(self._open(), 12, seat='seat-1')
+        state = self._mortgaged(state, 12)
+        state = self._place(state, 'seat-0', 4)
+        state = self._top_card(state, cards.CHANCE, 'chance-07')
+
+        transition = self._roll(state, 'seat-0', 1, 2)
+
+        self.assertEqual(transition.state['players']['seat-0']['position'], 12)
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1500)
+        names = [fact[0] for fact in self._facts(transition)]
+        self.assertNotIn('rent_paid', names)
+        self.assertNotIn('card_roll', names)
+
+    def test_a_group_with_a_mortgaged_street_cannot_be_built(self):
+        state = self._managing(self._mortgaged(self._own(self._open(), 1, 3), 3))
+        self.assertEqual(self._options(state, 'seat-0', 'build'), ())
+        self._rejected(state, 'seat-0', 'build', '1')
+        self._rejected(state, 'seat-0', 'build', '3')
+
+    def test_mortgaging_keeps_the_printed_worth_of_the_property(self):
+        state = self._managing(self._own(self._open(), 37))
+        mortgaged = rules.apply_action(
+            state, 'seat-0', Action(name='mortgage', value='37'), None
+        ).state
+        # Park Place keeps its $350 printed price in the seat's worth.
+        self.assertEqual(
+            rules.total_worth(mortgaged, 'seat-0'), 1500 + 175 + 350
+        )
+
+
+class MonopolyRaisingCashTests(MonopolyRulesTestCase):
+    """The raising-cash window, the debt record and its continuations
+    (S7, S8 and S10 of ``monopoly-mortgage.md``)."""
+
+    def _apply(self, state, seat, name, value=None):
+        return rules.apply_action(state, seat, Action(name=name, value=value), None)
+
+    def _rejected(self, state, seat, name, value=None):
+        before = copy.deepcopy(state)
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, seat, Action(name=name, value=value), None)
+        self.assertEqual(state, before)
+
+    def _rent_scene(self, cash=10, start=36, seats=('seat-0', 'seat-1')):
+        state = self._open(seats, first='seat-0')
+        state = self._place(state, 'seat-0', start)
+        state = self._cash(state, 'seat-0', cash)
+        return self._give(state, 39, 'seat-1')
+
+    def _open_rent_debt(self, cash=10, start=36):
+        opened = self._roll(self._rent_scene(cash=cash, start=start), 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        return opened
+
+    def _window_scene(self):
+        """A debt opened by Boardwalk's rent on a seat holding brown with a house."""
+        state = self._open(first='seat-0')
+        state = self._give(state, 1, 'seat-0')
+        state = self._give(state, 3, 'seat-0')
+        state = copy.deepcopy(state)
+        state['buildings'] = {'3': 1}
+        state['bank'] = {'houses': 31, 'hotels': 12}
+        state = self._place(state, 'seat-0', 36)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 39, 'seat-1')
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        return opened.state
+
+    def test_an_unaffordable_rent_opens_the_window_with_the_creditor(self):
+        transition = self._open_rent_debt()
+        state = transition.state
+        self.assertEqual(state['debt']['seat'], 'seat-0')
+        self.assertEqual(state['debt']['creditor'], 'seat-1')
+        self.assertEqual(state['debt']['amount'], 50)
+        self.assertEqual(state['turn'], 'seat-0')
+        self.assertEqual(state['players']['seat-0']['cash'], 10)
+        names = [fact[0] for fact in self._facts(transition)]
+        self.assertIn('debt_incurred', names)
+        self.assertNotIn('rent_paid', names)
+        self.assertNotIn('bankrupt', names)
+        self.assertIn(
+            ('debt_incurred', 'seat-0', {'amount': 50, 'creditor': 'seat-1'}),
+            self._facts(transition),
+        )
+
+    def test_the_window_hides_build_unmortgage_and_end_turn(self):
+        state = self._window_scene()
+        self.assertEqual(
+            self._names(state, 'seat-0'),
+            ('sell', 'declare_bankruptcy'),
+        )
+        for name in ('build', 'unmortgage', 'end_turn', 'roll'):
+            with self.subTest(name=name):
+                self.assertNotIn(name, self._names(state, 'seat-0'))
+                self._rejected(state, 'seat-0', name)
+
+    def test_pay_debt_is_offered_only_when_the_cash_reaches_the_amount(self):
+        state = self._open_rent_debt().state
+        short = self._cash(state, 'seat-0', 49)
+        exact = self._cash(state, 'seat-0', 50)
+        self.assertNotIn('pay_debt', self._names(short, 'seat-0'))
+        self._rejected(short, 'seat-0', 'pay_debt')
+        self.assertIn('pay_debt', self._names(exact, 'seat-0'))
+
+    def test_paying_a_rent_debt_pays_the_creditor_and_returns_to_managing(self):
+        state = self._cash(self._open_rent_debt().state, 'seat-0', 60)
+        transition = self._apply(state, 'seat-0', 'pay_debt')
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 10)
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1550)
+        self.assertEqual(transition.state['phase'], rules.PHASE_MANAGING)
+        self.assertIsNone(transition.state['debt'])
+        self.assertIn(
+            (
+                'rent_paid',
+                'seat-0',
+                {'from': 'seat-0', 'to': 'seat-1', 'space': 39, 'amount': 50},
+            ),
+            self._facts(transition),
+        )
+
+    def test_a_rent_debt_from_a_double_resumes_with_the_extra_roll(self):
+        state = self._open(first='seat-0')
+        state = self._place(state, 'seat-0', 37)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 39, 'seat-1')
+        opened = self._roll(state, 'seat-0', 1, 1)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+
+        state = self._cash(opened.state, 'seat-0', 50)
+        transition = self._apply(state, 'seat-0', 'pay_debt')
+
+        self.assertEqual(transition.state['phase'], rules.PHASE_AWAITING_ROLL)
+        self.assertEqual(transition.state['turn'], 'seat-0')
+
+    def test_a_luxury_tax_debt_emits_its_tax_fact_on_payment(self):
+        state = self._open(first='seat-0')
+        state = self._place(state, 'seat-0', 33)
+        state = self._cash(state, 'seat-0', 10)
+        opened = self._roll(state, 'seat-0', 2, 3)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(opened.state['debt']['creditor'], None)
+        self.assertEqual(opened.state['debt']['amount'], rules.LUXURY_TAX)
+
+        paid = self._cash(opened.state, 'seat-0', rules.LUXURY_TAX)
+        transition = self._apply(paid, 'seat-0', 'pay_debt')
+
+        self.assertEqual(transition.state['phase'], rules.PHASE_MANAGING)
+        self.assertIn(
+            (
+                'tax_paid',
+                'seat-0',
+                {'space': 38, 'amount': 75, 'option': 'fixed'},
+            ),
+            self._facts(transition),
+        )
+
+    def test_an_unaffordable_income_tax_keeps_the_chosen_option(self):
+        state = self._open(first='seat-0')
+        state = self._place(state, 'seat-0', 2)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 39, 'seat-0')
+        rolled = self._roll(state, 'seat-0', 1, 1)
+        self.assertEqual(rolled.state['pending'], {'kind': 'income_tax', 'space': 4})
+
+        opened = self._apply(rolled.state, 'seat-0', 'pay_income_tax_percent')
+
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(opened.state['debt']['amount'], 41)
+        self.assertEqual(opened.state['debt']['creditor'], None)
+        self.assertEqual(opened.state['pending'], {'kind': 'income_tax', 'space': 4})
+        self.assertNotIn(
+            'pay_income_tax_fixed', self._names(opened.state, 'seat-0')
+        )
+
+        paid = self._cash(opened.state, 'seat-0', 41)
+        transition = self._apply(paid, 'seat-0', 'pay_debt')
+
+        self.assertEqual(transition.state['phase'], rules.PHASE_AWAITING_ROLL)
+        self.assertEqual(transition.state['pending'], None)
+        self.assertIn(
+            ('tax_paid', 'seat-0', {'space': 4, 'amount': 41, 'option': 'percent'}),
+            self._facts(transition),
+        )
+
+    def test_an_unaffordable_third_jail_roll_pays_and_moves_with_the_throw(self):
+        state = rules.initial_state(('seat-0', 'seat-1'), 'seat-0')
+        state = self._player(
+            state,
+            'seat-0',
+            in_jail=True,
+            jail_turns=2,
+            position=board.JAIL_INDEX,
+            cash=10,
+        )
+        opened = self._roll(state, 'seat-0', 4, 6)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(opened.state['debt']['amount'], rules.JAIL_FINE)
+        self.assertEqual(opened.state['debt']['creditor'], None)
+        self.assertIs(opened.state['players']['seat-0']['in_jail'], True)
+
+        paid = self._cash(opened.state, 'seat-0', rules.JAIL_FINE)
+        transition = self._apply(paid, 'seat-0', 'pay_debt')
+
+        player = transition.state['players']['seat-0']
+        self.assertIs(player['in_jail'], False)
+        self.assertEqual(player['position'], 20)
+        self.assertEqual(transition.state['phase'], rules.PHASE_MANAGING)
+        self.assertEqual(transition.state['turn'], 'seat-0')
+        self.assertIn(
+            ('left_jail', 'seat-0', {'method': 'fine'}), self._facts(transition)
+        )
+        self.assertIn(
+            ('moved', 'seat-0', {'from': 10, 'to': 20, 'passed_go': False}),
+            self._facts(transition),
+        )
+
+    def test_a_group_payment_pays_the_shares_in_order_and_reopens_if_needed(self):
+        state = self._open(('seat-0', 'seat-1', 'seat-2', 'seat-3'))
+        state = self._place(state, 'seat-0', 4)
+        state = self._cash(state, 'seat-0', 70)
+        state = self._top_card(state, cards.CHANCE, 'chance-15')
+
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(opened.state['debt']['creditor'], 'seat-2')
+        self.assertEqual(opened.state['debt']['amount'], 50)
+        self.assertEqual(opened.state['players']['seat-0']['cash'], 20)
+        self.assertEqual(opened.state['players']['seat-1']['cash'], 1550)
+        self.assertIn(
+            ('card_paid', 'seat-0', {'amount': 50, 'to': 'seat-1'}),
+            self._facts(opened),
+        )
+
+        raised = self._cash(opened.state, 'seat-0', 50)
+        paid_one = self._apply(raised, 'seat-0', 'pay_debt')
+
+        # The next share cannot be paid either: a fresh debt for seat-3.
+        self.assertEqual(paid_one.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(paid_one.state['debt']['creditor'], 'seat-3')
+        self.assertEqual(paid_one.state['players']['seat-2']['cash'], 1550)
+        self.assertEqual(paid_one.state['players']['seat-0']['cash'], 0)
+        self.assertIn(
+            ('card_paid', 'seat-0', {'amount': 50, 'to': 'seat-2'}),
+            self._facts(paid_one),
+        )
+
+        raised = self._cash(paid_one.state, 'seat-0', 50)
+        done = self._apply(raised, 'seat-0', 'pay_debt')
+
+        self.assertEqual(done.state['phase'], rules.PHASE_MANAGING)
+        self.assertIsNone(done.state['debt'])
+        self.assertEqual(done.state['players']['seat-3']['cash'], 1550)
+        self.assertIn(
+            ('card_paid', 'seat-0', {'amount': 50, 'to': 'seat-3'}),
+            self._facts(done),
+        )
+
+    def test_selling_and_mortgaging_raise_cash_inside_the_window(self):
+        state = self._window_scene()
+        self.assertEqual(self._options(state, 'seat-0', 'sell'), ('3',))
+
+        sold = self._apply(state, 'seat-0', 'sell', '3')
+        self.assertEqual(sold.state['players']['seat-0']['cash'], 35)
+        self.assertEqual(sold.state['buildings'], {})
+        self.assertEqual(sold.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(self._options(sold.state, 'seat-0', 'mortgage'), ('1', '3'))
+
+        mortgaged = self._apply(sold.state, 'seat-0', 'mortgage', '3')
+        self.assertEqual(mortgaged.state['players']['seat-0']['cash'], 65)
+        self.assertEqual(mortgaged.state['mortgaged'], {'3': True})
+        self.assertEqual(mortgaged.state['phase'], rules.PHASE_RAISING_CASH)
+
+    def test_declaring_bankruptcy_pays_the_stored_creditor(self):
+        state = self._open_rent_debt().state
+        transition = self._apply(state, 'seat-0', 'declare_bankruptcy')
+        self.assertIs(transition.state['players']['seat-0']['eliminated'], True)
+        self.assertIsNone(transition.state['debt'])
+        self.assertIn(
+            ('bankrupt', 'seat-0', {'creditor': 'seat-1'}), self._facts(transition)
+        )
+
+    def test_the_debt_state_is_json_serializable(self):
+        """The runtime persists the state as jsonb, so no tuple may leak into it."""
+        state = self._open_rent_debt().state
+        self.assertEqual(json.loads(json.dumps(state)), state)
+
+
+class MonopolySettlementInterestTests(MonopolyRulesTestCase):
+    """The 10 % interest when a player receives mortgaged property (S9, S10)."""
+
+    def _declare(self, state, seat='seat-0'):
+        opened = self._roll(state, seat, 1, 2)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+        return self._act(opened.state, seat, 'declare_bankruptcy')
+
+    def _rent_scene(self, seats=('seat-0', 'seat-1', 'seat-2')):
+        state = self._open(seats)
+        state = self._place(state, 'seat-0', 36)
+        state = self._cash(state, 'seat-0', 10)
+        return self._give(state, 39, 'seat-1')
+
+    def test_a_player_creditor_pays_the_interest_of_each_mortgaged_property(self):
+        state = self._give(self._rent_scene(), 37, 'seat-0')
+        state = self._mortgaged(state, 37)
+
+        transition = self._declare(state)
+
+        # 1500 + the debtor's 10 cash, minus Park Place's 18 interest.
+        self.assertEqual(
+            transition.state['players']['seat-1']['cash'], 1500 + 10 - 18
+        )
+        self.assertEqual(transition.state['owners']['37'], 'seat-1')
+        self.assertEqual(
+            sorted(transition.state['players']['seat-1']['properties']), [37, 39]
+        )
+        self.assertEqual(transition.state['mortgaged'], {'37': True})
+        self.assertIn(
+            (
+                'interest_paid',
+                'seat-1',
+                {'space': 37, 'amount': 18, 'reason': 'settlement'},
+            ),
+            self._facts(transition),
+        )
+
+    def test_the_settlement_interest_rounds_up_per_property(self):
+        state = self._give(self._rent_scene(), 1, 'seat-0')
+        state = self._give(state, 37, 'seat-0')
+        state = self._mortgaged(state, 1, 37)
+
+        transition = self._declare(state)
+
+        # Mediterranean 30 -> 3, Park Place 175 -> 18.
+        self.assertEqual(
+            transition.state['players']['seat-1']['cash'], 1500 + 10 - 21
+        )
+        facts = self._facts(transition)
+        self.assertIn(
+            ('interest_paid', 'seat-1', {'space': 1, 'amount': 3, 'reason': 'settlement'}),
+            facts,
+        )
+        self.assertIn(
+            (
+                'interest_paid',
+                'seat-1',
+                {'space': 37, 'amount': 18, 'reason': 'settlement'},
+            ),
+            facts,
+        )
+
+    def test_a_settlement_without_mortgaged_properties_charges_nothing(self):
+        state = self._give(self._rent_scene(), 3, 'seat-0')
+
+        transition = self._declare(state)
+
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1510)
+        self.assertNotIn(
+            'interest_paid', [fact[0] for fact in self._facts(transition)]
+        )
+
+    def test_a_bank_creditor_charges_no_settlement_interest(self):
+        state = self._open(('seat-0', 'seat-1'))
+        state = self._place(state, 'seat-0', 33)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 37, 'seat-0')
+        state = self._mortgaged(state, 37)
+        opened = self._roll(state, 'seat-0', 2, 3)
+        self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
+
+        transition = self._act(opened.state, 'seat-0', 'declare_bankruptcy')
+
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1500)
+        self.assertNotIn(
+            'interest_paid', [fact[0] for fact in self._facts(transition)]
+        )
+        self.assertEqual(transition.state['owners'], {})
+
+    def test_a_creditor_that_cannot_pay_the_interest_falls_to_the_bank(self):
+        state = self._rent_scene()
+        state = self._cash(state, 'seat-0', 5)
+        state = self._cash(state, 'seat-1', 10)
+        state = self._give(state, 34, 'seat-0')
+        state = self._give(state, 37, 'seat-0')
+        state = self._mortgaged(state, 34, 37)
+
+        transition = self._declare(state)
+
+        # seat-1 receives 5 cash and owes 16 + 18 = 34 of interest: bankruptcy.
+        self.assertIs(transition.state['players']['seat-1']['eliminated'], True)
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 0)
+        self.assertEqual(transition.state['owners'], {})
+        facts = self._facts(transition)
+        self.assertIn(('bankrupt', 'seat-0', {'creditor': 'seat-1'}), facts)
+        self.assertIn(('bankrupt', 'seat-1', {'creditor': None}), facts)
+        # It never paid the interest, so no interest_paid may be announced.
+        self.assertNotIn('interest_paid', [fact[0] for fact in facts])
+        self.assertIs(rules.is_finished(transition.state), True)
+        self.assertEqual(rules.outcome(transition.state).winner_seat, 'seat-2')
+
+    def test_the_cascade_returns_to_the_bank_the_properties_it_could_not_hold(self):
+        state = self._rent_scene()
+        state = self._cash(state, 'seat-0', 5)
+        state = self._cash(state, 'seat-1', 10)
+        state = self._give(state, 37, 'seat-0')
+        state = self._mortgaged(state, 37)  # 18 interest > 15 cash
+
+        transition = self._declare(state)
+
+        self.assertIs(transition.state['players']['seat-1']['eliminated'], True)
+        self.assertEqual(transition.state['owners'], {})
+        self.assertIn(
+            ('bankrupt', 'seat-1', {'creditor': None}), self._facts(transition)
+        )

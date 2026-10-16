@@ -115,7 +115,9 @@ class MonopolyDefinition:
             'players': [self._player_view(state, seat_id_) for seat_id_ in state['seats']],
             'owners': dict(state['owners']),
             'buildings': dict(state.get('buildings') or {}),
+            'mortgaged': dict(state.get('mortgaged') or {}),
             'bank': dict(state['bank']),
+            'debt': self._debt_view(state),
             'decks': {
                 deck: len(order) for deck, order in state['decks'].items()
             },
@@ -174,6 +176,22 @@ class MonopolyDefinition:
             return None
         drawn_card = cards.card_for(drawn['id'])
         return {'deck': drawn_card.deck, 'id': drawn_card.id, 'title': drawn_card.title}
+
+    def _debt_view(self, state: Mapping) -> dict | None:
+        """The open debt, or ``null`` (S11).
+
+        Only the public part is published: the seat, the creditor (``null``
+        for the bank) and the amount. Everything else the rules keep in the
+        record -- the exact continuation and the deferred fact -- is internal.
+        """
+        debt = state.get('debt')
+        if debt is None:
+            return None
+        return {
+            'seat': debt['seat'],
+            'creditor': debt['creditor'],
+            'amount': debt['amount'],
+        }
 
     def _auction_view(self, state: Mapping) -> dict | None:
         """The open auction, or ``null``.

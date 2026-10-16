@@ -55,6 +55,7 @@ PHASE_AWAITING_ROLL = 'awaiting_roll'
 PHASE_AWAITING_DECISION = 'awaiting_decision'
 PHASE_MANAGING = 'managing'
 PHASE_AWAITING_BID = 'awaiting_bid'
+PHASE_RAISING_CASH = 'raising_cash'
 
 ACTION_ROLL = 'roll'
 ACTION_PAY_JAIL_FINE = 'pay_jail_fine'
@@ -68,6 +69,10 @@ ACTION_BID = 'bid'
 ACTION_PASS = 'pass'
 ACTION_BUILD = 'build'
 ACTION_SELL = 'sell'
+ACTION_MORTGAGE = 'mortgage'
+ACTION_UNMORTGAGE = 'unmortgage'
+ACTION_PAY_DEBT = 'pay_debt'
+ACTION_DECLARE_BANKRUPTCY = 'declare_bankruptcy'
 
 # The ladder a bid may climb by: the high bid plus each of these, filtered by
 # the bidder's cash. The printed rules allow any price and the runtime only
@@ -125,6 +130,7 @@ def initial_state(
         'players': {seat: _fresh_player() for seat in seats},
         'owners': {},
         'buildings': {},
+        'mortgaged': {},
         'bank': {'houses': STARTING_HOUSES, 'hotels': STARTING_HOTELS},
         'decks': _deck_order(decks),
         'last_card': None,
@@ -133,6 +139,7 @@ def initial_state(
         'turn': first_seat,
         'last_roll': None,
         'pending': None,
+        'debt': None,
         'doubles_count': 0,
         'extra_roll': False,
         'ended_by_abandon': False,
@@ -290,7 +297,61 @@ def _managing_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
                 prompt='Vendé',
             )
         )
+    mortgageable = _mortgageable_indexes(state, seat)
+    if mortgageable:
+        specs.append(
+            ActionSpec(
+                name=ACTION_MORTGAGE,
+                options=tuple(str(index) for index in mortgageable),
+                prompt='Hipotecá',
+            )
+        )
+    unmortgageable = _unmortgageable_indexes(state, seat)
+    if unmortgageable:
+        specs.append(
+            ActionSpec(
+                name=ACTION_UNMORTGAGE,
+                options=tuple(str(index) for index in unmortgageable),
+                prompt='Levantá la hipoteca',
+            )
+        )
     specs.append(ActionSpec(name=ACTION_END_TURN, prompt='Terminá tu turno.'))
+    return tuple(specs)
+
+
+def _raising_cash_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
+    """The debt window's actions: sell, mortgage, pay the debt or bankrupt (S7).
+
+    ``build``, ``unmortgage`` and ``end_turn`` are deliberately absent: the
+    window exists to raise cash, and the turn never ends with an open debt.
+    ``pay_debt`` is offered only once the cash covers the whole amount; closing
+    the window grants and removes nothing.
+    """
+    specs = []
+    sellable = _sellable_indexes(state, seat)
+    if sellable:
+        specs.append(
+            ActionSpec(
+                name=ACTION_SELL,
+                options=tuple(str(index) for index in sellable),
+                prompt='Vendé',
+            )
+        )
+    mortgageable = _mortgageable_indexes(state, seat)
+    if mortgageable:
+        specs.append(
+            ActionSpec(
+                name=ACTION_MORTGAGE,
+                options=tuple(str(index) for index in mortgageable),
+                prompt='Hipotecá',
+            )
+        )
+    debt = state.get('debt') or {}
+    if debt and state['players'][seat]['cash'] >= debt.get('amount', 0):
+        specs.append(ActionSpec(name=ACTION_PAY_DEBT, prompt='Pagá la deuda.'))
+    specs.append(
+        ActionSpec(name=ACTION_DECLARE_BANKRUPTCY, prompt='Declarate en bancarrota.')
+    )
     return tuple(specs)
 
 
@@ -378,6 +439,9 @@ def legal_actions(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
     if phase == PHASE_MANAGING:
         return _managing_specs(state, seat)
 
+    if phase == PHASE_RAISING_CASH:
+        return _raising_cash_specs(state, seat)
+
     return ()
 
 
@@ -425,9 +489,13 @@ def abandon(state: Mapping, seat: str) -> Transition:
     state = _copy(state)
     events = []
     if not state['players'][seat]['eliminated']:
-        _eliminate(state, seat, None)
+        _eliminate(state, seat, None, events)
         events.append(Fact(name='seat_abandoned', seat=seat, detail={}))
     state['abandoned_seat'] = seat
+    if state.get('debt') is not None and state['debt']['creditor'] == seat:
+        # The recipient left the match, so the money the debt carries leaves
+        # with it: the debtor ends up owing the bank, never an eliminated seat.
+        state['debt']['creditor'] = None
 
     if len(solvent_seats(state)) <= 1:
         state['ended_by_abandon'] = True
@@ -435,6 +503,7 @@ def abandon(state: Mapping, seat: str) -> Transition:
         state['pending'] = None
         state['extra_roll'] = False
         state['auction'] = None
+        state['debt'] = None
         state['phase'] = PHASE_AWAITING_ROLL
     elif state['auction'] is not None:
         # The auction owns the phase, so the turn is parked while it is open. It
@@ -487,8 +556,8 @@ def _copy(state: Mapping) -> dict:
     return copy.deepcopy(dict(state))
 
 
-def _require_phase(state: Mapping, phase: str) -> None:
-    if state['phase'] != phase:
+def _require_phase(state: Mapping, *phases: str) -> None:
+    if state['phase'] not in phases:
         raise ValueError(f'action not allowed in phase {state["phase"]!r}')
 
 
@@ -539,7 +608,7 @@ def _apply_roll(state: Mapping, seat: str, action, rng) -> Transition:
             return Transition(state=state, facts=tuple(events))
 
     _move(state, seat, total, events)
-    resolution = _resolve_landing(state, seat, faces, events, rng)
+    resolution = _resolve_landing(state, seat, faces, events, rng, extra=doubles)
     return _finish_step(state, resolution, doubles, events)
 
 
@@ -551,7 +620,7 @@ def _resolve_jail_roll(state, seat, faces, total, doubles, events, rng) -> Trans
         player['jail_turns'] = 0
         events.append(Fact(name='left_jail', seat=seat, detail={'method': 'doubles'}))
         _move(state, seat, total, events)
-        resolution = _resolve_landing(state, seat, faces, events, rng)
+        resolution = _resolve_landing(state, seat, faces, events, rng, extra=False)
         # A double that opens the jail cell does not buy another turn.
         return _finish_step(state, resolution, False, events)
 
@@ -560,20 +629,33 @@ def _resolve_jail_roll(state, seat, faces, total, doubles, events, rng) -> Trans
         _pass_turn(state, events)
         return Transition(state=state, facts=tuple(events))
 
-    if _pay(state, seat, JAIL_FINE, None, events):
-        # The fine bankrupted the seat: it leaves jail only to leave the match.
-        _pass_turn(state, events)
+    if player['cash'] < JAIL_FINE:
+        # The third-turn fine cannot be paid: the window opens with the throw
+        # saved so paying resumes the movement with exactly these faces (S8).
+        _open_debt(
+            state,
+            seat,
+            JAIL_FINE,
+            None,
+            {'kind': 'jail_fine', 'faces': list(faces)},
+            None,
+            events,
+        )
         return Transition(state=state, facts=tuple(events))
+    player['cash'] -= JAIL_FINE
     player['in_jail'] = False
     player['jail_turns'] = 0
     events.append(Fact(name='left_jail', seat=seat, detail={'method': 'fine'}))
     _move(state, seat, total, events)
-    resolution = _resolve_landing(state, seat, faces, events, rng)
+    resolution = _resolve_landing(state, seat, faces, events, rng, extra=False)
     return _finish_step(state, resolution, False, events)
 
 
 def _finish_step(state, resolution, extra: bool, events) -> Transition:
     """Close the movement step according to what the landing produced."""
+    if state.get('debt') is not None:
+        # An open debt owns the phase: the step pauses and resumes on payment.
+        return Transition(state=state, facts=tuple(events))
     if resolution == 'decision':
         # The seat must decide before the turn can continue; whether the roll
         # was a double is kept so the extra turn still arrives afterwards.
@@ -608,13 +690,15 @@ def _move(state, seat: str, total: int, events) -> int:
     return player['position']
 
 
-def _resolve_landing(state, seat: str, faces, events, rng, rent_rule=None):
+def _resolve_landing(state, seat: str, faces, events, rng, rent_rule=None, extra=False):
     """Resolve the space the seat stopped on.
 
     Returns ``'decision'`` when the space opened a pending decision, ``'jail'``
     when the seat was sent to jail (which ends the turn in the act) and ``None``
     when the turn can simply continue. ``rent_rule`` carries a card's own rent
-    rule down to :func:`_rent`; an ordinary landing passes ``None``.
+    rule down to :func:`_rent`; an ordinary landing passes ``None``. ``extra``
+    is the extra-roll flag of the roll being resolved, saved in a debt so the
+    payment resumes with the same continuation (S8).
     """
     index = state['players'][seat]['position']
     space = board.space_at(index)
@@ -625,21 +709,28 @@ def _resolve_landing(state, seat: str, faces, events, rng, rent_rule=None):
 
     deck = cards.deck_for_space(index)
     if deck is not None:
-        return _resolve_card(state, seat, _draw(state, seat, deck, events), faces, events, rng)
+        return _resolve_card(
+            state, seat, _draw(state, seat, deck, events), faces, events, rng, extra
+        )
 
     if kind is board.SpaceKind.GO_TO_JAIL:
         _send_to_jail(state, seat, 'go_to_jail', events)
         return 'jail'
 
     if kind is board.SpaceKind.LUXURY_TAX:
-        if not _pay(state, seat, LUXURY_TAX, None, events):
-            events.append(
-                Fact(
-                    name='tax_paid',
-                    seat=seat,
-                    detail={'space': index, 'amount': LUXURY_TAX, 'option': 'fixed'},
-                )
-            )
+        _charge_step(
+            state,
+            seat,
+            LUXURY_TAX,
+            None,
+            Fact(
+                name='tax_paid',
+                seat=seat,
+                detail={'space': index, 'amount': LUXURY_TAX, 'option': 'fixed'},
+            ),
+            extra,
+            events,
+        )
         return None
 
     if kind is board.SpaceKind.INCOME_TAX:
@@ -655,20 +746,24 @@ def _resolve_landing(state, seat: str, faces, events, rng, rent_rule=None):
     if owner == seat:
         return None
 
+    if _is_mortgaged(state, index):
+        # A mortgaged property charges nothing: no rent, no fact (S5).
+        return None
+
     amount = _rent(state, space, owner, faces, rent_rule)
-    if not _pay(state, seat, amount, owner, events):
-        events.append(
-            Fact(
-                name='rent_paid',
-                seat=seat,
-                detail={
-                    'from': seat,
-                    'to': owner,
-                    'space': index,
-                    'amount': amount,
-                },
-            )
-        )
+    _charge_step(
+        state,
+        seat,
+        amount,
+        owner,
+        Fact(
+            name='rent_paid',
+            seat=seat,
+            detail={'from': seat, 'to': owner, 'space': index, 'amount': amount},
+        ),
+        extra,
+        events,
+    )
     return None
 
 
@@ -700,13 +795,13 @@ def _draw(state, seat: str, deck: str, events):
     return card
 
 
-def _resolve_card(state, seat: str, card, faces, events, rng):
+def _resolve_card(state, seat: str, card, faces, events, rng, extra=False):
     """Apply one drawn card and resolve the space it leaves the token on."""
     effect = card.effect
 
     if effect == cards.ADVANCE:
         _advance_to(state, seat, card.space, events)
-        return _resolve_landing(state, seat, faces, events, rng)
+        return _resolve_landing(state, seat, faces, events, rng, extra=extra)
 
     if effect == cards.ADVANCE_NEAREST_RAILROAD:
         destination = _nearest_forward(
@@ -714,7 +809,7 @@ def _resolve_card(state, seat: str, card, faces, events, rng):
         )
         _advance_to(state, seat, destination, events)
         return _resolve_landing(
-            state, seat, faces, events, rng, rent_rule=_RAILROAD_DOUBLED
+            state, seat, faces, events, rng, rent_rule=_RAILROAD_DOUBLED, extra=extra
         )
 
     if effect == cards.ADVANCE_NEAREST_UTILITY:
@@ -728,29 +823,37 @@ def _resolve_card(state, seat: str, card, faces, events, rng):
             return 'decision'
         if owner == seat:
             return None
+        if _is_mortgaged(state, destination):
+            # The card reaches a mortgaged utility: it charges nothing (S5).
+            return None
         throw, _ = _throw(state, seat, rng, events)
         events.append(
             Fact(name='card_roll', seat=seat, detail={'dice': list(throw)})
         )
         amount = CARD_UTILITY_MULTIPLIER * sum(throw)
-        if not _pay(state, seat, amount, owner, events):
-            events.append(
-                Fact(
-                    name='rent_paid',
-                    seat=seat,
-                    detail={
-                        'from': seat,
-                        'to': owner,
-                        'space': destination,
-                        'amount': amount,
-                    },
-                )
-            )
+        _charge_step(
+            state,
+            seat,
+            amount,
+            owner,
+            Fact(
+                name='rent_paid',
+                seat=seat,
+                detail={
+                    'from': seat,
+                    'to': owner,
+                    'space': destination,
+                    'amount': amount,
+                },
+            ),
+            extra,
+            events,
+        )
         return None
 
     if effect == cards.GO_BACK_THREE:
         _go_back(state, seat, 3, events)
-        return _resolve_landing(state, seat, faces, events, rng)
+        return _resolve_landing(state, seat, faces, events, rng, extra=extra)
 
     if effect == cards.GO_TO_JAIL:
         _send_to_jail(state, seat, 'go_to_jail', events)
@@ -768,7 +871,19 @@ def _resolve_card(state, seat: str, card, faces, events, rng):
         return None
 
     if effect == cards.PAY_BANK:
-        _card_pay(state, seat, card.amount, None, events)
+        _charge_step(
+            state,
+            seat,
+            card.amount,
+            None,
+            Fact(
+                name='card_paid',
+                seat=seat,
+                detail={'amount': card.amount, 'to': None},
+            ),
+            extra,
+            events,
+        )
         return None
 
     if effect == cards.COLLECT_EACH_PLAYER:
@@ -779,35 +894,28 @@ def _resolve_card(state, seat: str, card, faces, events, rng):
         return None
 
     if effect == cards.PAY_EACH_PLAYER:
-        for other in solvent_seats(state):
-            if other == seat:
-                continue
-            if _card_pay(state, seat, card.amount, other, events):
-                # The first share that cannot be paid is the bankruptcy and the
-                # shares after it are never collected: the printed rules do not
-                # cover several creditors at once (S10).
-                break
+        others = [other for other in solvent_seats(state) if other != seat]
+        _continue_card_shares(state, seat, card.amount, others, extra, events)
         return None
 
     if effect == cards.REPAIRS:
-        _card_pay(state, seat, _repairs_amount(state, seat, card), None, events)
+        amount = _repairs_amount(state, seat, card)
+        _charge_step(
+            state,
+            seat,
+            amount,
+            None,
+            Fact(
+                name='card_paid',
+                seat=seat,
+                detail={'amount': amount, 'to': None},
+            ),
+            extra,
+            events,
+        )
         return None
 
     raise ValueError(f'unknown card effect: {effect!r}')
-
-
-def _card_pay(state, seat: str, amount: int, creditor, events) -> bool:
-    """Pay a card amount from ``seat``; ``True`` when it went bankrupt.
-
-    A completed payment announces itself; a bankruptcy is announced by
-    ``bankrupt``, which already carries the creditor.
-    """
-    if _pay(state, seat, amount, creditor, events):
-        return True
-    events.append(
-        Fact(name='card_paid', seat=seat, detail={'amount': amount, 'to': creditor})
-    )
-    return False
 
 
 def _card_collect(state, seat: str, amount: int, payer, events) -> bool:
@@ -876,6 +984,9 @@ def _nearest_forward(position: int, indexes) -> int:
 
 def _settle_turn(state, extra: bool, events) -> None:
     """Close the seat's step: grant the extra roll or open the free window."""
+    if state.get('debt') is not None:
+        # The debt owns the phase and the continuation until it is settled (S7).
+        return
     state['pending'] = None
     state['extra_roll'] = False
     seat = state['turn']
@@ -886,7 +997,12 @@ def _settle_turn(state, extra: bool, events) -> None:
 
 
 def _pass_turn(state, events) -> None:
-    """Hand the turn to the next seat still in the match."""
+    """Hand the turn to the next seat still in the match.
+
+    A debt never survives a turn change: the window is closed defensively here
+    so no stale record can leak into another seat's turn (S7).
+    """
+    state['debt'] = None
     ended = state['turn']
     if ended is not None:
         events.append(Fact(name='turn_ended', seat=ended, detail={}))
@@ -926,7 +1042,10 @@ def _rent(state, space, owner: str, faces, rule=None) -> int:
 
     ``rule`` carries a card's own rent rule, which is not the landing rule: the
     nearest-railroad card doubles what the count of railroads held would charge.
+    A mortgaged property charges nothing at all (S5).
     """
+    if _is_mortgaged(state, space.index):
+        return 0
     if space.kind is board.SpaceKind.STREET:
         deed = deeds.deed_for(space.index)
         level = _level(state, space.index)
@@ -964,6 +1083,15 @@ def _level(state: Mapping, index: int) -> int:
     return (state.get('buildings') or {}).get(str(index), 0)
 
 
+def _is_mortgaged(state: Mapping, index: int) -> bool:
+    """Whether the space at ``index`` is mortgaged (S2).
+
+    The read tolerates a match saved before this increment, which has no
+    ``mortgaged`` key at all, exactly like ``buildings``.
+    """
+    return bool((state.get('mortgaged') or {}).get(str(index)))
+
+
 def _group_levels(state: Mapping, index: int) -> tuple[int, ...]:
     """The development levels of every street of ``index``'s colour group."""
     return tuple(
@@ -982,11 +1110,18 @@ def _buildable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
     """
     player = state['players'][seat]
     bank = state['bank']
+    mortgaged = state.get('mortgaged') or {}
     buildable = []
     for index in board.STREET_INDEXES:
         if state['owners'].get(str(index)) != seat:
             continue
         if not _owns_group(state, seat, board.group_of(index)):
+            continue
+        if any(
+            mortgaged.get(str(other))
+            for other in board.street_indexes(board.group_of(index))
+        ):
+            # A group with any mortgaged property cannot be built on (S6).
             continue
         level = _level(state, index)
         if level != min(_group_levels(state, index)):
@@ -1003,6 +1138,48 @@ def _buildable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
             continue
         buildable.append(index)
     return tuple(buildable)
+
+
+def _mortgageable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
+    """The spaces ``seat`` may mortgage right now (S3).
+
+    A space is mortgageable when it is purchasable, its owner is the seat, it
+    is not already mortgaged, and no street of its colour group holds a
+    building. Railroads and utilities have no colour group, so the last
+    condition is vacuously true for them.
+    """
+    mortgaged = state.get('mortgaged') or {}
+    indexes = []
+    for index in board.PURCHASABLE_INDEXES:
+        if state['owners'].get(str(index)) != seat:
+            continue
+        if mortgaged.get(str(index)):
+            continue
+        group = board.group_of(index)
+        if group is not None and any(
+            _level(state, other) > 0
+            for other in board.street_indexes(group)
+        ):
+            continue
+        indexes.append(index)
+    return tuple(indexes)
+
+
+def _unmortgageable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
+    """The mortgaged spaces ``seat`` may lift right now (S4).
+
+    Only the seat's own mortgaged spaces whose lift cost the cash covers, in
+    board order, so lifting can never be offered as a way to go into debt.
+    """
+    mortgaged = state.get('mortgaged') or {}
+    cash = state['players'][seat]['cash']
+    return tuple(
+        index
+        for index in board.PURCHASABLE_INDEXES
+        if state['owners'].get(str(index)) == seat
+        and mortgaged.get(str(index))
+        and deeds.mortgage_lift_cost(index) <= cash
+    )
 
 
 def _sellable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
@@ -1029,6 +1206,142 @@ def _sellable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
     return tuple(sellable)
 
 
+def _open_debt(state, seat, amount, creditor, resume, fact, events) -> None:
+    """Open the raising-cash window with the unpaid charge (S7).
+
+    ``resume`` is the internal recipe for continuing the interrupted step and
+    ``fact`` is the charge the payment would have emitted; neither is published.
+    """
+    state['debt'] = {
+        'seat': seat,
+        'creditor': creditor,
+        'amount': amount,
+        'resume': resume,
+        'fact': fact,
+    }
+    state['phase'] = PHASE_RAISING_CASH
+    events.append(
+        Fact(
+            name='debt_incurred',
+            seat=seat,
+            detail={'amount': amount, 'creditor': creditor},
+        )
+    )
+
+
+def _charge_step(state, seat, amount, creditor, fact, extra, events) -> bool:
+    """Settle a movement-step charge, opening a debt when the cash is short."""
+    player = state['players'][seat]
+    if player['cash'] >= amount:
+        player['cash'] -= amount
+        if creditor is not None:
+            state['players'][creditor]['cash'] += amount
+        events.append(fact)
+        return True
+    _open_debt(
+        state,
+        seat,
+        amount,
+        creditor,
+        {'kind': 'settle_step', 'extra': extra},
+        {'name': fact.name, 'seat': fact.seat, 'detail': dict(fact.detail)},
+        events,
+    )
+    return False
+
+
+def _continue_card_shares(state, seat, amount_each, creditors, extra, events) -> bool:
+    """Pay a multi-player card in seat order, opening a debt when short (S8).
+
+    Returns ``True`` when every share was paid and ``False`` when the window
+    was reopened for the first share the cash could not cover, in which case
+    the caller must not settle the step.
+    """
+    for offset, creditor in enumerate(creditors):
+        player = state['players'][seat]
+        if player['cash'] >= amount_each:
+            player['cash'] -= amount_each
+            state['players'][creditor]['cash'] += amount_each
+            events.append(
+                Fact(
+                    name='card_paid',
+                    seat=seat,
+                    detail={'amount': amount_each, 'to': creditor},
+                )
+            )
+            continue
+        _open_debt(
+            state,
+            seat,
+            amount_each,
+            creditor,
+            {
+                'kind': 'card_shares',
+                'extra': extra,
+                'amount_each': amount_each,
+                'remaining': list(creditors[offset + 1 :]),
+            },
+            {
+                'name': 'card_paid',
+                'seat': seat,
+                'detail': {'amount': amount_each, 'to': creditor},
+            },
+            events,
+        )
+        return False
+    return True
+
+
+def _resume_jail_fine(state, seat, faces, events, rng) -> None:
+    """Finish the third jail turn after its fine was paid (S8).
+
+    The throw that hit the limit is the one the seat moves with, and it never
+    grants an extra turn.
+    """
+    player = state['players'][seat]
+    player['in_jail'] = False
+    player['jail_turns'] = 0
+    events.append(Fact(name='left_jail', seat=seat, detail={'method': 'fine'}))
+    _move(state, seat, sum(faces), events)
+    resolution = _resolve_landing(state, seat, faces, events, rng, extra=False)
+    _finish_step(state, resolution, False, events)
+
+
+def _pay_debt(state, seat, debt, events, rng) -> None:
+    """Pay the open debt and resume exactly the step it interrupted (S7, S8)."""
+    amount = debt['amount']
+    creditor = debt['creditor']
+    player = state['players'][seat]
+    player['cash'] -= amount
+    if creditor is not None:
+        state['players'][creditor]['cash'] += amount
+    state['debt'] = None
+    fact = debt.get('fact')
+    if fact is not None:
+        events.append(
+            Fact(name=fact['name'], seat=fact['seat'], detail=dict(fact['detail']))
+        )
+    resume = debt['resume']
+    kind = resume['kind']
+    if kind in ('settle_step', 'income_tax'):
+        _settle_turn(state, resume['extra'], events)
+    elif kind == 'jail_fine':
+        _resume_jail_fine(state, seat, resume['faces'], events, rng)
+    elif kind == 'card_shares':
+        finished = _continue_card_shares(
+            state,
+            seat,
+            resume['amount_each'],
+            resume['remaining'],
+            resume['extra'],
+            events,
+        )
+        if finished:
+            _settle_turn(state, resume['extra'], events)
+    else:
+        raise ValueError(f'unknown debt continuation: {kind!r}')
+
+
 def _pay(state, seat: str, amount: int, creditor, events) -> bool:
     """Pay ``amount`` to ``creditor`` (or the bank, when ``None``).
 
@@ -1042,33 +1355,44 @@ def _pay(state, seat: str, amount: int, creditor, events) -> bool:
         if creditor is not None:
             state['players'][creditor]['cash'] += amount
         return False
-    _eliminate(state, seat, creditor)
     events.append(
         Fact(name='bankrupt', seat=seat, detail={'creditor': creditor})
     )
+    _eliminate(state, seat, creditor, events)
     return True
 
 
-def _eliminate(state, seat: str, creditor) -> None:
-    """Take ``seat`` out of the match, settling its assets (S7, S11, S14).
+def _eliminate(state, seat: str, creditor, events=None) -> None:
+    """Take ``seat`` out of the match, settling its assets (S7, S9, S11, S14).
 
     Every building goes back to the bank and its key leaves ``buildings``: a
     property is never transferred with buildings on it. When the creditor is a
     player it also collects the debtor's cash plus half of what the debtor had
-    paid for those buildings; when the creditor is the bank (taxes, fines and
-    the disconnection expulsion) the buildings simply return and nothing is
-    paid, and the properties are left unowned as S11 and S14 already say.
+    paid for those buildings, and then pays the 10 % interest of every
+    mortgaged property it received (S9); when the creditor is the bank (taxes,
+    fines and the disconnection expulsion) the buildings simply return and
+    nothing is paid, and the properties are left unowned as S11 and S14 say.
+
+    ``events`` is optional because the settlement is also reachable from
+    :func:`abandon`; when it is a player that receives mortgaged property the
+    channel is what lets the charge and a cascaded ``bankrupt`` be observed.
     """
     player = state['players'][seat]
     if player['eliminated']:
         return
-    refund = _return_buildings(state, player['properties'])
+    transferred = list(player['properties'])
+    refund = _return_buildings(state, transferred)
     if creditor is not None:
         state['players'][creditor]['cash'] += player['cash'] + refund
     player['cash'] = 0
-    for index in list(player['properties']):
+    mortgaged = state.setdefault('mortgaged', {})
+    for index in transferred:
         if creditor is None:
             state['owners'].pop(str(index), None)
+            # The bank absorbs the mortgage of a property it takes back: nobody
+            # owns the space to owe it, and the next buyer starts from a clean
+            # lot. The map is an invariant of ownership, never of the space.
+            mortgaged.pop(str(index), None)
         else:
             state['owners'][str(index)] = creditor
             state['players'][creditor]['properties'].append(index)
@@ -1076,6 +1400,49 @@ def _eliminate(state, seat: str, creditor) -> None:
     player['in_jail'] = False
     player['jail_turns'] = 0
     player['eliminated'] = True
+    if creditor is not None:
+        _charge_settlement_interest(state, creditor, transferred, events)
+
+
+def _charge_settlement_interest(state, creditor, indexes, events) -> None:
+    """Charge the creditor 10 % of each mortgaged property it received (S9).
+
+    The interest is the same ceiling of a tenth of the printed mortgage value
+    that lifting a mortgage pays. A creditor that cannot pay it goes bankrupt
+    to the bank, the faithful cascade of the printed rules: it cannot keep what
+    it cannot sustain.
+    """
+    mortgaged = state.get('mortgaged') or {}
+    charges = [
+        (index, deeds.mortgage_lift_cost(index) - deeds.mortgage_value(index))
+        for index in indexes
+        if mortgaged.get(str(index))
+    ]
+    if not charges:
+        return
+    total = sum(amount for _, amount in charges)
+    player = state['players'][creditor]
+    if player['cash'] < total:
+        _eliminate(state, creditor, None, events)
+        if events is not None:
+            events.append(
+                Fact(name='bankrupt', seat=creditor, detail={'creditor': None})
+            )
+        return
+    player['cash'] -= total
+    if events is not None:
+        for index, amount in charges:
+            events.append(
+                Fact(
+                    name='interest_paid',
+                    seat=creditor,
+                    detail={
+                        'space': index,
+                        'amount': amount,
+                        'reason': 'settlement',
+                    },
+                )
+            )
 
 
 def _return_buildings(state, indexes) -> int:
@@ -1258,19 +1625,25 @@ def _pay_income_tax(state: Mapping, seat: str, option: str, amount: int) -> Tran
     _require_pending(state, 'income_tax')
     state = _copy(state)
     events = []
-    if not _pay(state, seat, amount, None, events):
-        events.append(
-            Fact(
-                name='tax_paid',
-                seat=seat,
-                detail={
-                    'space': board.INCOME_TAX_INDEX,
-                    'amount': amount,
-                    'option': option,
-                },
-            )
-        )
-    _settle_turn(state, state['extra_roll'], events)
+    extra = state['extra_roll']
+    _charge_step(
+        state,
+        seat,
+        amount,
+        None,
+        Fact(
+            name='tax_paid',
+            seat=seat,
+            detail={
+                'space': board.INCOME_TAX_INDEX,
+                'amount': amount,
+                'option': option,
+            },
+        ),
+        extra,
+        events,
+    )
+    _settle_turn(state, extra, events)
     return Transition(state=state, facts=tuple(events))
 
 
@@ -1345,8 +1718,12 @@ def _apply_build(state: Mapping, seat: str, action, rng) -> Transition:
 
 
 def _apply_sell(state: Mapping, seat: str, action, rng) -> Transition:
-    """Lower one development level on an offered street (S4)."""
-    _require_phase(state, PHASE_MANAGING)
+    """Lower one development level on an offered street (S4).
+
+    Offered in ``managing`` and in the raising-cash window, where selling is
+    one of the ways to cover the debt (S7).
+    """
+    _require_phase(state, PHASE_MANAGING, PHASE_RAISING_CASH)
     index = _read_offered_index(state, seat, action, _sellable_indexes(state, seat))
     deed = deeds.deed_for(index)
     state = _copy(state)
@@ -1377,6 +1754,105 @@ def _apply_sell(state: Mapping, seat: str, action, rng) -> Transition:
     )
 
 
+def _apply_mortgage(state: Mapping, seat: str, action, rng) -> Transition:
+    """Mortgage an owned space, collecting its printed value from the bank (S3).
+
+    Offered in ``managing`` and in the raising-cash window (S7).
+    """
+    _require_phase(state, PHASE_MANAGING, PHASE_RAISING_CASH)
+    index = _read_offered_index(
+        state, seat, action, _mortgageable_indexes(state, seat)
+    )
+    amount = deeds.mortgage_value(index)
+    state = _copy(state)
+    mortgaged = dict(state.get('mortgaged') or {})
+    mortgaged[str(index)] = True
+    state['mortgaged'] = mortgaged
+    state['players'][seat]['cash'] += amount
+    return Transition(
+        state=state,
+        facts=(
+            Fact(
+                name='property_mortgaged',
+                seat=seat,
+                detail={'space': index, 'amount': amount},
+            ),
+        ),
+    )
+
+
+def _apply_unmortgage(state: Mapping, seat: str, action, rng) -> Transition:
+    """Lift a mortgage, paying the value plus interest to the bank (S4)."""
+    _require_phase(state, PHASE_MANAGING)
+    index = _read_offered_index(
+        state, seat, action, _unmortgageable_indexes(state, seat)
+    )
+    mortgage = deeds.mortgage_value(index)
+    amount = deeds.mortgage_lift_cost(index)
+    interest = amount - mortgage
+    state = _copy(state)
+    state['players'][seat]['cash'] -= amount
+    mortgaged = dict(state.get('mortgaged') or {})
+    mortgaged.pop(str(index), None)
+    state['mortgaged'] = mortgaged
+    return Transition(
+        state=state,
+        facts=(
+            Fact(
+                name='property_unmortgaged',
+                seat=seat,
+                detail={
+                    'space': index,
+                    'mortgage': mortgage,
+                    'interest': interest,
+                    'amount': amount,
+                },
+            ),
+            Fact(
+                name='interest_paid',
+                seat=seat,
+                detail={
+                    'space': index,
+                    'amount': interest,
+                    'reason': 'unmortgage',
+                },
+            ),
+        ),
+    )
+
+
+def _apply_pay_debt(state: Mapping, seat: str, action, rng) -> Transition:
+    """Pay the open debt and resume the interrupted step (S7, S8)."""
+    _require_phase(state, PHASE_RAISING_CASH)
+    debt = state.get('debt')
+    if debt is None or debt.get('seat') != seat:
+        raise ValueError(f'{seat!r} has no open debt')
+    if state['players'][seat]['cash'] < debt['amount']:
+        raise ValueError(f'{seat!r} cannot afford the debt')
+    state = _copy(state)
+    events = []
+    _pay_debt(state, seat, state['debt'], events, rng)
+    return Transition(state=state, facts=tuple(events))
+
+
+def _apply_declare_bankruptcy(state: Mapping, seat: str, action, rng) -> Transition:
+    """Resolve the debt by the stored creditor exactly like S11 (S7, S8)."""
+    _require_phase(state, PHASE_RAISING_CASH)
+    debt = state.get('debt')
+    if debt is None or debt.get('seat') != seat:
+        raise ValueError(f'{seat!r} has no open debt')
+    creditor = debt['creditor']
+    state = _copy(state)
+    events = []
+    state['debt'] = None
+    events.append(
+        Fact(name='bankrupt', seat=seat, detail={'creditor': creditor})
+    )
+    _eliminate(state, seat, creditor, events)
+    _pass_turn(state, events)
+    return Transition(state=state, facts=tuple(events))
+
+
 _HANDLERS = {
     ACTION_ROLL: _apply_roll,
     ACTION_BID: _apply_bid,
@@ -1390,4 +1866,8 @@ _HANDLERS = {
     ACTION_END_TURN: _apply_end_turn,
     ACTION_BUILD: _apply_build,
     ACTION_SELL: _apply_sell,
+    ACTION_MORTGAGE: _apply_mortgage,
+    ACTION_UNMORTGAGE: _apply_unmortgage,
+    ACTION_PAY_DEBT: _apply_pay_debt,
+    ACTION_DECLARE_BANKRUPTCY: _apply_declare_bankruptcy,
 }

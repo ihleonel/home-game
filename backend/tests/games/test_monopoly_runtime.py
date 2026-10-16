@@ -279,6 +279,74 @@ class MonopolyRuntimeTests(SimpleTestCase):
 
         self.assertEqual(caught.exception.action_name, 'build')
 
+    def test_a_mortgage_through_the_runtime_publishes_the_mortgaged_map(self):
+        current = self._seed_managing_brown()
+
+        result = self._submit('p0', 'mortgage', value='1')
+
+        published = self.projector.publishes[-1]
+        self.assertEqual(result.version, current.version + 1)
+        self.assertEqual(result.state['mortgaged'], {'1': True})
+        self.assertEqual(published['views']['seat-0']['mortgaged'], {'1': True})
+        self.assertEqual(published['views'][None]['mortgaged'], {'1': True})
+        self.assertEqual(
+            published['facts'],
+            (
+                {
+                    'name': 'property_mortgaged',
+                    'seat': 'seat-0',
+                    'detail': {'space': 1, 'amount': 30},
+                },
+            ),
+        )
+
+    def test_the_debt_window_is_driven_through_the_runtime(self):
+        current = self._current()
+        current.state['phase'] = 'raising_cash'
+        current.state['turn'] = 'seat-0'
+        current.state['players']['seat-0']['cash'] = 50
+        current.state['debt'] = {
+            'seat': 'seat-0',
+            'creditor': 'seat-1',
+            'amount': 50,
+            'resume': {'kind': 'settle_step', 'extra': False},
+            'fact': {
+                'name': 'rent_paid',
+                'seat': 'seat-0',
+                'detail': {
+                    'from': 'seat-0',
+                    'to': 'seat-1',
+                    'space': 39,
+                    'amount': 50,
+                },
+            },
+        }
+
+        result = self._submit('p0', 'pay_debt')
+
+        published = self.projector.publishes[-1]
+        self.assertEqual(result.version, current.version + 1)
+        self.assertIsNone(result.state['debt'])
+        self.assertEqual(result.state['phase'], 'managing')
+        self.assertEqual(result.state['players']['seat-1']['cash'], 1550)
+        self.assertIsNone(published['views']['seat-0']['debt'])
+        self.assertIsNone(published['views'][None]['debt'])
+        self.assertEqual(
+            published['facts'],
+            (
+                {
+                    'name': 'rent_paid',
+                    'seat': 'seat-0',
+                    'detail': {
+                        'from': 'seat-0',
+                        'to': 'seat-1',
+                        'space': 39,
+                        'amount': 50,
+                    },
+                },
+            ),
+        )
+
     def test_abandon_finishes_the_match_for_the_seat_that_stayed(self):
         final = abandon_seat(
             match_ref=self.record.match_ref,

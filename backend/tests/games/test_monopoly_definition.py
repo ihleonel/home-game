@@ -359,3 +359,74 @@ class MonopolyDefinitionTests(SimpleTestCase):
         view['players'][0]['cash'] = 1
         view['last_roll'] = [6, 6]
         self.assertEqual(state, before)
+
+    def test_the_opening_view_has_no_mortgages_and_no_debt(self):
+        state = self._start()
+        seat_view = self.definition.view(state, 'seat-0')
+        spectator_view = self.definition.view(state, None)
+        for view in (seat_view, spectator_view):
+            self.assertEqual(view['mortgaged'], {})
+            self.assertIsNone(view['debt'])
+
+    def test_the_view_publishes_the_mortgaged_map(self):
+        state = self._start()
+        state['owners'] = {'1': 'seat-0'}
+        state['players']['seat-0']['properties'] = [1]
+        state['phase'] = 'managing'
+
+        mortgaged = self.definition.apply(
+            state, 'seat-0', Action(name='mortgage', value='1'), None
+        ).state
+
+        self.assertEqual(
+            self.definition.view(mortgaged, 'seat-0')['mortgaged'], {'1': True}
+        )
+        self.assertEqual(
+            self.definition.view(mortgaged, None)['mortgaged'], {'1': True}
+        )
+
+    def test_the_view_publishes_only_the_public_debt_record(self):
+        state = copy.deepcopy(self._start())
+        state['phase'] = 'raising_cash'
+        state['debt'] = {
+            'seat': 'seat-0',
+            'creditor': 'seat-1',
+            'amount': 50,
+            'resume': {'kind': 'settle_step', 'extra': False},
+            'fact': {
+                'name': 'rent_paid',
+                'seat': 'seat-0',
+                'detail': {
+                    'from': 'seat-0',
+                    'to': 'seat-1',
+                    'space': 39,
+                    'amount': 50,
+                },
+            },
+        }
+
+        seat_view = self.definition.view(state, 'seat-0')
+        spectator_view = self.definition.view(state, None)
+        expected = {'seat': 'seat-0', 'creditor': 'seat-1', 'amount': 50}
+        self.assertEqual(seat_view['phase'], 'raising_cash')
+        self.assertEqual(seat_view['debt'], expected)
+        self.assertEqual(spectator_view['debt'], expected)
+        self.assertNotIn('resume', seat_view['debt'])
+        self.assertNotIn('fact', seat_view['debt'])
+
+    def test_the_view_publishes_a_bank_debt_with_a_null_creditor(self):
+        state = copy.deepcopy(self._start())
+        state['phase'] = 'raising_cash'
+        state['debt'] = {
+            'seat': 'seat-0',
+            'creditor': None,
+            'amount': 75,
+            'resume': {'kind': 'settle_step', 'extra': False},
+            'fact': None,
+        }
+
+        view = self.definition.view(state, None)
+
+        self.assertEqual(
+            view['debt'], {'seat': 'seat-0', 'creditor': None, 'amount': 75}
+        )
