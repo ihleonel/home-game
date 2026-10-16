@@ -4,7 +4,7 @@ import { BOARD, isPurchasable, spaceAt } from './board'
 import type { Space } from './board'
 import { deedFor, purchasePrice, rentForLevel } from './deeds'
 import { GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, deckLabel, formatMoney, seatName } from './display'
-import { spaceArea } from './grid'
+import { spaceArea, spaceSide } from './grid'
 import type { MonopolyPlayer, MonopolyView } from './view'
 
 const RENT_ROW_LABELS = [
@@ -155,6 +155,7 @@ export function MonopolyBoard({
             data-auction={auctioned ? 'true' : undefined}
             data-group={space.group ?? undefined}
             data-kind={space.kind}
+            data-side={spaceSide(space.index)}
             key={space.index}
             onClick={() => onSelect(space.index)}
             style={{ gridRow: area.row, gridColumn: area.column }}

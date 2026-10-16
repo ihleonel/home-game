@@ -56,6 +56,27 @@ export function spaceArea(index: number): GridArea {
 /** The perimeter size this grid can address, for the invariant the board keeps. */
 export const BOARD_CAPACITY = 4 * CORNER_STEP
 
+/**
+ * Which side of the ring a space belongs to.
+ *
+ * The corners open their segment, which is how the printed board reads: GO opens
+ * the bottom edge and Go to Jail opens the right one. The skin uses this to put
+ * the colour band on the inner edge and to rotate the names on the side
+ * columns, so it is the one hook the markup owes the stylesheet.
+ */
+export type BoardSide = 'bottom' | 'left' | 'top' | 'right'
+
+const SIDES: readonly BoardSide[] = ['bottom', 'left', 'top', 'right']
+
+/**
+ * Return the side of the ring the space at ``index`` belongs to.
+ *
+ * Throws for an index outside the circuit, like :func:`spaceArea`.
+ */
+export function spaceSide(index: number): BoardSide {
+  spaceAt(index)
+  return SIDES[Math.floor(index / CORNER_STEP)]
+}
 if (BOARD_CAPACITY !== BOARD_SIZE) {
   throw new Error(
     `the ${GRID_SIZE}x${GRID_SIZE} grid holds ${BOARD_CAPACITY} spaces, not ${BOARD_SIZE}`,

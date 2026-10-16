@@ -114,6 +114,15 @@ function spaceButton(buttons: ReactElement[], name: string): ReactElement {
 }
 
 describe('the monopoly board', () => {
+  it('tells the stylesheet which side of the ring each space is on', () => {
+    // Ten spaces per side, corners included in the edge they open: this is the
+    // hook the skin uses to face the colour band inward and rotate the names.
+    const page = markup(view())
+
+    for (const side of ['bottom', 'left', 'top', 'right']) {
+      expect(page.match(new RegExp(`data-side="${side}"`, 'g'))).toHaveLength(10)
+    }
+  })
   it('renders one button per board space', () => {
     expect(buttonElements(view())).toHaveLength(40)
   })

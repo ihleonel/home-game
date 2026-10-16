@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BOARD, BOARD_SIZE } from './board'
-import { GRID_SIZE, spaceArea } from './grid'
+import { GRID_SIZE, spaceArea, spaceSide } from './grid'
 
 /** The four corners, at the corners of the printed board. */
 const CORNERS: readonly (readonly [number, number, number])[] = [
@@ -22,8 +22,7 @@ const SIDES: readonly (readonly [number, number, number])[] = [
   [39, 10, 11],
 ]
 
-describe('the board grid placement', () => {
-  it('is an 11x11 grid whose perimeter is exactly the 40 spaces', () => {
+describe('the board grid placement', () => {  it('is an 11x11 grid whose perimeter is exactly the 40 spaces', () => {
     expect(GRID_SIZE).toBe(11)
     expect(4 * (GRID_SIZE - 1)).toBe(BOARD_SIZE)
   })
@@ -62,5 +61,38 @@ describe('the board grid placement', () => {
     expect(() => spaceArea(-1)).toThrow()
     expect(() => spaceArea(40)).toThrow()
     expect(() => spaceArea(2.5)).toThrow()
+  })
+
+  it('gives every space the side of the ring it belongs to', () => {
+    // The corners belong to the segment that starts in them, which is how the
+    // printed board reads: GO opens the bottom edge and Go to Jail the right one.
+    expect(
+      [0, 10, 20, 30].map((index) => spaceSide(index)),
+    ).toEqual(['bottom', 'left', 'top', 'right'])
+  })
+
+  it('spreads the forty spaces evenly over the four sides', () => {
+    for (const side of ['bottom', 'left', 'top', 'right'] as const) {
+      const onSide = BOARD.filter((space) => spaceSide(space.index) === side)
+      expect([side, onSide.length]).toEqual([side, 10])
+    }
+  })
+
+  it('agrees with the placement: each side sits on its own edge of the grid', () => {
+    for (const space of BOARD) {
+      const { row, column } = spaceArea(space.index)
+      const expected = {
+        bottom: row === GRID_SIZE,
+        top: row === 1,
+        left: column === 1,
+        right: column === GRID_SIZE,
+      }[spaceSide(space.index)]
+      expect([space.index, expected]).toEqual([space.index, true])
+    }
+  })
+
+  it('rejects a side for an index outside the board', () => {
+    expect(() => spaceSide(-1)).toThrow()
+    expect(() => spaceSide(40)).toThrow()
   })
 })
