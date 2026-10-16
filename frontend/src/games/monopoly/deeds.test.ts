@@ -14,6 +14,7 @@ import {
   deedFor,
   developmentCost,
   levelLabel,
+  mortgageLiftCost,
   mortgageValue,
   purchasePrice,
   rentForLevel,
@@ -214,6 +215,27 @@ describe('the monopoly deed economy', () => {
     for (const index of UTILITY_INDEXES) {
       expect(purchasePrice(index)).toBe(150)
       expect(mortgageValue(index)).toBe(75)
+    }
+  })
+
+  it('lifts a mortgage for the value plus a tenth rounded up', () => {
+    // Park Place: $175 of mortgage plus $18 of interest is $193 (S4).
+    expect(mortgageLiftCost(37)).toBe(193)
+    for (const index of PURCHASABLE_INDEXES) {
+      const mortgage = mortgageValue(index)
+      expect([index, mortgageLiftCost(index)]).toEqual([
+        index,
+        mortgage + Math.ceil(mortgage / 10),
+      ])
+    }
+    for (const index of RAILROAD_INDEXES) expect(mortgageLiftCost(index)).toBe(110)
+    for (const index of UTILITY_INDEXES) expect(mortgageLiftCost(index)).toBe(83)
+  })
+
+  it('refuses a lift cost for a space the bank cannot mortgage', () => {
+    for (let index = 0; index < 40; index += 1) {
+      if (PURCHASABLE_INDEXES.includes(index)) continue
+      expect(() => mortgageLiftCost(index)).toThrow()
     }
   })
 

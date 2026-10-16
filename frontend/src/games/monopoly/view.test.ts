@@ -45,7 +45,9 @@ function rawView(overrides: Record<string, unknown> = {}): Record<string, unknow
       title: 'El banco te paga un dividendo de $50.',
     },
     buildings: { '1': 2 },
+    mortgaged: {},
     bank: { houses: 30, hotels: 11 },
+    debt: null,
     auction: null,
     last_roll: [1, 2],
     pending: null,
@@ -85,7 +87,9 @@ describe('the monopoly view parser', () => {
     delete payload.last_card
     delete payload.auction
     delete payload.buildings
+    delete payload.mortgaged
     delete payload.bank
+    delete payload.debt
 
     expect(parseMonopolyView(payload)).toEqual({
       finished: false,
@@ -97,7 +101,9 @@ describe('the monopoly view parser', () => {
       decks: null,
       last_card: null,
       buildings: {},
+      mortgaged: {},
       bank: null,
+      debt: null,
       auction: null,
       last_roll: null,
       pending: null,
@@ -307,6 +313,114 @@ describe('the monopoly view parser', () => {
     expect(parseMonopolyView(rawView({ buildings: { flat: 2 } }))?.buildings).toEqual({})
     // The good entry goes down with the bad one: the map is one unit.
     expect(parseMonopolyView(rawView({ buildings: { '1': 2, '3': 0 } }))?.buildings).toEqual({})
+  })
+
+  it('reads the mortgaged map field by field', () => {
+    const view = parseMonopolyView(rawView({ mortgaged: { '1': true, '39': true } }))
+
+    expect(view?.mortgaged).toEqual({ '1': true, '39': true })
+  })
+
+  it('leaves the whole mortgaged map empty when any entry is malformed', () => {
+    // All-or-nothing, like ``buildings``: one bad entry drops the whole map
+    // rather than showing a board with a mortgage the server never reported.
+    expect(parseMonopolyView(rawView({ mortgaged: 'all' }))?.mortgaged).toEqual({})
+    expect(parseMonopolyView(rawView({ mortgaged: [] }))?.mortgaged).toEqual({})
+    expect(parseMonopolyView(rawView({ mortgaged: { '1': false } }))?.mortgaged).toEqual({})
+    expect(parseMonopolyView(rawView({ mortgaged: { '1': 1 } }))?.mortgaged).toEqual({})
+    expect(parseMonopolyView(rawView({ mortgaged: { '1': 'yes' } }))?.mortgaged).toEqual({})
+    expect(parseMonopolyView(rawView({ mortgaged: { '40': true } }))?.mortgaged).toEqual({})
+    expect(parseMonopolyView(rawView({ mortgaged: { '-1': true } }))?.mortgaged).toEqual({})
+    expect(parseMonopolyView(rawView({ mortgaged: { flat: true } }))?.mortgaged).toEqual({})
+    // The good entry goes down with the bad one: the map is one unit.
+    expect(parseMonopolyView(rawView({ mortgaged: { '1': true, '3': false } }))?.mortgaged).toEqual(
+      {},
+    )
+  })
+
+  it('treats a payload without mortgaged as nothing mortgaged', () => {
+    const payload = rawView()
+    delete payload.mortgaged
+
+    const view = parseMonopolyView(payload)
+
+    expect(view).not.toBeNull()
+    expect(view?.mortgaged).toEqual({})
+  })
+
+  it('keeps the view whole when the mortgaged map is malformed', () => {
+    const view = parseMonopolyView(rawView({ mortgaged: { '1': 'yes' } }))
+
+    expect(view).not.toBeNull()
+    expect(view?.players).toHaveLength(2)
+    expect(view?.buildings).toEqual({ '1': 2 })
+    expect(view?.owners).toEqual({ '3': 'seat-0' })
+  })
+
+  it('reads a debt record field by field', () => {
+    const view = parseMonopolyView(
+      rawView({ debt: { seat: 'seat-0', creditor: 'seat-1', amount: 420 } }),
+    )
+
+    expect(view?.debt).toEqual({ seat: 'seat-0', creditor: 'seat-1', amount: 420 })
+  })
+
+  it('reads a debt to the bank as a null creditor', () => {
+    const view = parseMonopolyView(
+      rawView({ debt: { seat: 'seat-0', creditor: null, amount: 50 } }),
+    )
+
+    expect(view?.debt).toEqual({ seat: 'seat-0', creditor: null, amount: 50 })
+  })
+
+  it('drops a malformed debt to null and keeps the rest of the view', () => {
+    expect(parseMonopolyView(rawView({ debt: 'owed' }))?.debt).toBeNull()
+    expect(parseMonopolyView(rawView({ debt: { creditor: null, amount: 50 } }))?.debt).toBeNull()
+    expect(parseMonopolyView(rawView({ debt: { seat: '', creditor: null, amount: 50 } }))?.debt).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ debt: { seat: 'seat-0', creditor: 7, amount: 50 } }))?.debt,
+    ).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ debt: { seat: 'seat-0', creditor: null, amount: 0 } }))?.debt,
+    ).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ debt: { seat: 'seat-0', creditor: null, amount: -1 } }))?.debt,
+    ).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ debt: { seat: 'seat-0', creditor: null, amount: 12.5 } }))
+        ?.debt,
+    ).toBeNull()
+
+    const view = parseMonopolyView(
+      rawView({ debt: { seat: 'seat-0', creditor: null, amount: -1 } }),
+    )
+
+    expect(view).not.toBeNull()
+    expect(view?.players).toHaveLength(2)
+    expect(view?.buildings).toEqual({ '1': 2 })
+  })
+
+  it('treats a payload without debt as no open debt', () => {
+    const payload = rawView()
+    delete payload.debt
+
+    const view = parseMonopolyView(payload)
+
+    expect(view).not.toBeNull()
+    expect(view?.debt).toBeNull()
+  })
+
+  it('recognizes the raising cash phase', () => {
+    const view = parseMonopolyView(
+      rawView({
+        phase: 'raising_cash',
+        debt: { seat: 'seat-0', creditor: null, amount: 50 },
+      }),
+    )
+
+    expect(view).not.toBeNull()
+    expect(view?.phase).toBe('raising_cash')
+    expect(view?.debt?.amount).toBe(50)
   })
 
   it('treats a payload without buildings and bank as unbuilt with no bank', () => {

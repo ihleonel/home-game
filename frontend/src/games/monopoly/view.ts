@@ -3,15 +3,27 @@ import { BOARD_SIZE } from './board'
 import { HOTEL_LEVEL } from './deeds'
 
 /**
- * The phases the rules persist (S6 of ``monopoly.md`` plus the bidding phase
- * the auction increment adds, S2 of ``monopoly-auction.md``).
+ * The phases the rules persist (S6 of ``monopoly.md``, the bidding phase the
+ * auction increment adds, S2 of ``monopoly-auction.md``, and the debt window
+ * of S7 of ``monopoly-mortgage.md``).
  *
  * The parser only accepts these: a phase it does not know would leave the
  * screen offering actions no transition understands.
  */
-export type MonopolyPhase = 'awaiting_roll' | 'awaiting_decision' | 'awaiting_bid' | 'managing'
+export type MonopolyPhase =
+  | 'awaiting_roll'
+  | 'awaiting_decision'
+  | 'awaiting_bid'
+  | 'managing'
+  | 'raising_cash'
 
-const PHASES: readonly string[] = ['awaiting_roll', 'awaiting_decision', 'awaiting_bid', 'managing']
+const PHASES: readonly string[] = [
+  'awaiting_roll',
+  'awaiting_decision',
+  'awaiting_bid',
+  'managing',
+  'raising_cash',
+]
 
 /** One seat as the public economy of a match reports it. */
 export type MonopolyPlayer = {
@@ -94,6 +106,20 @@ export type MonopolyAuction = {
 }
 
 /**
+ * The open debt of the raising cash window (S2 of ``monopoly-mortgage.md``).
+ *
+ * ``creditor`` is the seat owed or ``null`` when the bank is owed. The rest of
+ * the engine's debt record -- what continuation it interrupted -- is internal
+ * and never reaches the view. It is public: Monopoly's state carries no secret
+ * information (S11 of ``monopoly-mortgage.md``).
+ */
+export type MonopolyDebt = {
+  seat: string
+  creditor: string | null
+  amount: number
+}
+
+/**
  * The monopoly play payload, on top of the runtime fields every view carries.
  *
  * ``finished``, ``winner``, ``ended_by_abandon`` and ``you`` stay in
@@ -120,7 +146,15 @@ export type MonopolyView = MatchRuntimeView & {
    * ``String(index)``.
    */
   buildings: Record<string, number>
+  /**
+   * The mortgaged properties (S12), keyed by board index as a string because
+   * the state is ``jsonb``. An unmortgaged property has no key and an empty
+   * map means nothing is mortgaged. Read it with ``String(index)``.
+   */
+  mortgaged: Record<string, true>
   bank: MonopolyBank | null
+  /** The open debt while the phase is ``raising_cash``, or ``null``. */
+  debt: MonopolyDebt | null
   auction: MonopolyAuction | null
   actions: MonopolyAction[]
 }
@@ -202,6 +236,45 @@ function readBuildings(value: unknown): Record<string, number> {
     buildings[key] = level
   }
   return buildings
+}
+
+/**
+ * Read the mortgaged properties (S12).
+ *
+ * All-or-nothing, like ``buildings``: a key that is not a board index or a
+ * value that is not exactly ``true`` drops the **whole** map to ``{}`` rather
+ * than keeping the entries it recognized. A payload without the field is
+ * simply unmortgaged, which is what an old payload and an untouched board both
+ * mean -- the point of the default is that this client stays deployable while
+ * the backend that sends the field is not out yet. The keys stay strings
+ * because the state is ``jsonb``; the board reads them with ``String(index)``.
+ */
+function readMortgaged(value: unknown): Record<string, true> {
+  if (!isRecord(value)) return {}
+  const mortgaged: Record<string, true> = {}
+  for (const [key, flag] of Object.entries(value)) {
+    if (!/^\d+$/.test(key) || !isBoardIndex(Number(key))) return {}
+    if (flag !== true) return {}
+    mortgaged[key] = true
+  }
+  return mortgaged
+}
+
+/**
+ * Read the open debt record, or ``null`` (S12).
+ *
+ * ``seat`` and ``creditor`` are seat ids (``creditor`` ``null`` for the bank)
+ * and ``amount`` is the whole dollars still owed. Any other shape is ``null``:
+ * half a debt record would show the pay button an amount nobody sent, and the
+ * panel falls back to omitting the block instead.
+ */
+function readDebt(value: unknown): MonopolyDebt | null {
+  if (!isRecord(value)) return null
+  const { seat, creditor, amount } = value
+  if (typeof seat !== 'string' || seat.length === 0) return null
+  if (!(creditor === null || (typeof creditor === 'string' && creditor.length > 0))) return null
+  if (!isInteger(amount) || amount <= 0) return null
+  return { seat, creditor, amount }
 }
 
 /**
@@ -355,10 +428,10 @@ function readActions(value: unknown): MonopolyAction[] {
  * Past those identifiers it degrades instead of rejecting, exactly as every
  * other parser in this folder does: a malformed optional field costs that
  * field, never the whole screen. ``turn``, ``last_roll``, ``pending``,
- * ``decks``, ``last_card``, ``bank`` and ``auction`` become ``null``,
- * ``buildings`` becomes ``{}``, ``actions`` loses only its bad entries, a
- * seat's ``jail_cards`` becomes ``0``, and an optional field of the wrong type
- * is left out so the component's own fallback covers it.
+ * ``decks``, ``last_card``, ``bank``, ``debt`` and ``auction`` become ``null``,
+ * ``buildings`` and ``mortgaged`` become ``{}``, ``actions`` loses only its bad
+ * entries, a seat's ``jail_cards`` becomes ``0``, and an optional field of the
+ * wrong type is left out so the component's own fallback covers it.
  */
 export function parseMonopolyView(raw: unknown): MonopolyView | null {
   if (!isRecord(raw)) return null
@@ -390,7 +463,9 @@ export function parseMonopolyView(raw: unknown): MonopolyView | null {
     decks: readDecks(raw.decks),
     last_card: readLastCard(raw.last_card),
     buildings: readBuildings(raw.buildings),
+    mortgaged: readMortgaged(raw.mortgaged),
     bank: readBank(raw.bank),
+    debt: readDebt(raw.debt),
     auction: readAuction(raw.auction),
     actions: readActions(raw.actions),
   }

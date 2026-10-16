@@ -157,3 +157,17 @@ export function mortgageValue(index: number): number {
   if (space.kind === 'utility') return UTILITY_MORTGAGE
   throw new Error(`space ${index} (${space.name}) is not purchasable`)
 }
+
+/**
+ * The cash one pays the bank to lift the mortgage of a purchasable space (S4).
+ *
+ * The mortgage value plus 10% interest **rounded up** to the whole dollar, the
+ * same criterion the income tax uses: a Park Place of $175 of mortgage is
+ * lifted with $175 + $18 = $193. The interest is centralised here so the rent
+ * and the label can never round it differently. Raises for a space the bank
+ * cannot mortgage.
+ */
+export function mortgageLiftCost(index: number): number {
+  const mortgage = mortgageValue(index)
+  return mortgage + Math.ceil(mortgage / 10)
+}
