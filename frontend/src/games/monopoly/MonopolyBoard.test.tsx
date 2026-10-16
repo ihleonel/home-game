@@ -289,6 +289,52 @@ describe('the monopoly board', () => {
     expect(elementMarkup(spaceButton(buttons, 'Chance'))).not.toContain('monopoly-space-price')
   })
 
+  it('paints a built street as houses or a hotel and leaves an unbuilt one bare', () => {
+    const built = view({ buildings: { '1': 3, '3': 5 } })
+    const buttons = buttonElements(built)
+
+    const mediterraneo = elementMarkup(spaceButton(buttons, 'Avenida Mediterráneo'))
+    const baltica = elementMarkup(spaceButton(buttons, 'Avenida Báltica'))
+    const oriental = elementMarkup(spaceButton(buttons, 'Avenida Oriental'))
+
+    expect(mediterraneo).toContain('monopoly-space-buildings')
+    expect(mediterraneo.match(/monopoly-space-house/g)).toHaveLength(3)
+    expect(mediterraneo).not.toContain('monopoly-space-hotel')
+    expect(baltica).toContain('monopoly-space-buildings')
+    expect(baltica).toContain('monopoly-space-hotel')
+    expect(baltica.match(/monopoly-space-house/g)).toBeNull()
+    expect(oriental).not.toContain('monopoly-space-buildings')
+  })
+
+  it('announces the development level in the accessible name', () => {
+    const built = view({ buildings: { '1': 1, '6': 2, '39': 5 } })
+    const buttons = buttonElements(built)
+
+    expect(labelOf(spaceButton(buttons, 'Avenida Mediterráneo'))).toContain('1 casa')
+    expect(labelOf(spaceButton(buttons, 'Avenida Oriental'))).toContain('2 casas')
+    expect(labelOf(spaceButton(buttons, 'Boardwalk'))).toContain('Hotel')
+    // An unbuilt space announces no level at all.
+    expect(labelOf(spaceButton(buttons, 'Avenida Báltica'))).not.toMatch(/casa|Hotel/)
+  })
+
+  it('adds the buildings line to the selected space detail and none for an unbuilt space', () => {
+    const built = view({ buildings: { '1': 2 } })
+
+    const selected = markup(built, 1)
+
+    expect(selected).toContain('monopoly-detail-buildings')
+    expect(selected).toContain('Edificios: 2 casas')
+    expect(markup(built, 3)).not.toContain('monopoly-detail-buildings')
+  })
+
+  it('reads the level only from the view and never derives it from the owner map', () => {
+    // The whole brown group is owned, so a client that derived development from
+    // ownership would paint something; without ``buildings`` there is none.
+    const owned = view({ owners: { '1': 'seat-0', '3': 'seat-0' } })
+
+    expect(markup(owned)).not.toContain('monopoly-space-buildings')
+  })
+
   it('keeps the group initials, the owner badge and the tokens as accessible markup', () => {
     // Colour is never the only cue (S9): the skin may make these discreet, but
     // the markup still carries the two-letter group, the owner's name and the

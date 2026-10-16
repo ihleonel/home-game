@@ -292,6 +292,88 @@ describe('the monopoly player panel', () => {
     expect(textOf(buttonWithLabel(buttons, 'Pasá la subasta.'))).toBe('Pasá la subasta.')
   })
 
+  it('draws a build option as the space name and the price of one more level', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'build', prompt: 'Construí', options: ['1', '3'] },
+    ]
+    const buttons = actionButtons(view({ actions }))
+
+    expect(buttons).toHaveLength(2)
+    expect(textOf(buttons[0])).toBe('Construí en Avenida Mediterráneo · $50')
+    expect(textOf(buttons[1])).toBe('Construí en Avenida Báltica · $50')
+  })
+
+  it('draws a sell option as the space name and half the house cost', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'sell', prompt: 'Vendé', options: ['11', '39'] },
+    ]
+    const buttons = actionButtons(view({ actions }))
+
+    expect(buttons).toHaveLength(2)
+    expect(textOf(buttons[0])).toBe('Vendé en St. Charles Place · +$50')
+    expect(textOf(buttons[1])).toBe('Vendé en Boardwalk · +$100')
+  })
+
+  it('prices a build from the level the property already has', () => {
+    // One more level costs one house cost whichever side of the hotel line it
+    // is on; the label never becomes the property's total development value.
+    const actions: MonopolyAction[] = [{ name: 'build', prompt: 'Construí', options: ['1'] }]
+    const built = view({ actions, buildings: { '1': 4 } })
+
+    expect(textOf(actionButtons(built)[0])).toBe('Construí en Avenida Mediterráneo · $50')
+  })
+
+  it('submits the board index the server offered for build and sell', () => {
+    const onAction = vi.fn()
+    const actions: MonopolyAction[] = [
+      { name: 'build', prompt: 'Construí', options: ['1'] },
+      { name: 'sell', prompt: 'Vendé', options: ['3'] },
+    ]
+    const buttons = actionButtons(view({ actions }), { onAction })
+
+    ;(buttons[0].props as { onClick: () => void }).onClick()
+    ;(buttons[1].props as { onClick: () => void }).onClick()
+
+    expect(onAction).toHaveBeenCalledWith('build', '1')
+    expect(onAction).toHaveBeenCalledWith('sell', '3')
+  })
+
+  it('falls back to the raw option when a build option is not a board index', () => {
+    const actions: MonopolyAction[] = [{ name: 'build', prompt: 'Construí', options: ['nope'] }]
+    const buttons = actionButtons(view({ actions }))
+
+    expect(buttons).toHaveLength(1)
+    expect(textOf(buttons[0])).toBe('Construí: nope')
+  })
+
+  it('shows the development level of each built own property', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1, 3, 6] }), player({ seat: 'seat-1' })],
+      buildings: { '1': 2, '3': 5 },
+    })
+    const page = panelMarkup(seated)
+
+    expect(page).toContain('2 casas')
+    expect(page).toContain('Hotel')
+    // Only the two built properties get a level; the third stays bare.
+    expect(page.match(/monopoly-property-level/g)).toHaveLength(2)
+  })
+
+  it('shows the bank block with the houses and hotels left in the box', () => {
+    const page = panelMarkup(view({ bank: { houses: 29, hotels: 12 } }))
+
+    expect(page).toContain('monopoly-bank')
+    expect(page).toContain('monopoly-bank-houses">29<')
+    expect(page).toContain('monopoly-bank-hotels">12<')
+  })
+
+  it('omits the bank block when the view carries no bank', () => {
+    const page = panelMarkup(view({ bank: null }))
+
+    expect(page).not.toContain('monopoly-bank')
+    expect(page).not.toContain('>Banco<')
+  })
+
   it('groups the own properties by colour with their printed data', () => {
     const seated = view({
       players: [

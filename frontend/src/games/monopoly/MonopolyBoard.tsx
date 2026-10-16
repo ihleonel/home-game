@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { MatchState } from '../registry'
 import { BOARD, isPurchasable, spaceAt } from './board'
 import type { Space } from './board'
-import { deedFor, purchasePrice, rentForLevel } from './deeds'
+import { HOTEL_LEVEL, deedFor, levelLabel, purchasePrice, rentForLevel } from './deeds'
 import {
   DECK_LABELS,
   GAME_NAME,
@@ -31,6 +31,39 @@ function initialOf(name: string): string {
   return first === '' ? '?' : first.toUpperCase()
 }
 
+/**
+ * The development level of a space, or ``null`` when it is unbuilt (S10).
+ *
+ * The level comes **only** from ``view.buildings``, keyed by ``String(index)``
+ * because the state is ``jsonb``. It is never derived from the owner map or
+ * from the colour group: the server is the one that decides a build happened.
+ */
+function buildingLevel(view: MonopolyView, index: number): number | null {
+  const level: number | undefined = view.buildings[String(index)]
+  return level === undefined ? null : level
+}
+
+/**
+ * The houses (1-4) or the single hotel (5) of a built street (S10).
+ *
+ * CSS shapes only, no asset. The marker is decorative: the same level is in
+ * the space's accessible name and in the centre detail, so a screen reader
+ * never depends on this element.
+ */
+function renderBuildings(level: number): ReactElement {
+  return (
+    <span className="monopoly-space-buildings" aria-hidden="true">
+      {level === HOTEL_LEVEL ? (
+        <span className="monopoly-space-hotel" />
+      ) : (
+        Array.from({ length: level }, (_, house) => (
+          <span className="monopoly-space-house" key={house} />
+        ))
+      )}
+    </span>
+  )
+}
+
 /** The display name of the seat that owns ``index``, or ``null``. */
 function ownerName(match: MatchState<MonopolyView>, index: number): string | null {
   const seat = match.view.owners[String(index)]
@@ -46,12 +79,18 @@ function ownerName(match: MatchState<MonopolyView>, index: number): string | nul
  * has one -- so a screen reader reaches the same facts the badge and the band
  * show a sighted player.
  */
-function spaceAriaLabel(space: Space, owner: string | null, auctioned: boolean): string {
+function spaceAriaLabel(
+  space: Space,
+  owner: string | null,
+  auctioned: boolean,
+  level: number | null,
+): string {
   const parts = [space.name, KIND_LABELS[space.kind]]
   if (space.group) parts.push(GROUP_LABELS[space.group])
   if (isPurchasable(space)) parts.push(`Precio ${formatMoney(purchasePrice(space.index))}`)
   if (owner) parts.push(`Dueño ${owner}`)
   if (auctioned) parts.push('En subasta')
+  if (level !== null) parts.push(levelLabel(level))
   return parts.join('. ')
 }
 
@@ -146,6 +185,7 @@ export function MonopolyBoard({
 }) {
   const { view } = match
   const chosen = selected === null ? null : spaceAt(selected)
+  const chosenLevel = chosen === null ? null : buildingLevel(view, chosen.index)
 
   return (
     <div className="monopoly-board" role="group" aria-label="Tablero de Monopoly">
@@ -153,12 +193,13 @@ export function MonopolyBoard({
         const area = spaceArea(space.index)
         const owner = ownerName(match, space.index)
         const auctioned = view.auction !== null && view.auction.space === space.index
+        const level = buildingLevel(view, space.index)
         const holders = view.players.filter(
           (player) => !player.eliminated && player.position === space.index,
         )
         return (
           <button
-            aria-label={spaceAriaLabel(space, owner, auctioned)}
+            aria-label={spaceAriaLabel(space, owner, auctioned, level)}
             aria-pressed={selected === space.index}
             className={auctioned ? 'monopoly-space monopoly-space-auction' : 'monopoly-space'}
             data-auction={auctioned ? 'true' : undefined}
@@ -171,6 +212,7 @@ export function MonopolyBoard({
             type="button"
           >
             {space.group && <span className="monopoly-space-band" aria-hidden="true" />}
+            {level !== null && renderBuildings(level)}
             <span className="monopoly-space-name">{space.name}</span>
             {isPurchasable(space) && (
               <span className="monopoly-space-price">
@@ -241,6 +283,11 @@ export function MonopolyBoard({
               </p>
             )}
             {chosen.kind === 'street' && rentSchedule(chosen.index)}
+            {chosenLevel !== null && (
+              <p className="monopoly-detail-buildings">
+                {`Edificios: ${levelLabel(chosenLevel)}`}
+              </p>
+            )}
             {isPurchasable(chosen) && (
               <p className="monopoly-detail-owner">
                 {`Dueño: ${ownerName(match, chosen.index) ?? 'Sin dueño'}`}

@@ -15,6 +15,12 @@
   --monopoly-paper: #fdfbf4;
   --monopoly-band-empty: #efe7d6;
   --monopoly-band-size: 0.42rem;
+  /* S10: the size of the little houses and the hotel block. Kept as custom
+     properties so the mobile breakpoint can shrink the marker without ever
+     removing it. */
+  --monopoly-house-size: 0.24rem;
+  --monopoly-hotel-width: 0.5rem;
+  --monopoly-hotel-height: 0.26rem;
   --monopoly-you: var(--accent-dark);
   --monopoly-you-border: var(--accent);
   --monopoly-brown: #7a4a1f;
@@ -144,6 +150,60 @@
 .monopoly-space[data-side='right'] .monopoly-space-band {
   inset: 0 auto 0 0;
   width: var(--monopoly-band-size);
+}
+
+/* S10: the development marker sits on the same inner edge as the colour band
+   (the ``data-side`` hook the band already uses), so it faces the board centre
+   like the houses on the printed board. Pure CSS shapes and gradients, no
+   asset: a house is a small green square and a hotel is one red block. */
+.monopoly-space-buildings {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.05rem;
+  pointer-events: none;
+}
+
+.monopoly-space-house {
+  display: block;
+  width: var(--monopoly-house-size);
+  height: var(--monopoly-house-size);
+  border-radius: 0.03rem;
+  background: linear-gradient(150deg, #57d987, #1f7a44);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.monopoly-space-hotel {
+  display: block;
+  width: var(--monopoly-hotel-width);
+  height: var(--monopoly-hotel-height);
+  border-radius: 0.03rem;
+  background: linear-gradient(150deg, #ff7a6b, #a11212);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.monopoly-space[data-side='bottom'] .monopoly-space-buildings {
+  inset: 0 0 auto 0;
+  height: var(--monopoly-band-size);
+}
+
+.monopoly-space[data-side='top'] .monopoly-space-buildings {
+  inset: auto 0 0 0;
+  height: var(--monopoly-band-size);
+}
+
+.monopoly-space[data-side='left'] .monopoly-space-buildings {
+  inset: 0 0 0 auto;
+  width: var(--monopoly-band-size);
+  flex-direction: column;
+}
+
+.monopoly-space[data-side='right'] .monopoly-space-buildings {
+  inset: 0 auto 0 0;
+  width: var(--monopoly-band-size);
+  flex-direction: column;
 }
 
 /* The full name stays in the DOM on every screen size; small screens hide or
@@ -527,6 +587,13 @@
   font-size: 0.8rem;
 }
 
+.monopoly-detail-buildings {
+  margin: 0.1rem 0 0;
+  color: var(--monopoly-ink);
+  font-size: 0.85rem;
+  font-weight: 750;
+}
+
 .monopoly-rents {
   display: flex;
   flex-wrap: wrap;
@@ -667,6 +734,17 @@
   font-size: 0.78rem;
 }
 
+.monopoly-property-level {
+  align-self: flex-start;
+  padding: 0 0.35rem;
+  border: 1px solid var(--monopoly-green);
+  border-radius: 999px;
+  background: var(--monopoly-band-empty);
+  color: var(--monopoly-ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .monopoly-actions {
   display: flex;
   flex-wrap: wrap;
@@ -741,6 +819,14 @@
 @media (max-width: 899px) {
   .monopoly-space-price {
     display: none;
+  }
+
+  /* S10: on a narrow board the marker shrinks; it is match state and is never
+     dropped, like the owner badge. */
+  .monopoly-space {
+    --monopoly-house-size: 0.19rem;
+    --monopoly-hotel-width: 0.4rem;
+    --monopoly-hotel-height: 0.22rem;
   }
 }
 
