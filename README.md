@@ -119,9 +119,8 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   are not sent to auction -- when the bank's box runs out the build option is simply not offered,
   and while it still holds pieces the first seat that asks takes the piece at its printed price, so
   turn order settles who gets the last house; there is no turn clock, because everyone plays from
-  the same house and the table can nudge whoever is idle, the automatic endings stay reserved for a
-  seat that really disconnects, and what is still to design for a match nobody can advance is the
-  expulsion vote, a human decision instead of a timer; and the properties a bankrupt seat turns over
+  the same house and the table can nudge whoever is idle, and the automatic endings stay reserved for
+  a seat that really disconnects; and the properties a bankrupt seat turns over
   to the bank are not auctioned at once, but return unowned and find their owner the way any
   never-bought space does, a difference of moment rather than of economy. All three are listed with
   their decisions in `PENDING.md`.
