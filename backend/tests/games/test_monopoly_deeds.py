@@ -129,6 +129,48 @@ class MonopolyDeedTests(SimpleTestCase):
                 with self.assertRaises(ValueError):
                     deed.rent_for_level(level)
 
+    def test_development_cost_is_the_house_cost_times_the_level(self):
+        """A level costs one printed house cost per level, the hotel included."""
+        for deed in deeds.street_deeds():
+            with self.subTest(index=deed.index):
+                for level in range(0, deeds.HOTEL_LEVEL + 1):
+                    self.assertEqual(
+                        deeds.development_cost(deed, level), deed.house_cost * level
+                    )
+
+    def test_a_hotel_is_worth_five_houses(self):
+        """A hotel costs five house payments: four houses plus the hotel (S5)."""
+        for deed in deeds.street_deeds():
+            with self.subTest(index=deed.index):
+                self.assertEqual(
+                    deeds.development_cost(deed, deeds.HOTEL_LEVEL),
+                    5 * deed.house_cost,
+                )
+
+    def test_development_cost_rejects_a_level_off_the_scale(self):
+        """A level outside 0..5 has no cost and must not silently price one."""
+        deed = deeds.deed_for(1)
+        for level in (-1, deeds.HOTEL_LEVEL + 1):
+            with self.subTest(level=level):
+                with self.assertRaises(ValueError):
+                    deeds.development_cost(deed, level)
+
+    def test_sell_back_is_half_the_house_cost(self):
+        """Every printed house cost is even, so its half is a whole dollar."""
+        for deed in deeds.street_deeds():
+            with self.subTest(index=deed.index):
+                self.assertEqual(deeds.sell_back(deed), deed.house_cost // 2)
+
+    def test_selling_level_by_level_equals_half_the_development_cost(self):
+        """The S5 invariant: selling each level refunds half the total cost."""
+        for deed in deeds.street_deeds():
+            for level in range(1, deeds.HOTEL_LEVEL + 1):
+                with self.subTest(index=deed.index, level=level):
+                    self.assertEqual(
+                        sum(deeds.sell_back(deed) for _ in range(level)),
+                        deeds.development_cost(deed, level) // 2,
+                    )
+
     def test_railroad_economy(self):
         """A railroad costs $200, mortgages for $100 and scales by count owned."""
         self.assertEqual(deeds.RAILROAD_PRICE, 200)

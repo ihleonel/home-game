@@ -240,6 +240,15 @@ class MonopolyCardTests(SimpleTestCase):
             with self.subTest(card=card.id):
                 self.assertIsNotNone(board_space(card.space))
 
+    def test_the_repairs_cards_carry_the_printed_rates(self):
+        """The two repairs cards are the only ones that read what is built (S7)."""
+        chance = cards.card_for('chance-12')
+        community = cards.card_for('community_chest-14')
+        self.assertEqual(chance.effect, 'repairs')
+        self.assertEqual((chance.per_house, chance.per_hotel), (25, 100))
+        self.assertEqual(community.effect, 'repairs')
+        self.assertEqual((community.per_house, community.per_hotel), (40, 115))
+
     def test_only_the_go_back_card_can_reach_another_card_space(self):
         """The chain of draws terminates, and this pins why (S7).
 

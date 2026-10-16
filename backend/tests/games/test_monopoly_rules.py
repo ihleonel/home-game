@@ -12,7 +12,7 @@ import copy
 from django.test import SimpleTestCase
 
 from modules.games.contracts import Action, Outcome
-from modules.games.monopoly import board, cards, rules
+from modules.games.monopoly import board, cards, deeds, rules
 
 
 class ScriptedRng:
@@ -90,6 +90,13 @@ class MonopolyRulesTestCase(SimpleTestCase):
         state['owners'][str(index)] = seat
         state['players'][seat]['properties'].append(index)
         return state
+
+    def _options(self, state, seat, name):
+        """The options of the first action of ``name`` the seat is offered."""
+        for spec in rules.legal_actions(state, seat):
+            if spec.name == name:
+                return spec.options
+        return ()
 
 
 class MonopolyPreparationTests(MonopolyRulesTestCase):
@@ -646,6 +653,406 @@ class MonopolyTaxTests(MonopolyRulesTestCase):
         state = self._give(self._give(self._open(), 3, 'seat-0'), 39, 'seat-0')
         self.assertEqual(rules.total_worth(state, 'seat-0'), 1500 + 60 + 400)
         self.assertEqual(rules.total_worth(state, 'seat-1'), 1500)
+
+
+class MonopolyBuildingTests(MonopolyRulesTestCase):
+    """House and hotel building, the bank stock and the level rent (S2-S7)."""
+
+    def _own_group(self, state, indexes, seat='seat-0'):
+        for index in indexes:
+            state = self._give(state, index, seat)
+        return state
+
+    def _buildings(self, state, levels):
+        state = copy.deepcopy(state)
+        buildings = dict(state.get('buildings') or {})
+        for index, level in levels.items():
+            if level == 0:
+                buildings.pop(str(index), None)
+            else:
+                buildings[str(index)] = level
+        state['buildings'] = buildings
+        return state
+
+    def _bank(self, state, houses, hotels):
+        state = copy.deepcopy(state)
+        state['bank'] = {'houses': houses, 'hotels': hotels}
+        return state
+
+    def _managing(self, state, seat='seat-0'):
+        state = copy.deepcopy(state)
+        state['phase'] = rules.PHASE_MANAGING
+        state['turn'] = seat
+        return state
+
+    def _rolling(self, state, seat='seat-1'):
+        state = copy.deepcopy(state)
+        state['phase'] = rules.PHASE_AWAITING_ROLL
+        state['turn'] = seat
+        return state
+
+    def _scene(self, levels=None, cash=1500, houses=None, hotels=None):
+        """A managing seat holding complete brown, with a consistent bank stock."""
+        levels = dict(levels or {})
+        state = self._managing(self._own_group(self._open(), (1, 3)))
+        state = self._cash(state, 'seat-0', cash)
+        state = self._buildings(state, levels)
+        on_board_houses = sum(
+            level for level in levels.values() if level < deeds.HOTEL_LEVEL
+        )
+        on_board_hotels = sum(
+            1 for level in levels.values() if level == deeds.HOTEL_LEVEL
+        )
+        return self._bank(
+            state,
+            rules.STARTING_HOUSES - on_board_houses if houses is None else houses,
+            rules.STARTING_HOTELS - on_board_hotels if hotels is None else hotels,
+        )
+
+    def _assert_bank_invariants(self, state):
+        """The two S2 invariants: no house and no hotel is created or lost."""
+        levels = tuple((state.get('buildings') or {}).values())
+        houses = sum(level for level in levels if level < deeds.HOTEL_LEVEL)
+        hotels = sum(1 for level in levels if level == deeds.HOTEL_LEVEL)
+        self.assertEqual(state['bank']['houses'] + houses, rules.STARTING_HOUSES)
+        self.assertEqual(state['bank']['hotels'] + hotels, rules.STARTING_HOTELS)
+
+    def test_build_and_sell_are_only_offered_in_the_managing_phase(self):
+        state = self._own_group(self._open(), (1, 3))
+        self.assertEqual(self._names(state, 'seat-0'), ('roll',))
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='sell', value='1'), None)
+
+        pending = self._roll(self._open(), 'seat-0', 1, 2).state
+        self.assertEqual(self._names(pending, 'seat-0'), ('buy', 'decline'))
+        with self.assertRaises(ValueError):
+            rules.apply_action(pending, 'seat-0', Action(name='build', value='1'), None)
+        with self.assertRaises(ValueError):
+            rules.apply_action(pending, 'seat-0', Action(name='sell', value='1'), None)
+
+    def test_a_build_needs_the_whole_colour_group(self):
+        state = self._managing(self._give(self._open(), 3, 'seat-0'))
+        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='build', value='3'), None)
+
+    def test_build_is_even_so_only_the_group_minimum_is_offered(self):
+        state = self._scene(levels={1: 1})
+        self.assertEqual(self._options(state, 'seat-0', 'build'), ('3',))
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
+
+    def test_a_house_costs_the_printed_price_and_takes_a_house_from_the_bank(self):
+        state = self._scene()
+
+        transition = rules.apply_action(
+            state, 'seat-0', Action(name='build', value='1'), None
+        )
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1450)
+        self.assertEqual(transition.state['buildings'], {'1': 1})
+        self.assertEqual(transition.state['bank'], {'houses': 31, 'hotels': 12})
+        self.assertEqual(
+            self._facts(transition),
+            (('building_bought', 'seat-0', {'space': 1, 'level': 1, 'price': 50}),),
+        )
+        self._assert_bank_invariants(transition.state)
+
+    def test_a_house_cannot_be_built_without_a_house_in_the_bank(self):
+        state = self._scene(houses=0)
+        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
+
+    def test_a_hotel_needs_every_property_of_the_group_at_four_houses(self):
+        state = self._scene(levels={1: 4, 3: 3})
+        # The street at four is not the group minimum until its sibling catches
+        # up, which is exactly the printed "four houses on each property" rule.
+        self.assertEqual(self._options(state, 'seat-0', 'build'), ('3',))
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
+
+    def test_a_hotel_cannot_be_built_without_a_hotel_in_the_bank(self):
+        state = self._scene(levels={1: 4, 3: 4}, hotels=0)
+        self.assertEqual(self._options(state, 'seat-0', 'build'), ())
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
+
+    def test_a_hotel_returns_its_four_houses_to_the_bank(self):
+        state = self._scene(levels={1: 4, 3: 4})
+
+        transition = rules.apply_action(
+            state, 'seat-0', Action(name='build', value='1'), None
+        )
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1450)
+        self.assertEqual(transition.state['buildings'], {'1': 5, '3': 4})
+        self.assertEqual(transition.state['bank'], {'houses': 28, 'hotels': 11})
+        self.assertEqual(
+            self._facts(transition),
+            (('building_bought', 'seat-0', {'space': 1, 'level': 5, 'price': 50}),),
+        )
+        self._assert_bank_invariants(transition.state)
+
+    def test_a_build_is_not_offered_without_the_cash(self):
+        state = self._scene(cash=49)
+        self.assertEqual(self._names(state, 'seat-0'), ('end_turn',))
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='build', value='1'), None)
+
+    def test_build_is_never_offered_to_another_seat(self):
+        state = self._scene()
+        self.assertEqual(self._names(state, 'seat-1'), ())
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-1', Action(name='build', value='1'), None)
+
+    def test_build_options_are_own_group_indexes_in_board_order(self):
+        state = self._managing(self._own_group(self._open(), (6, 8, 9)))
+        self.assertEqual(self._options(state, 'seat-0', 'build'), ('6', '8', '9'))
+
+    def test_a_build_outside_the_offered_options_is_rejected(self):
+        state = self._scene()
+        for value in ('2', '5', '40', 'x'):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    rules.apply_action(
+                        state, 'seat-0', Action(name='build', value=value), None
+                    )
+
+    def test_sell_only_offers_the_group_maximum(self):
+        state = self._scene(levels={1: 2, 3: 1})
+        self.assertEqual(self._options(state, 'seat-0', 'sell'), ('1',))
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='sell', value='3'), None)
+
+    def test_selling_a_house_pays_half_the_cost_and_returns_the_house(self):
+        state = self._scene(levels={1: 1})
+
+        transition = rules.apply_action(
+            state, 'seat-0', Action(name='sell', value='1'), None
+        )
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1525)
+        self.assertEqual(transition.state['buildings'], {})
+        self.assertEqual(transition.state['bank'], {'houses': 32, 'hotels': 12})
+        self.assertEqual(
+            self._facts(transition),
+            (('building_sold', 'seat-0', {'space': 1, 'level': 0, 'price': 25}),),
+        )
+        self._assert_bank_invariants(transition.state)
+
+    def test_sell_is_not_offered_for_an_unbuilt_property(self):
+        state = self._scene()
+        self.assertEqual(self._options(state, 'seat-0', 'sell'), ())
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='sell', value='1'), None)
+
+    def test_sell_is_never_offered_to_another_seat(self):
+        state = self._scene(levels={1: 1})
+        self.assertEqual(self._names(state, 'seat-1'), ())
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-1', Action(name='sell', value='1'), None)
+
+    def test_selling_a_hotel_returns_the_hotel_and_leaves_four_houses(self):
+        state = self._scene(levels={1: 5, 3: 5})
+
+        transition = rules.apply_action(
+            state, 'seat-0', Action(name='sell', value='1'), None
+        )
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1525)
+        self.assertEqual(transition.state['buildings'], {'1': 4, '3': 5})
+        self.assertEqual(transition.state['bank'], {'houses': 28, 'hotels': 11})
+        self.assertEqual(
+            self._facts(transition),
+            (('building_sold', 'seat-0', {'space': 1, 'level': 4, 'price': 25}),),
+        )
+        self._assert_bank_invariants(transition.state)
+
+    def test_selling_a_hotel_needs_four_houses_in_the_bank(self):
+        state = self._scene(levels={1: 5, 3: 5}, houses=3)
+        self.assertEqual(self._options(state, 'seat-0', 'sell'), ())
+        with self.assertRaises(ValueError):
+            rules.apply_action(state, 'seat-0', Action(name='sell', value='1'), None)
+
+    def test_sell_options_are_own_group_indexes_in_board_order(self):
+        state = self._managing(self._own_group(self._open(), (6, 8, 9)))
+        state = self._buildings(state, {6: 1, 8: 1, 9: 1})
+        state = self._bank(state, 29, 12)
+        self.assertEqual(self._options(state, 'seat-0', 'sell'), ('6', '8', '9'))
+
+    def test_a_sell_outside_the_offered_options_is_rejected(self):
+        state = self._scene(levels={1: 2, 3: 1})
+        for value in ('3', '39', 'x'):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    rules.apply_action(
+                        state, 'seat-0', Action(name='sell', value=value), None
+                    )
+
+    def test_the_bank_stock_is_conserved_through_a_full_build_and_sell_cycle(self):
+        state = self._scene()
+
+        for value in ('1', '3') * 5:
+            state = rules.apply_action(
+                state, 'seat-0', Action(name='build', value=value), None
+            ).state
+            self._assert_bank_invariants(state)
+        self.assertEqual(state['buildings'], {'1': 5, '3': 5})
+        self.assertEqual(state['bank'], {'houses': 32, 'hotels': 10})
+
+        for value in ('1', '3') * 5:
+            state = rules.apply_action(
+                state, 'seat-0', Action(name='sell', value=value), None
+            ).state
+            self._assert_bank_invariants(state)
+        self.assertEqual(state['buildings'], {})
+        self.assertEqual(state['bank'], {'houses': 32, 'hotels': 12})
+        self.assertEqual(state['players']['seat-0']['cash'], 1250)
+
+    def test_a_street_charges_the_rent_of_its_development_level(self):
+        state = self._rolling(self._scene(levels={1: 0, 3: 1}))
+        state = self._place(state, 'seat-1', 0)
+
+        transition = self._roll(state, 'seat-1', 1, 2)
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1520)
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1480)
+        self.assertIn(
+            (
+                'rent_paid',
+                'seat-1',
+                {'from': 'seat-1', 'to': 'seat-0', 'space': 3, 'amount': 20},
+            ),
+            self._facts(transition),
+        )
+
+    def test_an_unimproved_lot_still_charges_the_set_rent_beside_houses(self):
+        """The set rent belongs to the level-0 street, never to the group (S6)."""
+        state = self._rolling(self._scene(levels={1: 0, 3: 1}))
+        state = self._place(state, 'seat-1', 38)
+
+        transition = self._roll(state, 'seat-1', 1, 2)
+
+        # Mediterranean at level 0 charges its doubled rent even though its
+        # sibling holds a house; the landing also crossed GO.
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1504)
+        self.assertIn(
+            (
+                'rent_paid',
+                'seat-1',
+                {'from': 'seat-1', 'to': 'seat-0', 'space': 1, 'amount': 4},
+            ),
+            self._facts(transition),
+        )
+
+    def test_a_hotel_charges_the_hotel_rent(self):
+        state = self._rolling(self._scene(levels={1: 0, 3: 5}))
+        state = self._place(state, 'seat-1', 0)
+
+        transition = self._roll(state, 'seat-1', 1, 2)
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1950)
+        self.assertIn(
+            (
+                'rent_paid',
+                'seat-1',
+                {'from': 'seat-1', 'to': 'seat-0', 'space': 3, 'amount': 450},
+            ),
+            self._facts(transition),
+        )
+
+    def test_total_worth_counts_the_buildings_a_hotel_as_five_houses(self):
+        state = self._scene(levels={1: 1, 3: 5})
+        self.assertEqual(
+            rules.total_worth(state, 'seat-0'), 1500 + 60 + 60 + 50 + 250
+        )
+
+    def test_bankruptcy_to_a_player_returns_the_buildings_and_pays_half(self):
+        state = self._rolling(self._scene(levels={1: 1, 3: 2}), 'seat-0')
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 39, 'seat-1')
+        state = self._place(state, 'seat-0', 36)
+
+        transition = self._roll(state, 'seat-0', 1, 2)
+
+        debtor = transition.state['players']['seat-0']
+        self.assertIs(debtor['eliminated'], True)
+        self.assertEqual(debtor['cash'], 0)
+        self.assertEqual(transition.state['buildings'], {})
+        self.assertEqual(transition.state['bank'], {'houses': 32, 'hotels': 12})
+        # Everything the debtor had, plus half of the 50 + 100 it had built.
+        self.assertEqual(
+            transition.state['players']['seat-1']['cash'], 1500 + 10 + 75
+        )
+        self.assertEqual(
+            sorted(transition.state['players']['seat-1']['properties']), [1, 3, 39]
+        )
+        self.assertEqual(
+            transition.state['owners'],
+            {'1': 'seat-1', '3': 'seat-1', '39': 'seat-1'},
+        )
+        self._assert_bank_invariants(transition.state)
+
+    def test_bankruptcy_to_the_bank_returns_the_buildings_without_payment(self):
+        state = self._rolling(self._scene(levels={1: 1, 3: 2}), 'seat-0')
+        state = self._cash(state, 'seat-0', 10)
+        state = self._place(state, 'seat-0', 33)
+
+        transition = self._roll(state, 'seat-0', 2, 3)
+
+        self.assertIs(transition.state['players']['seat-0']['eliminated'], True)
+        self.assertEqual(transition.state['buildings'], {})
+        self.assertEqual(transition.state['bank'], {'houses': 32, 'hotels': 12})
+        self.assertEqual(transition.state['owners'], {})
+        self.assertEqual(transition.state['players']['seat-1']['cash'], 1500)
+        self._assert_bank_invariants(transition.state)
+
+    def test_abandon_returns_the_buildings_to_the_bank(self):
+        state = rules.initial_state(('seat-0', 'seat-1', 'seat-2'), 'seat-0')
+        state = self._own_group(state, (1, 3), seat='seat-1')
+        state = self._buildings(state, {1: 2, 3: 5})
+        state = self._bank(state, 30, 11)
+
+        transition = rules.abandon(state, 'seat-1')
+
+        self.assertEqual(transition.state['buildings'], {})
+        self.assertEqual(transition.state['bank'], {'houses': 32, 'hotels': 12})
+        self.assertEqual(transition.state['owners'], {})
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1500)
+        self._assert_bank_invariants(transition.state)
+
+    def test_a_repairs_card_charges_per_house_and_per_hotel(self):
+        state = self._rolling(self._scene(levels={1: 2, 3: 5}), 'seat-0')
+        state = self._place(state, 'seat-0', 4)
+        state = self._top_card(state, cards.CHANCE, 'chance-12')
+
+        transition = self._roll(state, 'seat-0', 1, 2)
+
+        self.assertEqual(
+            transition.state['players']['seat-0']['cash'], 1500 - (25 * 2 + 100)
+        )
+        self.assertIn(
+            ('card_paid', 'seat-0', {'amount': 150, 'to': None}),
+            self._facts(transition),
+        )
+
+    def test_the_community_chest_repairs_card_uses_its_own_rates(self):
+        state = self._rolling(self._scene(levels={1: 1, 3: 5}), 'seat-0')
+        state = self._place(state, 'seat-0', 14)
+        state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-14')
+
+        transition = self._roll(state, 'seat-0', 1, 2)
+
+        self.assertEqual(
+            transition.state['players']['seat-0']['cash'], 1500 - (40 + 115)
+        )
+        self.assertIn(
+            ('card_paid', 'seat-0', {'amount': 155, 'to': None}),
+            self._facts(transition),
+        )
 
 
 class MonopolyBankruptcyTests(MonopolyRulesTestCase):

@@ -1,10 +1,11 @@
 """Static deed economy of the classic Monopoly board (S4).
 
 Pure data and lookups: this module imports nothing from Django, DRF or
-Channels and never mutates anything. It answers three questions the rules ask
+Channels and never mutates anything. It answers the questions the rules ask
 constantly -- what a space prints as its purchase price, what it prints as its
-mortgage value, and what the streets rent for -- and it answers them from one
-table, so a price cannot live in two places and drift.
+mortgage value, what the streets rent for, and what a development level costs
+and returns -- and it answers them from one table, so a price cannot live in
+two places and drift.
 
 Only the classic 1999-2007 edition values are here (S2): Luxury Tax is $75 at
 the board level and Income Tax offers $200 or 10 % of total worth.
@@ -121,6 +122,30 @@ def deed_for(index: int) -> Deed:
 def is_street(index: int) -> bool:
     """Whether the space at ``index`` is a street with a deed."""
     return index in _DEEDS
+
+
+def development_cost(deed: Deed, level: int) -> int:
+    """Return what a development level is worth in printed house costs.
+
+    Level 0 is bare land and costs nothing, levels 1 to 4 are that many houses
+    and level 5 (the hotel) is worth **five** houses: the owner paid four
+    houses plus the hotel price, and those four houses went back to the bank.
+    This is the single place that decides the equivalence, so rent, tax and
+    bankruptcy cannot disagree about it. Raises ``ValueError`` for a level off
+    the scale.
+    """
+    if not 0 <= level <= HOTEL_LEVEL:
+        raise ValueError(f'development level out of range: {level!r}')
+    return deed.house_cost * level
+
+
+def sell_back(deed: Deed) -> int:
+    """Return what one level returns when sold back to the bank.
+
+    The printed rule pays "one-half the price paid" for a house or a hotel,
+    and every house cost on the board is even, so the half is a whole dollar.
+    """
+    return deed.house_cost // 2
 
 
 def purchase_price(index: int) -> int:

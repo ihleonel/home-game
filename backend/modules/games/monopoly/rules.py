@@ -4,13 +4,14 @@ Plain data transforms: the rules never mutate their inputs and never import
 Django, DRF or Channels. The mutable match state lives in the caller and is
 threaded through as an opaque mapping, exactly like ``ta_te_ti``.
 
-The increment these rules implement is the playable core: dice, movement, GO,
-purchases, rents, taxes, jail, bankruptcy, elimination and the end of the
-match. Chance and Community Chest decks, house and hotel building, mortgages,
-auctions and trading are later increments and are deliberately absent (S16):
-landing on a card space is a stop without a consequence, `managing` offers only
-`end_turn`, and an unaffordable debt goes straight to bankruptcy because the
-raise-cash route does not exist yet.
+The rules cover the playable core and the increments that followed it: dice,
+movement, GO, purchases, the auction a decline opens, rents by development
+level, house and hotel building with the bank's finite stock, both decks,
+taxes, jail, bankruptcy, elimination and the end of the match. Mortgages and
+trading are later increments and are deliberately absent (S16 of
+``monopoly.md``): an unaffordable debt goes straight to bankruptcy because the
+raise-cash route does not exist yet, and the scarcity auction of houses and
+hotels is not implemented (S13 of ``monopoly-building.md``).
 
 The edition is the classic 1999-2007 rulebook (S2): $1.500 to start, Income Tax
 at $200 or 10 % of total worth, Luxury Tax at $75.
@@ -65,6 +66,8 @@ ACTION_END_TURN = 'end_turn'
 ACTION_USE_JAIL_CARD = 'use_jail_card'
 ACTION_BID = 'bid'
 ACTION_PASS = 'pass'
+ACTION_BUILD = 'build'
+ACTION_SELL = 'sell'
 
 # The ladder a bid may climb by: the high bid plus each of these, filtered by
 # the bidder's cash. The printed rules allow any price and the runtime only
@@ -121,6 +124,7 @@ def initial_state(
         'seats': seats,
         'players': {seat: _fresh_player() for seat in seats},
         'owners': {},
+        'buildings': {},
         'bank': {'houses': STARTING_HOUSES, 'hotels': STARTING_HOTELS},
         'decks': _deck_order(decks),
         'last_card': None,
@@ -243,15 +247,53 @@ def _bid_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
     return tuple(specs)
 
 
-def total_worth(state: Mapping, seat: str) -> int:
-    """Return cash plus the printed prices of the seat's properties.
+def _managing_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
+    """The free window's actions: build, sell and end the turn.
 
-    Buildings cost price joins this in the building increment, and the mortgage
-    state of a property deliberately does not change its printed price (S10).
+    The option lists are the board indexes the seat may act on right now, as
+    text and in board order, so the panel draws one button per option and
+    never decides by itself what is buildable.
+    """
+    specs = []
+    buildable = _buildable_indexes(state, seat)
+    if buildable:
+        specs.append(
+            ActionSpec(
+                name=ACTION_BUILD,
+                options=tuple(str(index) for index in buildable),
+                prompt='Construí',
+            )
+        )
+    sellable = _sellable_indexes(state, seat)
+    if sellable:
+        specs.append(
+            ActionSpec(
+                name=ACTION_SELL,
+                options=tuple(str(index) for index in sellable),
+                prompt='Vendé',
+            )
+        )
+    specs.append(ActionSpec(name=ACTION_END_TURN, prompt='Terminá tu turno.'))
+    return tuple(specs)
+
+
+def total_worth(state: Mapping, seat: str) -> int:
+    """Return cash plus the printed prices of the seat's properties and builds.
+
+    The buildings a seat holds are added at their cost price (a hotel as five
+    houses, S5 of ``monopoly-building.md``), so improving a property can never
+    lower the seat's worth. The mortgage state of a property deliberately does
+    not change its printed price (S10 of ``monopoly.md``).
     """
     player = state['players'][seat]
-    return player['cash'] + sum(
-        deeds.purchase_price(index) for index in player['properties']
+    return (
+        player['cash']
+        + sum(deeds.purchase_price(index) for index in player['properties'])
+        + sum(
+            deeds.development_cost(deeds.deed_for(index), _level(state, index))
+            for index in player['properties']
+            if deeds.is_street(index)
+        )
     )
 
 
@@ -317,7 +359,7 @@ def legal_actions(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
         return ()
 
     if phase == PHASE_MANAGING:
-        return (ActionSpec(name=ACTION_END_TURN, prompt='Terminá tu turno.'),)
+        return _managing_specs(state, seat)
 
     return ()
 
@@ -773,10 +815,9 @@ def _card_collect(state, seat: str, amount: int, payer, events) -> bool:
 def _repairs_amount(state, seat: str, card) -> int:
     """What a repairs card costs the seat, from what the seat has built.
 
-    The level of a property comes from the buildings map that the building
-    increment owns; while nothing is built every level reads as zero and the
-    card costs nothing, which is what the printed formula says about a board
-    with no houses on it.
+    Every owned street's level comes from the ``buildings`` map: no key reads
+    as level 0, a level of 1 to 4 is that many houses and a hotel (level 5)
+    counts at the card's hotel rate, never as its four houses.
     """
     buildings = state.get('buildings') or {}
     houses = 0
@@ -871,6 +912,11 @@ def _rent(state, space, owner: str, faces, rule=None) -> int:
     """
     if space.kind is board.SpaceKind.STREET:
         deed = deeds.deed_for(space.index)
+        level = _level(state, space.index)
+        if level >= 1:
+            return deed.rent_for_level(level)
+        # The set rent belongs to the unimproved street itself, never to the
+        # group: a bare lot beside a built sibling still charges double (S6).
         if _owns_group(state, owner, space.group):
             return deed.set_rent
         return deed.base_rent
@@ -896,6 +942,76 @@ def _owns_group(state, seat: str, group) -> bool:
     )
 
 
+def _level(state: Mapping, index: int) -> int:
+    """The development level of the street at ``index``, 0 when unbuilt."""
+    return (state.get('buildings') or {}).get(str(index), 0)
+
+
+def _group_levels(state: Mapping, index: int) -> tuple[int, ...]:
+    """The development levels of every street of ``index``'s colour group."""
+    return tuple(
+        _level(state, other)
+        for other in board.street_indexes(board.group_of(index))
+    )
+
+
+def _buildable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
+    """The streets ``seat`` may build one level on right now (S3).
+
+    Only a complete colour group builds, only its least developed street may
+    rise so the build stays even, the cash has to cover the printed price, and
+    the bank has to hold the piece: a house for levels 0-3, a hotel for level
+    4. Level 5 is the ceiling and is never offered.
+    """
+    player = state['players'][seat]
+    bank = state['bank']
+    buildable = []
+    for index in board.STREET_INDEXES:
+        if state['owners'].get(str(index)) != seat:
+            continue
+        if not _owns_group(state, seat, board.group_of(index)):
+            continue
+        level = _level(state, index)
+        if level != min(_group_levels(state, index)):
+            continue
+        if level >= deeds.HOTEL_LEVEL:
+            continue
+        deed = deeds.deed_for(index)
+        if player['cash'] < deed.house_cost:
+            continue
+        if level == deeds.MAX_HOUSE_LEVEL:
+            if bank['hotels'] < 1:
+                continue
+        elif bank['houses'] < 1:
+            continue
+        buildable.append(index)
+    return tuple(buildable)
+
+
+def _sellable_indexes(state: Mapping, seat: str) -> tuple[int, ...]:
+    """The streets ``seat`` may sell one level from right now (S4).
+
+    Only a built street of the seat's own complete group, and only its most
+    developed one, so the group breaks down as evenly as it was built. Selling
+    a hotel is the reverse of buying it: it needs four houses in the bank to
+    leave the property at level 4.
+    """
+    sellable = []
+    for index in board.STREET_INDEXES:
+        if state['owners'].get(str(index)) != seat:
+            continue
+        level = _level(state, index)
+        if level < 1 or level != max(_group_levels(state, index)):
+            continue
+        if (
+            level == deeds.HOTEL_LEVEL
+            and state['bank']['houses'] < deeds.MAX_HOUSE_LEVEL
+        ):
+            continue
+        sellable.append(index)
+    return tuple(sellable)
+
+
 def _pay(state, seat: str, amount: int, creditor, events) -> bool:
     """Pay ``amount`` to ``creditor`` (or the bank, when ``None``).
 
@@ -917,12 +1033,21 @@ def _pay(state, seat: str, amount: int, creditor, events) -> bool:
 
 
 def _eliminate(state, seat: str, creditor) -> None:
-    """Take ``seat`` out of the match, settling its assets."""
+    """Take ``seat`` out of the match, settling its assets (S7, S11, S14).
+
+    Every building goes back to the bank and its key leaves ``buildings``: a
+    property is never transferred with buildings on it. When the creditor is a
+    player it also collects the debtor's cash plus half of what the debtor had
+    paid for those buildings; when the creditor is the bank (taxes, fines and
+    the disconnection expulsion) the buildings simply return and nothing is
+    paid, and the properties are left unowned as S11 and S14 already say.
+    """
     player = state['players'][seat]
     if player['eliminated']:
         return
+    refund = _return_buildings(state, player['properties'])
     if creditor is not None:
-        state['players'][creditor]['cash'] += player['cash']
+        state['players'][creditor]['cash'] += player['cash'] + refund
     player['cash'] = 0
     for index in list(player['properties']):
         if creditor is None:
@@ -934,6 +1059,24 @@ def _eliminate(state, seat: str, creditor) -> None:
     player['in_jail'] = False
     player['jail_turns'] = 0
     player['eliminated'] = True
+
+
+def _return_buildings(state, indexes) -> int:
+    """Return the buildings on ``indexes`` to the bank; return half their value."""
+    buildings = state.setdefault('buildings', {})
+    refund = 0
+    for index in indexes:
+        if not deeds.is_street(index):
+            continue
+        level = buildings.pop(str(index), 0)
+        if level < 1:
+            continue
+        if level >= deeds.HOTEL_LEVEL:
+            state['bank']['hotels'] += 1
+        else:
+            state['bank']['houses'] += level
+        refund += deeds.development_cost(deeds.deed_for(index), level) // 2
+    return refund
 
 
 def _apply_pay_jail_fine(state: Mapping, seat: str, action, rng) -> Transition:
@@ -1145,6 +1288,78 @@ def _apply_end_turn(state: Mapping, seat: str, action, rng) -> Transition:
     return Transition(state=state, facts=tuple(events))
 
 
+def _read_offered_index(state: Mapping, seat: str, action, offered) -> int:
+    """Return the space ``action`` names, or raise when it was not offered."""
+    try:
+        index = int(action.value)
+    except (TypeError, ValueError):
+        raise ValueError(f'invalid space: {action.value!r}') from None
+    if index not in offered:
+        raise ValueError(f'{seat!r} cannot act on space {index}')
+    return index
+
+
+def _apply_build(state: Mapping, seat: str, action, rng) -> Transition:
+    """Raise one development level on an offered street (S3)."""
+    _require_phase(state, PHASE_MANAGING)
+    index = _read_offered_index(state, seat, action, _buildable_indexes(state, seat))
+    deed = deeds.deed_for(index)
+    state = _copy(state)
+    state.setdefault('buildings', {})
+    level = _level(state, index) + 1
+    state['players'][seat]['cash'] -= deed.house_cost
+    state['buildings'][str(index)] = level
+    if level == deeds.HOTEL_LEVEL:
+        # The hotel's four houses go back to the bank, so they are not lost.
+        state['bank']['hotels'] -= 1
+        state['bank']['houses'] += deeds.MAX_HOUSE_LEVEL
+    else:
+        state['bank']['houses'] -= 1
+    return Transition(
+        state=state,
+        facts=(
+            Fact(
+                name='building_bought',
+                seat=seat,
+                detail={'space': index, 'level': level, 'price': deed.house_cost},
+            ),
+        ),
+    )
+
+
+def _apply_sell(state: Mapping, seat: str, action, rng) -> Transition:
+    """Lower one development level on an offered street (S4)."""
+    _require_phase(state, PHASE_MANAGING)
+    index = _read_offered_index(state, seat, action, _sellable_indexes(state, seat))
+    deed = deeds.deed_for(index)
+    state = _copy(state)
+    level = _level(state, index)
+    price = deeds.sell_back(deed)
+    new_level = level - 1
+    state['players'][seat]['cash'] += price
+    if level == deeds.HOTEL_LEVEL:
+        # Selling a hotel reverses buying it: the hotel returns and the four
+        # houses it left behind have to come back out of the bank.
+        state['bank']['hotels'] += 1
+        state['bank']['houses'] -= deeds.MAX_HOUSE_LEVEL
+    else:
+        state['bank']['houses'] += 1
+    if new_level == 0:
+        state['buildings'].pop(str(index), None)
+    else:
+        state['buildings'][str(index)] = new_level
+    return Transition(
+        state=state,
+        facts=(
+            Fact(
+                name='building_sold',
+                seat=seat,
+                detail={'space': index, 'level': new_level, 'price': price},
+            ),
+        ),
+    )
+
+
 _HANDLERS = {
     ACTION_ROLL: _apply_roll,
     ACTION_BID: _apply_bid,
@@ -1156,4 +1371,6 @@ _HANDLERS = {
     ACTION_PAY_INCOME_TAX_FIXED: _apply_income_tax_fixed,
     ACTION_PAY_INCOME_TAX_PERCENT: _apply_income_tax_percent,
     ACTION_END_TURN: _apply_end_turn,
+    ACTION_BUILD: _apply_build,
+    ACTION_SELL: _apply_sell,
 }
