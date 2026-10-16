@@ -1255,13 +1255,22 @@ def _continue_card_shares(state, seat, amount_each, creditors, extra, events) ->
 
     Returns ``True`` when every share was paid and ``False`` when the window
     was reopened for the first share the cash could not cover, in which case
-    the caller must not settle the step.
+    the caller must not settle the step. A creditor that has left the match is
+    paid through the bank, because no share may ever reach an eliminated seat:
+    the money leaves the game with the recipient, the same rule ``abandon``
+    applies to a single creditor.
     """
     for offset, creditor in enumerate(creditors):
+        if state['players'][creditor]['eliminated']:
+            # The share cannot be paid to a seat that is out, so it goes to the
+            # bank. ``remaining`` keeps naming it, so the conversion belongs
+            # here, where the payment is actually made.
+            creditor = None
         player = state['players'][seat]
         if player['cash'] >= amount_each:
             player['cash'] -= amount_each
-            state['players'][creditor]['cash'] += amount_each
+            if creditor is not None:
+                state['players'][creditor]['cash'] += amount_each
             events.append(
                 Fact(
                     name='card_paid',

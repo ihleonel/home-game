@@ -1654,6 +1654,30 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         )
 
 
+    def test_a_group_share_owed_to_an_expelled_creditor_leaves_the_game(self):
+        # The window opened on seat-2 with seat-3 still to be paid, and seat-3
+        # then left the match. A share can never be paid to a seat that is out:
+        # it leaves the game through the bank, the same rule a single expelled
+        # creditor already follows in ``abandon``.
+        state = rules.initial_state(('seat-0', 'seat-1', 'seat-2', 'seat-3'), 'seat-0')
+        state = self._cash(state, 'seat-0', 60)
+        state = self._top_card(state, cards.CHANCE, 'chance-15')
+        opened = self._land_on_card(state, 'seat-0', cards.CHANCE)
+        self.assertEqual(opened.state['debt']['creditor'], 'seat-2')
+        self.assertEqual(opened.state['debt']['resume']['remaining'], ['seat-3'])
+
+        state = self._cash(opened.state, 'seat-0', 150)
+        state = rules.abandon(state, 'seat-3').state
+        transition = self._act(state, 'seat-0', 'pay_debt')
+
+        self.assertEqual(transition.state['players']['seat-3']['cash'], 0)
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 50)
+        self.assertIn(
+            ('card_paid', 'seat-0', {'amount': 50, 'to': None}),
+            self._facts(transition),
+        )
+
+
 class MonopolyCardMovementTests(MonopolyRulesTestCase):
     """The movement effects of a drawn card (S4 to S8)."""
 
