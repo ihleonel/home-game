@@ -258,6 +258,66 @@ describe('the monopoly board', () => {
     expect(page).not.toContain('Subasta de')
   })
 
+  it('marks a mortgaged space with a class, an attribute and an accessible name', () => {
+    const mortgaged = view({ mortgaged: { '1': true, '39': true } })
+    const buttons = buttonElements(mortgaged)
+    const button = spaceButton(buttons, 'Avenida Mediterráneo')
+
+    expect((button.props as { className: string }).className).toContain('monopoly-space-mortgaged')
+    expect((button.props as Record<string, unknown>)['data-mortgaged']).toBe('true')
+    expect(labelOf(button)).toContain('Hipotecada')
+    expect(
+      (spaceButton(buttons, 'Avenida Báltica').props as Record<string, unknown>)[
+        'data-mortgaged'
+      ],
+    ).toBeUndefined()
+  })
+
+  it('keeps the printed price in a mortgaged space so the stylesheet can strike it', () => {
+    // The strike-through is pure CSS: the markup hook is the mortgaged class on
+    // the button, and the price element is still there for the rule to reach.
+    const mortgaged = view({ mortgaged: { '39': true } })
+
+    expect(elementMarkup(spaceButton(buttonElements(mortgaged), 'Boardwalk'))).toMatch(
+      /monopoly-space-price[^>]*>\$400</,
+    )
+  })
+
+  it('marks a band-less mortgaged space so the stripe has a surface', () => {
+    // A railroad and a utility have no colour band in this skin, so the
+    // stylesheet lays the stripe on the cell's own band strip. The hook it
+    // selects on is the missing data-group, which is exactly what only a
+    // band-less purchasable space lacks.
+    const mortgaged = view({ mortgaged: { '5': true, '12': true } })
+    const buttons = buttonElements(mortgaged)
+
+    for (const name of ['Ferrocarril Reading', 'Compañía Eléctrica']) {
+      const button = spaceButton(buttons, name)
+      expect((button.props as Record<string, unknown>)['data-mortgaged']).toBe('true')
+      expect((button.props as Record<string, unknown>)['data-group']).toBeUndefined()
+      expect((button.props as { className: string }).className).toContain(
+        'monopoly-space-mortgaged',
+      )
+    }
+  })
+
+  it('shows the mortgage value and the lift cost in the selected space detail', () => {
+    const mortgaged = view({ mortgaged: { '39': true } })
+    const selected = markup(mortgaged, 39)
+
+    expect(selected).toContain('monopoly-detail-mortgaged')
+    expect(selected).toContain('Hipotecada')
+    expect(selected).toContain('$200')
+    expect(selected).toContain('$220')
+  })
+
+  it('adds no mortgage detail to an unmortgaged space', () => {
+    const mortgaged = view({ mortgaged: { '39': true } })
+
+    expect(markup(mortgaged, 37)).not.toContain('monopoly-detail-mortgaged')
+    expect(markup(view(), 39)).not.toContain('monopoly-detail-mortgaged')
+  })
+
   it('shows the selected space detail with its printed rents and nothing when nothing is selected', () => {
     const selected = markup(view(), 1)
 

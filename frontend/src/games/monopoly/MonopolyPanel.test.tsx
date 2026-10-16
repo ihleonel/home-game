@@ -348,6 +348,53 @@ describe('the monopoly player panel', () => {
     expect(textOf(buttons[0])).toBe('Construí: nope')
   })
 
+  it('draws a mortgage option as the space name and the cash it raises', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'mortgage', prompt: 'Hipotecá', options: ['1', '5'] },
+    ]
+    const buttons = actionButtons(view({ actions }))
+
+    expect(buttons).toHaveLength(2)
+    expect(textOf(buttons[0])).toBe('Hipotecá en Avenida Mediterráneo · +$30')
+    expect(textOf(buttons[1])).toBe('Hipotecá en Ferrocarril Reading · +$100')
+  })
+
+  it('draws an unmortgage option as the space name and the cash it costs', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'unmortgage', prompt: 'Levantá la hipoteca', options: ['37', '39'] },
+    ]
+    const buttons = actionButtons(view({ actions }))
+
+    expect(buttons).toHaveLength(2)
+    expect(textOf(buttons[0])).toBe('Levantá la hipoteca en Park Place · −$193')
+    expect(textOf(buttons[1])).toBe('Levantá la hipoteca en Boardwalk · −$220')
+  })
+
+  it('submits the board index the server offered for mortgage and unmortgage', () => {
+    const onAction = vi.fn()
+    const actions: MonopolyAction[] = [
+      { name: 'mortgage', prompt: 'Hipotecá', options: ['1'] },
+      { name: 'unmortgage', prompt: 'Levantá la hipoteca', options: ['39'] },
+    ]
+    const buttons = actionButtons(view({ actions }), { onAction })
+
+    ;(buttons[0].props as { onClick: () => void }).onClick()
+    ;(buttons[1].props as { onClick: () => void }).onClick()
+
+    expect(onAction).toHaveBeenCalledWith('mortgage', '1')
+    expect(onAction).toHaveBeenCalledWith('unmortgage', '39')
+  })
+
+  it('falls back to the raw option when a mortgage option is not a purchasable index', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'mortgage', prompt: 'Hipotecá', options: ['nope', '2'] },
+    ]
+    const buttons = actionButtons(view({ actions }))
+
+    expect(textOf(buttons[0])).toBe('Hipotecá: nope')
+    expect(textOf(buttons[1])).toBe('Hipotecá: 2')
+  })
+
   it('shows the development level of each built own property', () => {
     const seated = view({
       players: [player({ seat: 'seat-0', properties: [1, 3, 6] }), player({ seat: 'seat-1' })],
@@ -359,6 +406,63 @@ describe('the monopoly player panel', () => {
     expect(page).toContain('Hotel')
     // Only the two built properties get a level; the third stays bare.
     expect(page.match(/monopoly-property-level/g)).toHaveLength(2)
+  })
+
+  it('shows a mortgaged badge on a mortgaged own property', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1, 3] }), player({ seat: 'seat-1' })],
+      mortgaged: { '1': true },
+    })
+    const page = panelMarkup(seated)
+
+    expect(page).toContain('monopoly-property-mortgaged')
+    expect(page).toContain('Hipotecada')
+    // Only the mortgaged property wears the badge; its sister stays bare.
+    expect(page.match(/monopoly-property-mortgaged/g)).toHaveLength(1)
+  })
+
+  it('shows the open debt with the amount and the player creditor', () => {
+    const raising = view({
+      phase: 'raising_cash',
+      debt: { seat: 'seat-0', creditor: 'seat-1', amount: 420 },
+    })
+    const page = panelMarkup(raising)
+
+    expect(page).toContain('monopoly-debt')
+    // The creditor reads as its display name, the way the auction and the
+    // roster already name every seat, never as a raw seat id.
+    expect(page).toContain('Deuda: $420 con Beto')
+  })
+
+  it('shows a debt to the bank as owing the bank', () => {
+    const raising = view({
+      phase: 'raising_cash',
+      debt: { seat: 'seat-0', creditor: null, amount: 50 },
+    })
+
+    expect(panelMarkup(raising)).toContain('Deuda: $50 con el banco')
+  })
+
+  it('shows no debt block outside the raising cash phase', () => {
+    const owed = view({ debt: { seat: 'seat-0', creditor: null, amount: 50 } })
+
+    expect(panelMarkup(owed)).not.toContain('monopoly-debt')
+  })
+
+  it('shows no debt block when the raising cash phase carries no debt record', () => {
+    expect(panelMarkup(view({ phase: 'raising_cash', debt: null }))).not.toContain('monopoly-debt')
+  })
+
+  it('places the debt block above the actions so the pay button has context', () => {
+    const raising = view({
+      phase: 'raising_cash',
+      debt: { seat: 'seat-0', creditor: null, amount: 50 },
+      actions: [{ name: 'pay_debt', prompt: 'Pagá la deuda', options: [] }],
+    })
+    const page = panelMarkup(raising)
+
+    expect(page.indexOf('monopoly-debt')).toBeGreaterThan(-1)
+    expect(page.indexOf('monopoly-debt')).toBeLessThan(page.indexOf('monopoly-actions-block'))
   })
 
   it('shows the bank block with the houses and hotels left in the box', () => {

@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { MatchState } from '../registry'
 import { BOARD, isPurchasable, spaceAt } from './board'
 import type { Space } from './board'
-import { HOTEL_LEVEL, deedFor, levelLabel, purchasePrice, rentForLevel } from './deeds'
+import { HOTEL_LEVEL, deedFor, levelLabel, mortgageLiftCost, mortgageValue, purchasePrice, rentForLevel } from './deeds'
 import {
   DECK_LABELS,
   GAME_NAME,
@@ -83,6 +83,7 @@ function spaceAriaLabel(
   space: Space,
   owner: string | null,
   auctioned: boolean,
+  mortgaged: boolean,
   level: number | null,
 ): string {
   const parts = [space.name, KIND_LABELS[space.kind]]
@@ -90,6 +91,7 @@ function spaceAriaLabel(
   if (isPurchasable(space)) parts.push(`Precio ${formatMoney(purchasePrice(space.index))}`)
   if (owner) parts.push(`Dueño ${owner}`)
   if (auctioned) parts.push('En subasta')
+  if (mortgaged) parts.push('Hipotecada')
   if (level !== null) parts.push(levelLabel(level))
   return parts.join('. ')
 }
@@ -186,6 +188,8 @@ export function MonopolyBoard({
   const { view } = match
   const chosen = selected === null ? null : spaceAt(selected)
   const chosenLevel = chosen === null ? null : buildingLevel(view, chosen.index)
+  const chosenMortgaged =
+    chosen !== null && view.mortgaged[String(chosen.index)] === true
 
   return (
     <div className="monopoly-board" role="group" aria-label="Tablero de Monopoly">
@@ -193,18 +197,26 @@ export function MonopolyBoard({
         const area = spaceArea(space.index)
         const owner = ownerName(match, space.index)
         const auctioned = view.auction !== null && view.auction.space === space.index
+        const mortgaged = view.mortgaged[String(space.index)] === true
         const level = buildingLevel(view, space.index)
         const holders = view.players.filter(
           (player) => !player.eliminated && player.position === space.index,
         )
         return (
           <button
-            aria-label={spaceAriaLabel(space, owner, auctioned, level)}
+            aria-label={spaceAriaLabel(space, owner, auctioned, mortgaged, level)}
             aria-pressed={selected === space.index}
-            className={auctioned ? 'monopoly-space monopoly-space-auction' : 'monopoly-space'}
+            className={[
+              'monopoly-space',
+              auctioned ? 'monopoly-space-auction' : '',
+              mortgaged ? 'monopoly-space-mortgaged' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
             data-auction={auctioned ? 'true' : undefined}
             data-group={space.group ?? undefined}
             data-kind={space.kind}
+            data-mortgaged={mortgaged ? 'true' : undefined}
             data-side={spaceSide(space.index)}
             key={space.index}
             onClick={() => onSelect(space.index)}
@@ -286,6 +298,11 @@ export function MonopolyBoard({
             {chosenLevel !== null && (
               <p className="monopoly-detail-buildings">
                 {`Edificios: ${levelLabel(chosenLevel)}`}
+              </p>
+            )}
+            {chosenMortgaged && isPurchasable(chosen) && (
+              <p className="monopoly-detail-mortgaged">
+                {`Hipotecada · Valor ${formatMoney(mortgageValue(chosen.index))} · Levantar ${formatMoney(mortgageLiftCost(chosen.index))}`}
               </p>
             )}
             {isPurchasable(chosen) && (

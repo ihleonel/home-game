@@ -11,6 +11,8 @@ import {
   deedFor,
   developmentCost,
   levelLabel,
+  mortgageLiftCost,
+  mortgageValue,
   purchasePrice,
   rentForLevel,
   sellBack,
@@ -130,6 +132,13 @@ function optionLabel(
   const index = optionIndex(option)
   if (index === null) return `${action.prompt}: ${option}`
   const space = spaceAt(index)
+  if (!isPurchasable(space)) return `${action.prompt}: ${option}`
+  if (action.name === 'mortgage') {
+    return `${action.prompt} en ${space.name} · +${formatMoney(mortgageValue(index))}`
+  }
+  if (action.name === 'unmortgage') {
+    return `${action.prompt} en ${space.name} · −${formatMoney(mortgageLiftCost(index))}`
+  }
   if (space.kind !== 'street') return `${action.prompt}: ${option}`
   if (action.name === 'build') {
     const level: number = buildings[String(index)] ?? 0
@@ -186,6 +195,7 @@ function ownSeatBlock(
   own: MonopolyPlayer,
   ownGroups: OwnGroup[],
   buildings: Record<string, number>,
+  mortgaged: Record<string, true>,
 ): ReactElement {
   return (
     <>
@@ -226,11 +236,15 @@ function ownSeatBlock(
               <ul className="monopoly-property-list">
                 {group.spaces.map((space) => {
                   const level: number | undefined = buildings[String(space.index)]
+                  const isMortgaged = mortgaged[String(space.index)] === true
                   return (
                     <li className="monopoly-property" key={space.index}>
                       <span className="monopoly-property-name">{space.name}</span>
                       {level !== undefined && (
                         <span className="monopoly-property-level">{levelLabel(level)}</span>
+                      )}
+                      {isMortgaged && (
+                        <span className="monopoly-property-mortgaged">Hipotecada</span>
                       )}
                       <span className="monopoly-property-price">
                         {`Precio ${formatMoney(purchasePrice(space.index))}`}
@@ -358,7 +372,7 @@ export function MonopolyPanelLayout({
             {own === null ? (
               <p className="monopoly-spectator">Estás como espectador.</p>
             ) : (
-              ownSeatBlock(own, ownGroups, view.buildings)
+              ownSeatBlock(own, ownGroups, view.buildings, view.mortgaged)
             )}
           </div>
 
@@ -395,6 +409,19 @@ export function MonopolyPanelLayout({
           )}
 
           {view.auction !== null && auctionBlock(view.auction, match)}
+
+          {view.phase === 'raising_cash' && view.debt !== null && (
+            <div className="monopoly-players-block monopoly-debt">
+              <h3 className="monopoly-block-title">Deuda</h3>
+              <p className="monopoly-debt-line">
+                {`Deuda: ${formatMoney(view.debt.amount)} ${
+                  view.debt.creditor === null
+                    ? 'con el banco'
+                    : `con ${seatName(match, view.debt.creditor)}`
+                }`}
+              </p>
+            </div>
+          )}
 
           {view.actions.length > 0 && (
             <div className="monopoly-actions-block">

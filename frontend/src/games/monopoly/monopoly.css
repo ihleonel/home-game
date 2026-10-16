@@ -450,6 +450,66 @@
   box-shadow: inset 0 0 0 2px var(--monopoly-you-border);
 }
 
+/* S13: a mortgaged property is struck through with a diagonal grey stripe. The
+   stripe is one custom property so the two surfaces that carry it cannot drift
+   apart: the colour band on a street, and -- on a railroad or a utility, which
+   this skin leaves band-less -- the cell's own band strip. It is a repeated
+   gradient, so no asset travels with the skin, and the marker is never dropped
+   on a narrow board: the strike on the price and the accessible name read the
+   state even where the strip is too small to see. */
+.monopoly-space-mortgaged {
+  --monopoly-mortgage-stripe: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--monopoly-ink) 62%, transparent) 0 0.1rem,
+    transparent 0.1rem 0.22rem
+  );
+}
+
+.monopoly-space-mortgaged .monopoly-space-band::after,
+.monopoly-space-mortgaged:not([data-group])::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  background: var(--monopoly-mortgage-stripe);
+}
+
+/* The band positions its own stripe: the decoration stays inside the band on
+   all four sides, so it can never drift from it. */
+.monopoly-space-mortgaged .monopoly-space-band::after {
+  inset: 0;
+}
+
+/* A band-less space already reserves the band strip as padding on its side
+   (the ``data-side`` rules above), so the stripe lands exactly there and never
+   over the name, the price or the tokens. */
+.monopoly-space-mortgaged:not([data-group])[data-side='bottom']::after {
+  inset: 0 0 auto 0;
+  height: var(--monopoly-band-size);
+}
+
+.monopoly-space-mortgaged:not([data-group])[data-side='top']::after {
+  inset: auto 0 0 0;
+  height: var(--monopoly-band-size);
+}
+
+.monopoly-space-mortgaged:not([data-group])[data-side='left']::after {
+  inset: 0 0 0 auto;
+  width: var(--monopoly-band-size);
+}
+
+.monopoly-space-mortgaged:not([data-group])[data-side='right']::after {
+  inset: 0 auto 0 0;
+  width: var(--monopoly-band-size);
+}
+
+/* The printed price is struck through on a mortgaged space. The strike belongs
+   to the price element, so the rule follows it if the price drops on a narrow
+   board; the mortgaged state itself is still read from the band and the name. */
+.monopoly-space-mortgaged .monopoly-space-price {
+  text-decoration: line-through;
+  text-decoration-thickness: 0.07rem;
+}
+
 /* The open auction is a live line in the centre, set apart like the drawn
    card so it cannot be mistaken for the roll. */
 .monopoly-auction-line {
@@ -594,6 +654,13 @@
   font-weight: 750;
 }
 
+.monopoly-detail-mortgaged {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-size: 0.85rem;
+  font-weight: 750;
+}
+
 .monopoly-rents {
   display: flex;
   flex-wrap: wrap;
@@ -635,6 +702,20 @@
    own-seat accent rather than the neutral line every other block carries. */
 .monopoly-auction {
   border-color: var(--monopoly-you-border);
+}
+
+/* S13: the open debt is as urgent as the auction and blocks the turn, so it
+   wears the same accent outline and it sits above the actions so the pay
+   button has context. */
+.monopoly-debt {
+  border-color: var(--monopoly-you-border);
+}
+
+.monopoly-debt-line {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-size: 0.9rem;
+  font-weight: 750;
 }
 
 .monopoly-auction-bid {
@@ -738,6 +819,19 @@
   align-self: flex-start;
   padding: 0 0.35rem;
   border: 1px solid var(--monopoly-green);
+  border-radius: 999px;
+  background: var(--monopoly-band-empty);
+  color: var(--monopoly-ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* S13: the mortgaged badge beside the development level. A single grey pill
+   reads as a state mark without relying on colour, exactly like the level. */
+.monopoly-property-mortgaged {
+  align-self: flex-start;
+  padding: 0 0.35rem;
+  border: 1px solid var(--monopoly-ink-soft);
   border-radius: 999px;
   background: var(--monopoly-band-empty);
   color: var(--monopoly-ink);
