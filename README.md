@@ -1,5 +1,12 @@
 # HomeGame
 
+HomeGame is a local-network game table: everyone plays from the same house, usually side by side,
+and the platform exists so a family can spend an evening on a board game without the bookkeeping --
+no score sheet, nobody acting as banker. That premise decides product choices that would look
+strange in an online service, and the ones taken so far are recorded rather than left implicit: a
+match runs without per-turn clocks, because the people at the table can nudge whoever is idle, and
+the automatic endings stay reserved for a seat that really disconnects.
+
 ## Prerequisites
 
 - Docker Engine with the Docker Compose plugin
@@ -105,11 +112,14 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   channel. A seat with an open debt does not take part in a trade while that debt is open -- its
   ways out stay the window's four -- and an offer dies with either of its two seats, or with the
   match.
-  The printed rule that sends the last houses and hotels to auction is deliberately not
-  implemented: when the bank's box runs out the build option is simply not offered, and while it
-  still holds pieces the first seat that asks takes the piece at its printed price, so turn order
-  is what settles who gets the last house. That is a recorded deviation, not a missing rule -- it
-  is listed with its decision in `PENDING.md`, and no future increment owes it.
+  Two printed rules are deliberately not implemented, and both are recorded deviations rather than
+  missing work. The last houses and hotels are not sent to auction: when the bank's box runs out the
+  build option is simply not offered, and while it still holds pieces the first seat that asks takes
+  the piece at its printed price, so turn order settles who gets the last house. And there is no turn
+  clock: with everyone in the same house the table can nudge whoever is idle, and the automatic
+  endings stay reserved for a seat that actually disconnects; what is still to design for a match
+  nobody can advance is the expulsion vote, a human decision instead of a timer. Both are listed
+  with their decisions in `PENDING.md`.
   Its match screen is built. The board is an 11x11 grid: the 40 spaces are painted from their
   circuit index (GO bottom-right, clockwise), each one a button that announces its name, kind,
   printed price, owner and development level, carries the tokens of the seats standing on it and the
