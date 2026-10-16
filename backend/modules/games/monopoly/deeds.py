@@ -177,3 +177,15 @@ def mortgage_value(index: int) -> int:
     if space.kind is board.SpaceKind.UTILITY:
         return UTILITY_MORTGAGE
     raise ValueError(f'space {index!r} ({space.name}) is not purchasable')
+
+
+def mortgage_lift_cost(index: int) -> int:
+    """Return what lifting a mortgage costs: the value plus 10 % interest (S4).
+
+    The interest is ten percent of the printed mortgage value, rounded up to
+    the whole dollar like the Income Tax of S10 of ``monopoly.md``. A caller
+    that needs the interest alone subtracts :func:`mortgage_value`, which is
+    the single place the two numbers are made to agree.
+    """
+    mortgage = mortgage_value(index)
+    return mortgage + -(-mortgage // 10)

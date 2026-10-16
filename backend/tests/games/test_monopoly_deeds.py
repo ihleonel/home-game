@@ -207,3 +207,25 @@ class MonopolyDeedTests(SimpleTestCase):
                     deeds.mortgage_value(index)
                 with self.assertRaises(ValueError):
                     deeds.deed_for(index)
+
+    def test_mortgage_lift_cost_is_the_mortgage_plus_ten_percent_rounded_up(self):
+        """The S4 helper: value + ceiling(value / 10), for every purchasable space."""
+        cases = (
+            (1, 30, 33),
+            (5, 100, 110),
+            (12, 75, 83),
+            (37, 175, 193),
+            (39, 200, 220),
+        )
+        for index, mortgage, expected in cases:
+            with self.subTest(index=index):
+                self.assertEqual(deeds.mortgage_value(index), mortgage)
+                self.assertEqual(deeds.mortgage_lift_cost(index), expected)
+        for index in board.PURCHASABLE_INDEXES:
+            with self.subTest(index=index):
+                interest = (
+                    deeds.mortgage_lift_cost(index) - deeds.mortgage_value(index)
+                )
+                self.assertEqual(
+                    interest, -(-deeds.mortgage_value(index) // 10)
+                )
