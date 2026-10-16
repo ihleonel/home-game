@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
 import { MonopolyPanel, MonopolyPanelLayout } from './MonopolyPanel'
+import type { MonopolyTradeDraft } from './MonopolyPanel'
 import type { MonopolyAction, MonopolyPlayer, MonopolyView } from './view'
 
 const roster: MatchSeatRosterEntry[] = [
@@ -54,6 +55,7 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     bank: null,
     debt: null,
     auction: null,
+    offers: [],
     actions: [],
     you: 'seat-0',
     ...overrides,
@@ -66,19 +68,27 @@ function matchFor(rawView: MonopolyView): MatchState<MonopolyView> {
 
 type LayoutProps = Parameters<typeof MonopolyPanelLayout>[0]
 
-function layoutProps(
-  rawView: MonopolyView,
-  options: {
-    busy?: boolean
-    onAction?: (name: string, value: string | null) => void
-  } = {},
-): LayoutProps {
+/** The draft the negotiation block composes (S11), empty by default. */
+function tradeDraft(overrides: Partial<MonopolyTradeDraft> = {}): MonopolyTradeDraft {
+  return { receiver: null, give: [], want: [], giveCash: 0, wantCash: 0, ...overrides }
+}
+
+type LayoutOptions = {
+  busy?: boolean
+  onAction?: (name: string, value: string | null) => void
+  trade?: MonopolyTradeDraft
+  onTradeChange?: (next: MonopolyTradeDraft) => void
+}
+
+function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
   return {
     match: matchFor(rawView),
     busy: options.busy ?? false,
     onAction: options.onAction ?? (() => {}),
     selected: null,
     onSelect: () => {},
+    trade: options.trade ?? tradeDraft(),
+    onTradeChange: options.onTradeChange ?? (() => {}),
   }
 }
 
@@ -110,17 +120,14 @@ function hostElements(node: ReactNode, found: ReactElement[] = []): ReactElement
 
 function panelMarkup(
   rawView: MonopolyView,
-  options: { busy?: boolean } = {},
+  options: LayoutOptions = {},
 ): string {
   return renderToStaticMarkup(<MonopolyPanelLayout {...layoutProps(rawView, options)} />)
 }
 
 function actionButtons(
   rawView: MonopolyView,
-  options: {
-    busy?: boolean
-    onAction?: (name: string, value: string | null) => void
-  } = {},
+  options: LayoutOptions = {},
 ): ReactElement[] {
   const tree = MonopolyPanelLayout(layoutProps(rawView, options))
   return hostElements(tree).filter((element) => {
@@ -135,6 +142,19 @@ function textOf(button: ReactElement): string {
   return typeof children === 'string' ? children : ''
 }
 
+/** Every host element carrying ``className``, reached through the pure layout. */
+function elementsWithClass(
+  rawView: MonopolyView,
+  className: string,
+  options: LayoutOptions = {},
+): ReactElement[] {
+  const tree = MonopolyPanelLayout(layoutProps(rawView, options))
+  return hostElements(tree).filter((element) => {
+    const classes = ((element.props as { className?: string }).className ?? '').split(/\s+/)
+    return classes.includes(className)
+  })
+}
+
 function buttonWithLabel(buttons: ReactElement[], label: string): ReactElement {
   const button = buttons.find((element) => textOf(element) === label)
   if (!button) throw new Error(`no action button labelled ${label}`)
@@ -144,8 +164,8 @@ function buttonWithLabel(buttons: ReactElement[], label: string): ReactElement {
 describe('the monopoly player panel', () => {
   it('renders every offered action with the server prompt as its label', () => {
     const actions: MonopolyAction[] = [
-      { name: 'roll', prompt: 'Tirá los dados', options: [] },
-      { name: 'end_turn', prompt: 'Terminá el turno', options: [] },
+      { name: 'roll', prompt: 'Tirá los dados', options: [], freeform: false },
+      { name: 'end_turn', prompt: 'Terminá el turno', options: [], freeform: false },
     ]
     const page = panelMarkup(view({ actions }))
 
@@ -156,7 +176,7 @@ describe('the monopoly player panel', () => {
 
   it('submits an offered action without a value as null', () => {
     const onAction = vi.fn()
-    const actions: MonopolyAction[] = [{ name: 'roll', prompt: 'Tirá los dados', options: [] }]
+    const actions: MonopolyAction[] = [{ name: 'roll', prompt: 'Tirá los dados', options: [], freeform: false }]
     const button = buttonWithLabel(actionButtons(view({ actions }), { onAction }), 'Tirá los dados')
 
     ;(button.props as { onClick: () => void }).onClick()
@@ -172,6 +192,7 @@ describe('the monopoly player panel', () => {
         name: 'pay_income_tax',
         prompt: 'Elegí cómo pagar',
         options: ['fixed', 'percent'],
+        freeform: false,
       },
     ]
     const buttons = actionButtons(view({ actions }), { onAction })
@@ -196,8 +217,8 @@ describe('the monopoly player panel', () => {
 
   it('disables every action button while the match is busy', () => {
     const actions: MonopolyAction[] = [
-      { name: 'roll', prompt: 'Tirá los dados', options: [] },
-      { name: 'pay_income_tax', prompt: 'Elegí cómo pagar', options: ['fixed', 'percent'] },
+      { name: 'roll', prompt: 'Tirá los dados', options: [], freeform: false },
+      { name: 'pay_income_tax', prompt: 'Elegí cómo pagar', options: ['fixed', 'percent'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }), { busy: true })
 
@@ -278,8 +299,8 @@ describe('the monopoly player panel', () => {
 
   it('renders the server bid options and the pass without adding an auction control', () => {
     const actions: MonopolyAction[] = [
-      { name: 'bid', prompt: 'Pujá', options: ['10', '20', '50'] },
-      { name: 'pass', prompt: 'Pasá la subasta.', options: [] },
+      { name: 'bid', prompt: 'Pujá', options: ['10', '20', '50'], freeform: false },
+      { name: 'pass', prompt: 'Pasá la subasta.', options: [], freeform: false },
     ]
     const open = view({
       auction: { space: 3, high_bid: 0, high_bidder: null, waiting_for: ['seat-0', 'seat-1'] },
@@ -296,7 +317,7 @@ describe('the monopoly player panel', () => {
 
   it('draws a build option as the space name and the price of one more level', () => {
     const actions: MonopolyAction[] = [
-      { name: 'build', prompt: 'Construí', options: ['1', '3'] },
+      { name: 'build', prompt: 'Construí', options: ['1', '3'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }))
 
@@ -307,7 +328,7 @@ describe('the monopoly player panel', () => {
 
   it('draws a sell option as the space name and half the house cost', () => {
     const actions: MonopolyAction[] = [
-      { name: 'sell', prompt: 'Vendé', options: ['11', '39'] },
+      { name: 'sell', prompt: 'Vendé', options: ['11', '39'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }))
 
@@ -319,7 +340,7 @@ describe('the monopoly player panel', () => {
   it('prices a build from the level the property already has', () => {
     // One more level costs one house cost whichever side of the hotel line it
     // is on; the label never becomes the property's total development value.
-    const actions: MonopolyAction[] = [{ name: 'build', prompt: 'Construí', options: ['1'] }]
+    const actions: MonopolyAction[] = [{ name: 'build', prompt: 'Construí', options: ['1'], freeform: false }]
     const built = view({ actions, buildings: { '1': 4 } })
 
     expect(textOf(actionButtons(built)[0])).toBe('Construí en Avenida Mediterráneo · $50')
@@ -328,8 +349,8 @@ describe('the monopoly player panel', () => {
   it('submits the board index the server offered for build and sell', () => {
     const onAction = vi.fn()
     const actions: MonopolyAction[] = [
-      { name: 'build', prompt: 'Construí', options: ['1'] },
-      { name: 'sell', prompt: 'Vendé', options: ['3'] },
+      { name: 'build', prompt: 'Construí', options: ['1'], freeform: false },
+      { name: 'sell', prompt: 'Vendé', options: ['3'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }), { onAction })
 
@@ -341,7 +362,7 @@ describe('the monopoly player panel', () => {
   })
 
   it('falls back to the raw option when a build option is not a board index', () => {
-    const actions: MonopolyAction[] = [{ name: 'build', prompt: 'Construí', options: ['nope'] }]
+    const actions: MonopolyAction[] = [{ name: 'build', prompt: 'Construí', options: ['nope'], freeform: false }]
     const buttons = actionButtons(view({ actions }))
 
     expect(buttons).toHaveLength(1)
@@ -350,7 +371,7 @@ describe('the monopoly player panel', () => {
 
   it('draws a mortgage option as the space name and the cash it raises', () => {
     const actions: MonopolyAction[] = [
-      { name: 'mortgage', prompt: 'Hipotecá', options: ['1', '5'] },
+      { name: 'mortgage', prompt: 'Hipotecá', options: ['1', '5'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }))
 
@@ -361,7 +382,7 @@ describe('the monopoly player panel', () => {
 
   it('draws an unmortgage option as the space name and the cash it costs', () => {
     const actions: MonopolyAction[] = [
-      { name: 'unmortgage', prompt: 'Levantá la hipoteca', options: ['37', '39'] },
+      { name: 'unmortgage', prompt: 'Levantá la hipoteca', options: ['37', '39'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }))
 
@@ -373,8 +394,8 @@ describe('the monopoly player panel', () => {
   it('submits the board index the server offered for mortgage and unmortgage', () => {
     const onAction = vi.fn()
     const actions: MonopolyAction[] = [
-      { name: 'mortgage', prompt: 'Hipotecá', options: ['1'] },
-      { name: 'unmortgage', prompt: 'Levantá la hipoteca', options: ['39'] },
+      { name: 'mortgage', prompt: 'Hipotecá', options: ['1'], freeform: false },
+      { name: 'unmortgage', prompt: 'Levantá la hipoteca', options: ['39'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }), { onAction })
 
@@ -387,7 +408,7 @@ describe('the monopoly player panel', () => {
 
   it('falls back to the raw option when a mortgage option is not a purchasable index', () => {
     const actions: MonopolyAction[] = [
-      { name: 'mortgage', prompt: 'Hipotecá', options: ['nope', '2'] },
+      { name: 'mortgage', prompt: 'Hipotecá', options: ['nope', '2'], freeform: false },
     ]
     const buttons = actionButtons(view({ actions }))
 
@@ -457,7 +478,7 @@ describe('the monopoly player panel', () => {
     const raising = view({
       phase: 'raising_cash',
       debt: { seat: 'seat-0', creditor: null, amount: 50 },
-      actions: [{ name: 'pay_debt', prompt: 'Pagá la deuda', options: [] }],
+      actions: [{ name: 'pay_debt', prompt: 'Pagá la deuda', options: [], freeform: false }],
     })
     const page = panelMarkup(raising)
 
@@ -529,5 +550,231 @@ describe('the monopoly player panel', () => {
 
     expect(page).toContain('monopoly-board')
     expect(page).toContain('Tu situación')
+  })
+})
+
+describe('the monopoly negotiation panel', () => {
+  const proposeAction: MonopolyAction = {
+    name: 'propose',
+    prompt: 'Proponé un trato.',
+    options: [],
+    freeform: true,
+  }
+  const offer = {
+    id: '1',
+    proposer: 'seat-0',
+    receiver: 'seat-1',
+    give: { properties: [1], cash: 100 },
+    want: { properties: [5], cash: 0 },
+    valid: true,
+  }
+
+  it('skips a freeform action in the generic renderer and keeps the others', () => {
+    const actions: MonopolyAction[] = [
+      proposeAction,
+      { name: 'roll', prompt: 'Tirá los dados', options: [], freeform: false },
+    ]
+
+    const buttons = actionButtons(view({ actions }))
+
+    expect(buttons).toHaveLength(1)
+    expect(textOf(buttons[0])).toBe('Tirá los dados')
+    expect(panelMarkup(view({ actions }))).not.toContain('Proponé un trato.')
+  })
+
+  it('shows the negotiation block only when the server offers propose', () => {
+    expect(panelMarkup(view())).not.toContain('monopoly-trade')
+    expect(panelMarkup(view({ actions: [proposeAction] }))).toContain('monopoly-trade')
+  })
+
+  it('offers the other solvent seats as receivers and never the eliminated ones', () => {
+    const players = [
+      player({ seat: 'seat-0' }),
+      player({ seat: 'seat-1' }),
+      player({ seat: 'seat-2', eliminated: true }),
+    ]
+    const page = panelMarkup(view({ actions: [proposeAction], players }), {
+      trade: tradeDraft({ receiver: 'seat-1' }),
+    })
+
+    expect(page).toContain('monopoly-trade-receiver')
+    expect(page).toContain('value="seat-1"')
+    expect(page).not.toContain('value="seat-0"')
+    expect(page).not.toContain('value="seat-2"')
+  })
+
+  it('marks the own properties to give and the chosen receiver properties to ask for', () => {
+    const players = [
+      player({ seat: 'seat-0', properties: [1, 3] }),
+      player({ seat: 'seat-1', properties: [5, 6] }),
+    ]
+    const raw = view({ actions: [proposeAction], players })
+    const trade = tradeDraft({ receiver: 'seat-1', give: [3], want: [5] })
+
+    const give = elementsWithClass(raw, 'monopoly-trade-give-property', { trade })
+    const want = elementsWithClass(raw, 'monopoly-trade-want-property', { trade })
+
+    expect(give.map((element) => (element.props as { value?: number }).value)).toEqual([1, 3])
+    expect(want.map((element) => (element.props as { value?: number }).value)).toEqual([5, 6])
+    expect((give[0].props as { checked?: boolean }).checked).toBe(false)
+    expect((give[1].props as { checked?: boolean }).checked).toBe(true)
+    expect((want[0].props as { checked?: boolean }).checked).toBe(true)
+    expect((want[1].props as { checked?: boolean }).checked).toBe(false)
+  })
+
+  it('bounds each cash amount by the cash the view shows', () => {
+    const players = [
+      player({ seat: 'seat-0', cash: 1500 }),
+      player({ seat: 'seat-1', cash: 1200 }),
+    ]
+    const raw = view({ actions: [proposeAction], players })
+    const trade = tradeDraft({ receiver: 'seat-1' })
+
+    const giveCash = elementsWithClass(raw, 'monopoly-trade-give-cash', { trade })
+    const wantCash = elementsWithClass(raw, 'monopoly-trade-want-cash', { trade })
+
+    expect((giveCash[0].props as { max?: number }).max).toBe(1500)
+    expect((wantCash[0].props as { max?: number }).max).toBe(1200)
+  })
+
+  it('composes the trade grammar and submits the full offer through onAction', () => {
+    const onAction = vi.fn()
+    const trade = tradeDraft({
+      receiver: 'seat-1',
+      give: [3, 1],
+      want: [5],
+      giveCash: 100,
+      wantCash: 0,
+    })
+    const send = elementsWithClass(
+      view({ actions: [proposeAction] }),
+      'monopoly-trade-send',
+      { onAction, trade },
+    )[0]
+
+    ;(send.props as { onClick: () => void }).onClick()
+
+    expect(onAction).toHaveBeenCalledTimes(1)
+    expect(onAction).toHaveBeenCalledWith('propose', 'to=seat-1;give=1,3;cash=100|want=5;cash=0')
+  })
+
+  it('composes empty property lists and zero amounts', () => {
+    const onAction = vi.fn()
+    const send = elementsWithClass(
+      view({ actions: [proposeAction] }),
+      'monopoly-trade-send',
+      { onAction, trade: tradeDraft({ receiver: 'seat-1' }) },
+    )[0]
+
+    ;(send.props as { onClick: () => void }).onClick()
+
+    expect(onAction).toHaveBeenCalledWith('propose', 'to=seat-1;give=;cash=0|want=;cash=0')
+  })
+
+  it('keeps the send button disabled until a receiver is picked', () => {
+    const send = elementsWithClass(view({ actions: [proposeAction] }), 'monopoly-trade-send')[
+      0
+    ]
+
+    expect((send.props as { disabled?: boolean }).disabled).toBe(true)
+  })
+
+  it('clears the asked properties when the receiver changes', () => {
+    const onTradeChange = vi.fn()
+    const trade = tradeDraft({ receiver: 'seat-1', want: [5] })
+    const select = elementsWithClass(view({ actions: [proposeAction] }), 'monopoly-trade-receiver', {
+      trade,
+      onTradeChange,
+    })[0]
+
+    ;(select.props as { onChange: (event: { target: { value: string } }) => void }).onChange({
+      target: { value: 'seat-2' },
+    })
+
+    expect(onTradeChange).toHaveBeenCalledWith({ ...trade, receiver: 'seat-2', want: [] })
+  })
+
+  it('lists the open offers with their terms, sides and validity', () => {
+    const page = panelMarkup(view({ offers: [offer] }))
+
+    expect(page).toContain('monopoly-offer-list')
+    expect(page).toContain('data-valid="true"')
+    expect(page).toContain('Ana entrega Avenida Mediterráneo y $100.')
+    expect(page).toContain('Ana pide Ferrocarril Reading y $0.')
+  })
+
+  it('marks a stale offer as no longer acceptable', () => {
+    const page = panelMarkup(view({ offers: [{ ...offer, valid: false }] }))
+
+    expect(page).toContain('data-valid="false"')
+    expect(page).toContain('Ya no es aceptable.')
+  })
+
+  it('offers accept and reject to the receiver and withdraw to the proposer', () => {
+    const actions: MonopolyAction[] = [
+      proposeAction,
+      { name: 'accept', prompt: 'Aceptá', options: ['1'], freeform: false },
+      { name: 'reject', prompt: 'Rechazá', options: ['1'], freeform: false },
+      { name: 'withdraw', prompt: 'Retirá', options: ['1'], freeform: false },
+    ]
+
+    const asReceiver = panelMarkup(view({ you: 'seat-1', offers: [offer], actions }))
+    expect(asReceiver).toContain('monopoly-offer-accept')
+    expect(asReceiver).toContain('monopoly-offer-reject')
+    expect(asReceiver).not.toContain('monopoly-offer-withdraw')
+
+    const asProposer = panelMarkup(view({ you: 'seat-0', offers: [offer], actions }))
+    expect(asProposer).toContain('monopoly-offer-withdraw')
+    expect(asProposer).not.toContain('monopoly-offer-accept')
+    expect(asProposer).not.toContain('monopoly-offer-reject')
+
+    const asSpectator = panelMarkup(view({ you: undefined, offers: [offer], actions }))
+    expect(asSpectator).toContain('monopoly-offer-list')
+    expect(asSpectator).not.toContain('monopoly-offer-response')
+  })
+
+  it('renders the response actions only in the offer list, never generically', () => {
+    const actions: MonopolyAction[] = [
+      proposeAction,
+      { name: 'accept', prompt: 'Aceptá', options: ['1'], freeform: false },
+      { name: 'reject', prompt: 'Rechazá', options: ['1'], freeform: false },
+    ]
+
+    expect(actionButtons(view({ you: 'seat-1', offers: [offer], actions }))).toHaveLength(0)
+  })
+
+  it('withholds accept from a stale offer even if the server still lists it', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'accept', prompt: 'Aceptá', options: ['1'], freeform: false },
+      { name: 'reject', prompt: 'Rechazá', options: ['1'], freeform: false },
+    ]
+    const page = panelMarkup(
+      view({ you: 'seat-1', offers: [{ ...offer, valid: false }], actions }),
+    )
+
+    expect(page).not.toContain('monopoly-offer-accept')
+    expect(page).toContain('monopoly-offer-reject')
+  })
+
+  it('draws no response button the server did not offer', () => {
+    const page = panelMarkup(view({ you: 'seat-1', offers: [offer], actions: [] }))
+
+    expect(page).toContain('monopoly-offer-list')
+    expect(page).not.toContain('monopoly-offer-response')
+  })
+
+  it('submits the offer id when a response button is pressed', () => {
+    const onAction = vi.fn()
+    const actions: MonopolyAction[] = [
+      { name: 'accept', prompt: 'Aceptá', options: ['1'], freeform: false },
+      { name: 'reject', prompt: 'Rechazá', options: ['1'], freeform: false },
+      { name: 'withdraw', prompt: 'Retirá', options: ['1'], freeform: false },
+    ]
+    const raw = view({ you: 'seat-0', offers: [offer], actions })
+    const withdraw = elementsWithClass(raw, 'monopoly-offer-withdraw', { onAction })[0]
+
+    ;(withdraw.props as { onClick: () => void }).onClick()
+
+    expect(onAction).toHaveBeenCalledWith('withdraw', '1')
   })
 })

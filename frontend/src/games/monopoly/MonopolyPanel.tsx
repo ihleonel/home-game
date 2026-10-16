@@ -23,6 +23,91 @@ import { MonopolyBoard } from './MonopolyBoard'
 import './monopoly.css'
 import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
 
+/**
+ * The draft the negotiation block composes (S11).
+ *
+ * It is only the client's draft of one ``propose`` value: the receiver, the
+ * properties to hand over and to ask for, and the two amounts. It never decides
+ * whether the trade is legal -- S4 does that on the server -- and it is thrown
+ * away once the composed value is submitted.
+ */
+export type MonopolyTradeDraft = {
+  receiver: string | null
+  give: number[]
+  want: number[]
+  giveCash: number
+  wantCash: number
+}
+
+/** The draft a screen opens on: no receiver, nothing marked, no cash. */
+const EMPTY_TRADE_DRAFT: MonopolyTradeDraft = {
+  receiver: null,
+  give: [],
+  want: [],
+  giveCash: 0,
+  wantCash: 0,
+}
+
+/**
+ * The actions the negotiation block draws next to each offer (S5/S11).
+ *
+ * Their options are offer ids, so an offer's terms are the only place they make
+ * sense; the generic renderer leaves them to the block instead of drawing a
+ * bare ``prompt: id`` button. They are never freeform, so they would otherwise
+ * be drawn twice.
+ */
+const TRADE_RESPONSES = new Set(['accept', 'reject', 'withdraw'])
+
+/** Board indexes in board order, without repeats (S3). */
+function boardIndexList(indexes: number[]): string {
+  return [...new Set(indexes)].sort((left, right) => left - right).join(',')
+}
+
+/**
+ * Compose the canonical ``propose`` value (S3) from a draft, or ``null`` when
+ * no receiver was picked yet.
+ *
+ * The grammar is the server's contract, not a rule this panel enforces:
+ * comma-separated board indexes in board order with no spaces, integer amounts
+ * never below zero, and the two sides joined by ``|``. The block composes
+ * exactly this string and the server is free to reject it (S4).
+ */
+function composeTradeValue(draft: MonopolyTradeDraft): string | null {
+  if (draft.receiver === null) return null
+  const giveCash = Math.max(0, Math.trunc(draft.giveCash))
+  const wantCash = Math.max(0, Math.trunc(draft.wantCash))
+  return (
+    `to=${draft.receiver};give=${boardIndexList(draft.give)};cash=${giveCash}` +
+    `|want=${boardIndexList(draft.want)};cash=${wantCash}`
+  )
+}
+
+/** Add or remove one board index from a draft selection. */
+function toggleIndex(indexes: number[], index: number): number[] {
+  return indexes.includes(index)
+    ? indexes.filter((candidate) => candidate !== index)
+    : [...indexes, index]
+}
+
+/** An amount from a number input, clamped to ``[0, max]``; empty reads ``0``. */
+function clampedCash(raw: string, max: number): number {
+  const parsed = Number.parseInt(raw, 10)
+  if (Number.isNaN(parsed)) return 0
+  return Math.min(Math.max(parsed, 0), Math.max(max, 0))
+}
+
+/** The printed names of a set of board indexes, or ``nada`` when there are none. */
+function propertyNames(indexes: number[]): string {
+  if (indexes.length === 0) return 'nada'
+  return indexes.map((index) => spaceAt(index).name).join(', ')
+}
+
+/** The values the server offered for one action, or an empty set. */
+function offeredOptions(actions: MonopolyAction[], name: string): Set<string> {
+  const action = actions.find((candidate) => candidate.name === name)
+  return new Set(action ? action.options : [])
+}
+
 function winnerLine(view: MonopolyView, match: MatchState<MonopolyView>): string {
   if (!view.winner) return 'La partida ha terminado.'
   if (view.winner === view.you) return 'Has ganado la partida.'
@@ -158,6 +243,10 @@ function optionLabel(
  * and an action with options gets one button per option, because the runtime
  * rejects any value it did not offer. ``build`` and ``sell`` get the dedicated
  * presentation above; every other action keeps the plain ``prompt: option``.
+ *
+ * A ``freeform`` action is **skipped**: its value is composed by the
+ * negotiation block, and a generic button would submit ``null`` to an action
+ * that requires a composed value (S11).
  */
 function actionButtons(
   action: MonopolyAction,
@@ -165,6 +254,7 @@ function actionButtons(
   onAction: (name: string, value: string | null) => void,
   buildings: Record<string, number>,
 ): ReactElement[] {
+  if (action.freeform) return []
   if (action.options.length === 0) {
     return [
       <button
@@ -307,12 +397,263 @@ function auctionBlock(auction: MonopolyAuction, match: MatchState<MonopolyView>)
   )
 }
 
+/**
+ * The negotiation block: compose one ``propose`` value (S11).
+ *
+ * It is drawn only when the server offers ``propose``. The receiver is picked
+ * among the other non-eliminated seats -- what the view shows, never a
+ * solvency rule it computes -- and the two property groups are the own seat's
+ * and the chosen receiver's own lists. The two amounts are bounded by the cash
+ * the view carries. The block composes the S3 grammar and hands it to the
+ * existing action channel; it never decides whether the trade is legal.
+ */
+function tradeFormBlock(
+  view: MonopolyView,
+  match: MatchState<MonopolyView>,
+  busy: boolean,
+  onAction: (name: string, value: string | null) => void,
+  trade: MonopolyTradeDraft,
+  onTradeChange: (next: MonopolyTradeDraft) => void,
+  own: MonopolyPlayer,
+): ReactElement {
+  const candidates = view.players.filter(
+    (player) => player.seat !== view.you && !player.eliminated,
+  )
+  const receiver =
+    trade.receiver === null
+      ? null
+      : view.players.find((player) => player.seat === trade.receiver) ?? null
+  const composed = composeTradeValue(trade)
+  const ownProperties = [...own.properties].sort((left, right) => left - right)
+  const receiverProperties = receiver === null ? [] : [...receiver.properties].sort((left, right) => left - right)
+  return (
+    <div className="monopoly-players-block monopoly-trade">
+      <h3 className="monopoly-block-title">Comercio</h3>
+      <label className="monopoly-trade-receiver-field">
+        <span className="monopoly-trade-field-label">Receptor</span>
+        <select
+          className="monopoly-trade-receiver"
+          disabled={busy}
+          onChange={(event) =>
+            onTradeChange({
+              ...trade,
+              receiver: event.target.value === '' ? null : event.target.value,
+              want: [],
+            })
+          }
+          value={trade.receiver ?? ''}
+        >
+          <option value="">Elegí un asiento</option>
+          {candidates.map((candidate) => (
+            <option key={candidate.seat} value={candidate.seat}>
+              {seatName(match, candidate.seat)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="monopoly-trade-side monopoly-trade-give">
+        <p className="monopoly-trade-side-title">Entregás</p>
+        {ownProperties.length === 0 ? (
+          <p className="monopoly-trade-empty">No tenés propiedades para entregar.</p>
+        ) : (
+          <ul className="monopoly-trade-properties">
+            {ownProperties.map((index) => (
+              <li className="monopoly-trade-property-item" key={index}>
+                <label>
+                  <input
+                    checked={trade.give.includes(index)}
+                    className="monopoly-trade-property monopoly-trade-give-property"
+                    disabled={busy}
+                    onChange={() =>
+                      onTradeChange({ ...trade, give: toggleIndex(trade.give, index) })
+                    }
+                    type="checkbox"
+                    value={index}
+                  />
+                  {spaceAt(index).name}
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label className="monopoly-trade-cash-field">
+          <span>Efectivo que entregás</span>
+          <input
+            className="monopoly-trade-cash monopoly-trade-give-cash"
+            disabled={busy}
+            max={Math.max(own.cash, 0)}
+            min={0}
+            onChange={(event) =>
+              onTradeChange({ ...trade, giveCash: clampedCash(event.target.value, own.cash) })
+            }
+            type="number"
+            value={trade.giveCash}
+          />
+        </label>
+      </div>
+
+      <div className="monopoly-trade-side monopoly-trade-want">
+        <p className="monopoly-trade-side-title">Pedís</p>
+        {receiver === null ? (
+          <p className="monopoly-trade-empty">Elegí un receptor para ver sus propiedades.</p>
+        ) : receiverProperties.length === 0 ? (
+          <p className="monopoly-trade-empty">Ese asiento no tiene propiedades.</p>
+        ) : (
+          <ul className="monopoly-trade-properties">
+            {receiverProperties.map((index) => (
+              <li className="monopoly-trade-property-item" key={index}>
+                <label>
+                  <input
+                    checked={trade.want.includes(index)}
+                    className="monopoly-trade-property monopoly-trade-want-property"
+                    disabled={busy}
+                    onChange={() =>
+                      onTradeChange({ ...trade, want: toggleIndex(trade.want, index) })
+                    }
+                    type="checkbox"
+                    value={index}
+                  />
+                  {spaceAt(index).name}
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label className="monopoly-trade-cash-field">
+          <span>Efectivo que pedís</span>
+          <input
+            className="monopoly-trade-cash monopoly-trade-want-cash"
+            disabled={busy}
+            max={receiver === null ? 0 : Math.max(receiver.cash, 0)}
+            min={0}
+            onChange={(event) =>
+              onTradeChange({
+                ...trade,
+                wantCash: clampedCash(event.target.value, receiver === null ? 0 : receiver.cash),
+              })
+            }
+            type="number"
+            value={trade.wantCash}
+          />
+        </label>
+      </div>
+
+      <button
+        className="monopoly-trade-send"
+        disabled={busy || composed === null}
+        onClick={() => {
+          if (composed !== null) onAction('propose', composed)
+        }}
+        type="button"
+      >
+        Proponer el trato
+      </button>
+    </div>
+  )
+}
+
+/**
+ * The open offers, for the whole table (S10).
+ *
+ * Each offer reads its terms with printed names, the amounts and which side
+ * belongs to whom, and a stale offer is marked as no longer acceptable. The
+ * response buttons come from the server's own ``accept``/``reject``/``withdraw``
+ * options, so the block never invents an action: accept is only drawn for an
+ * offer the view marked valid and only for its receiver, reject for its
+ * receiver, withdraw for its proposer. A spectator sees the terms and no
+ * button.
+ */
+function offersBlock(
+  view: MonopolyView,
+  match: MatchState<MonopolyView>,
+  busy: boolean,
+  onAction: (name: string, value: string | null) => void,
+): ReactElement | null {
+  const offers = view.offers ?? []
+  if (offers.length === 0) return null
+  const accepts = offeredOptions(view.actions, 'accept')
+  const rejects = offeredOptions(view.actions, 'reject')
+  const withdraws = offeredOptions(view.actions, 'withdraw')
+  return (
+    <div className="monopoly-players-block monopoly-offers">
+      <h3 className="monopoly-block-title">Ofertas abiertas</h3>
+      <ul className="monopoly-offer-list">
+        {offers.map((offer) => {
+          const proposer = seatName(match, offer.proposer)
+          const canAccept =
+            offer.valid && offer.receiver === view.you && accepts.has(offer.id)
+          const canReject = offer.receiver === view.you && rejects.has(offer.id)
+          const canWithdraw = offer.proposer === view.you && withdraws.has(offer.id)
+          return (
+            <li
+              className="monopoly-offer"
+              data-valid={offer.valid ? 'true' : 'false'}
+              key={offer.id}
+            >
+              <p className="monopoly-offer-line monopoly-offer-give">
+                {`${proposer} entrega ${propertyNames(offer.give.properties)} y ${formatMoney(
+                  offer.give.cash,
+                )}.`}
+              </p>
+              <p className="monopoly-offer-line monopoly-offer-want">
+                {`${proposer} pide ${propertyNames(offer.want.properties)} y ${formatMoney(
+                  offer.want.cash,
+                )}.`}
+              </p>
+              {!offer.valid && (
+                <p className="monopoly-offer-invalid">Ya no es aceptable.</p>
+              )}
+              {(canAccept || canReject || canWithdraw) && (
+                <div className="monopoly-offer-actions">
+                  {canAccept && (
+                    <button
+                      className="monopoly-offer-response monopoly-offer-accept"
+                      disabled={busy}
+                      onClick={() => onAction('accept', offer.id)}
+                      type="button"
+                    >
+                      Aceptar
+                    </button>
+                  )}
+                  {canReject && (
+                    <button
+                      className="monopoly-offer-response monopoly-offer-reject"
+                      disabled={busy}
+                      onClick={() => onAction('reject', offer.id)}
+                      type="button"
+                    >
+                      Rechazar
+                    </button>
+                  )}
+                  {canWithdraw && (
+                    <button
+                      className="monopoly-offer-response monopoly-offer-withdraw"
+                      disabled={busy}
+                      onClick={() => onAction('withdraw', offer.id)}
+                      type="button"
+                    >
+                      Retirar
+                    </button>
+                  )}
+                </div>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 type MonopolyPanelLayoutProps = {
   match: MatchState<MonopolyView>
   busy: boolean
   onAction: (name: string, value: string | null) => void
   selected: number | null
   onSelect: (index: number) => void
+  trade: MonopolyTradeDraft
+  onTradeChange: (next: MonopolyTradeDraft) => void
 }
 
 /**
@@ -331,6 +672,7 @@ type MonopolyPanelLayoutProps = {
  */
 export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<MonopolyView>) {
   const [selected, setSelected] = useState<number | null>(null)
+  const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
   return (
     <MonopolyPanelLayout
       match={match}
@@ -338,6 +680,8 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
       onAction={onAction}
       selected={selected}
       onSelect={setSelected}
+      trade={trade}
+      onTradeChange={setTrade}
     />
   )
 }
@@ -348,10 +692,14 @@ export function MonopolyPanelLayout({
   onAction,
   selected,
   onSelect,
+  trade,
+  onTradeChange,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
   const ownGroups = own === null ? [] : ownPropertyGroups(own)
+  const canPropose = view.actions.some((action) => action.name === 'propose')
+  const genericActions = view.actions.filter((action) => !TRADE_RESPONSES.has(action.name))
 
   return (
     <section className="monopoly-panel" aria-label="Mesa de Monopoly">
@@ -375,6 +723,11 @@ export function MonopolyPanelLayout({
               ownSeatBlock(own, ownGroups, view.buildings, view.mortgaged)
             )}
           </div>
+
+          {own !== null && canPropose &&
+            tradeFormBlock(view, match, busy, onAction, trade, onTradeChange, own)}
+
+          {offersBlock(view, match, busy, onAction)}
 
           {view.decks !== null && (
             <div className="monopoly-players-block monopoly-decks">
@@ -423,11 +776,11 @@ export function MonopolyPanelLayout({
             </div>
           )}
 
-          {view.actions.length > 0 && (
+          {genericActions.length > 0 && (
             <div className="monopoly-actions-block">
               <h3 className="monopoly-block-title">Acciones</h3>
               <div className="monopoly-actions" role="group" aria-label="Acciones disponibles">
-                {view.actions.map((action) =>
+                {genericActions.map((action) =>
                   actionButtons(action, busy, onAction, view.buildings),
                 )}
               </div>

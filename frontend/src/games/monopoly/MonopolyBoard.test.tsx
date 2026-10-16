@@ -54,6 +54,7 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     bank: null,
     debt: null,
     auction: null,
+    offers: [],
     actions: [],
     you: 'seat-0',
     ...overrides,

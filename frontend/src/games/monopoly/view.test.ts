@@ -49,9 +49,10 @@ function rawView(overrides: Record<string, unknown> = {}): Record<string, unknow
     bank: { houses: 30, hotels: 11 },
     debt: null,
     auction: null,
+    offers: [],
     last_roll: [1, 2],
     pending: null,
-    actions: [{ name: 'roll', prompt: 'Tirá los dados.', options: [] }],
+    actions: [{ name: 'roll', prompt: 'Tirá los dados.', options: [], freeform: false }],
     you: 'seat-0',
     ...overrides,
   }
@@ -90,6 +91,7 @@ describe('the monopoly view parser', () => {
     delete payload.mortgaged
     delete payload.bank
     delete payload.debt
+    delete payload.offers
 
     expect(parseMonopolyView(payload)).toEqual({
       finished: false,
@@ -105,10 +107,120 @@ describe('the monopoly view parser', () => {
       bank: null,
       debt: null,
       auction: null,
+      offers: [],
       last_roll: null,
       pending: null,
       actions: [],
     })
+  })
+
+  it('reads the open offers field by field, in id order', () => {
+    const offers = [
+      {
+        id: '1',
+        proposer: 'seat-0',
+        receiver: 'seat-1',
+        give: { properties: [1, 3], cash: 100 },
+        want: { properties: [5], cash: 0 },
+        valid: true,
+      },
+      {
+        id: '2',
+        proposer: 'seat-1',
+        receiver: 'seat-0',
+        give: { properties: [], cash: 0 },
+        want: { properties: [], cash: 50 },
+        valid: false,
+      },
+    ]
+    const view = parseMonopolyView(rawView({ offers }))
+
+    expect(view?.offers).toEqual(offers)
+  })
+
+  it('treats a payload from before this increment as no offers', () => {
+    const payload = rawView()
+    delete payload.offers
+
+    const view = parseMonopolyView(payload)
+
+    expect(view).not.toBeNull()
+    expect(view?.offers).toEqual([])
+  })
+
+  it('treats a malformed offers field as no offers and keeps the view', () => {
+    const objectField = parseMonopolyView(rawView({ offers: { id: '1' } }))
+    const stringField = parseMonopolyView(rawView({ offers: 'none' }))
+    const nullField = parseMonopolyView(rawView({ offers: null }))
+
+    expect(objectField?.offers).toEqual([])
+    expect(stringField?.offers).toEqual([])
+    expect(nullField?.offers).toEqual([])
+    expect(objectField).not.toBeNull()
+    expect(objectField?.players).toHaveLength(2)
+  })
+
+  it('drops only the malformed offers and keeps the good ones', () => {
+    const valid = {
+      id: '1',
+      proposer: 'seat-0',
+      receiver: 'seat-1',
+      give: { properties: [1, 3], cash: 100 },
+      want: { properties: [5], cash: 0 },
+      valid: true,
+    }
+    const view = parseMonopolyView(
+      rawView({
+        offers: [
+          valid,
+          { ...valid, id: 7 },
+          { ...valid, proposer: '' },
+          { ...valid, receiver: 3 },
+          { ...valid, valid: 'yes' },
+          { ...valid, give: { properties: [40], cash: 0 } },
+          { ...valid, give: { properties: [1], cash: -1 } },
+          { ...valid, give: { properties: [1] } },
+          { ...valid, want: { properties: '5', cash: 0 } },
+          'nope',
+        ],
+      }),
+    )
+
+    expect(view?.offers).toEqual([valid])
+    expect(view?.players).toHaveLength(2)
+    expect(view?.owners).toEqual({ '3': 'seat-0' })
+    expect(view?.last_card).not.toBeNull()
+  })
+
+  it('reads freeform per action, false and true', () => {
+    const actions = [
+      { name: 'propose', prompt: 'Proponé un trato.', options: [], freeform: true },
+      { name: 'roll', prompt: 'Tirá los dados.', options: [], freeform: false },
+    ]
+    const view = parseMonopolyView(rawView({ actions }))
+
+    expect(view?.actions).toEqual(actions)
+  })
+
+  it('defaults a missing freeform to false so an older payload keeps working', () => {
+    const view = parseMonopolyView(
+      rawView({ actions: [{ name: 'roll', prompt: 'Tirá los dados.', options: [] }] }),
+    )
+
+    expect(view?.actions).toHaveLength(1)
+    expect(view?.actions[0].freeform).toBe(false)
+  })
+
+  it('treats a malformed freeform as false without costing the action', () => {
+    const view = parseMonopolyView(
+      rawView({
+        actions: [{ name: 'propose', prompt: 'Proponé un trato.', options: [], freeform: 'yes' }],
+      }),
+    )
+
+    expect(view?.actions).toHaveLength(1)
+    expect(view?.actions[0].name).toBe('propose')
+    expect(view?.actions[0].freeform).toBe(false)
   })
 
   it('reads a well-formed auction field by field', () => {

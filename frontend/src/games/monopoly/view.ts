@@ -78,11 +78,17 @@ export type MonopolyBank = {
  * ``options`` is enumerated by the server: the runtime rejects a value it did
  * not offer, so a screen never invents one. An empty list means the action
  * carries no value.
+ *
+ * ``freeform`` marks the actions whose value the server does not enumerate and
+ * the client must compose (S3/S10): ``propose`` is the first one. It defaults
+ * to ``false`` when the field is missing, so a payload from before this
+ * increment keeps offering its enumerated actions exactly as it did.
  */
 export type MonopolyAction = {
   name: string
   prompt: string
   options: string[]
+  freeform: boolean
 }
 
 /** The decision a landed space opened and the turn is waiting on. */
@@ -103,6 +109,35 @@ export type MonopolyAuction = {
   high_bid: number
   high_bidder: string | null
   waiting_for: string[]
+}
+
+/**
+ * One side of a trade offer (S10): the properties and the cash, together.
+ *
+ * ``properties`` are board indexes as the whole-array list the offer carries;
+ * ``cash`` is whole dollars. The parser only checks they are a readable shape,
+ * never that the offer is legal -- that is S4's job on the server.
+ */
+export type MonopolyTradeTerms = {
+  properties: number[]
+  cash: number
+}
+
+/**
+ * One open trade offer as the view publishes it (S10).
+ *
+ * ``give`` is what the **proposer** hands over and ``want`` what the proposer
+ * asks for; ``valid`` is the server's live answer to S4 on the current state,
+ * never recomputed here. An offer the server marked ``valid: false`` is still
+ * shown: it can be rejected or withdrawn, only ``accept`` is withheld.
+ */
+export type MonopolyOffer = {
+  id: string
+  proposer: string
+  receiver: string
+  give: MonopolyTradeTerms
+  want: MonopolyTradeTerms
+  valid: boolean
 }
 
 /**
@@ -156,6 +191,13 @@ export type MonopolyView = MatchRuntimeView & {
   /** The open debt while the phase is ``raising_cash``, or ``null``. */
   debt: MonopolyDebt | null
   auction: MonopolyAuction | null
+  /**
+   * The open trade offers, in id order (S10). An empty list means nobody is
+   * negotiating, and a payload from before this increment reads the same way.
+   * The parser always publishes it, exactly like ``buildings`` and
+   * ``mortgaged``, because every consumer would otherwise repeat the fallback.
+   */
+  offers: MonopolyOffer[]
   actions: MonopolyAction[]
 }
 
@@ -275,6 +317,53 @@ function readDebt(value: unknown): MonopolyDebt | null {
   if (!(creditor === null || (typeof creditor === 'string' && creditor.length > 0))) return null
   if (!isInteger(amount) || amount <= 0) return null
   return { seat, creditor, amount }
+}
+
+/** Read one side of an offer, or ``null`` when it cannot be read honestly. */
+function readTradeTerms(value: unknown): MonopolyTradeTerms | null {
+  if (!isRecord(value)) return null
+  const { properties, cash } = value
+  if (!Array.isArray(properties)) return null
+  const indexes: number[] = []
+  for (const property of properties) {
+    if (!isBoardIndex(property)) return null
+    indexes.push(property)
+  }
+  if (!isInteger(cash) || cash < 0) return null
+  return { properties: indexes, cash }
+}
+
+/** Read one open offer, or ``null`` when it cannot be read honestly. */
+function readOffer(value: unknown): MonopolyOffer | null {
+  if (!isRecord(value)) return null
+  const { id, proposer, receiver, give, want, valid } = value
+  if (typeof id !== 'string' || id.length === 0) return null
+  if (typeof proposer !== 'string' || proposer.length === 0) return null
+  if (typeof receiver !== 'string' || receiver.length === 0) return null
+  const termsGive = readTradeTerms(give)
+  if (termsGive === null) return null
+  const termsWant = readTradeTerms(want)
+  if (termsWant === null) return null
+  if (typeof valid !== 'boolean') return null
+  return { id, proposer, receiver, give: termsGive, want: termsWant, valid }
+}
+
+/**
+ * Read the open offers.
+ *
+ * Each offer is all-or-nothing: a missing or malformed field costs that entry
+ * and no other, the way a malformed action costs a button and never the match
+ * screen. A payload without the field -- one from before this increment -- is
+ * simply a match where nobody is negotiating.
+ */
+function readOffers(value: unknown): MonopolyOffer[] {
+  if (!Array.isArray(value)) return []
+  const offers: MonopolyOffer[] = []
+  for (const entry of value) {
+    const offer = readOffer(entry)
+    if (offer !== null) offers.push(offer)
+  }
+  return offers
 }
 
 /**
@@ -397,7 +486,11 @@ function readAction(value: unknown): MonopolyAction | null {
       offered.push(option)
     }
   }
-  return { name, prompt, options: offered }
+  // A missing freeform is an enumerated action, which is what every payload
+  // before this increment meant. A malformed flag reads the same way: the safe
+  // default is to keep drawing the server's own buttons, never to hide them.
+  const freeform = value.freeform === true
+  return { name, prompt, options: offered, freeform }
 }
 
 /**
@@ -429,9 +522,10 @@ function readActions(value: unknown): MonopolyAction[] {
  * other parser in this folder does: a malformed optional field costs that
  * field, never the whole screen. ``turn``, ``last_roll``, ``pending``,
  * ``decks``, ``last_card``, ``bank``, ``debt`` and ``auction`` become ``null``,
- * ``buildings`` and ``mortgaged`` become ``{}``, ``actions`` loses only its bad
- * entries, a seat's ``jail_cards`` becomes ``0``, and an optional field of the
- * wrong type is left out so the component's own fallback covers it.
+ * ``buildings`` and ``mortgaged`` become ``{}``, ``offers`` becomes ``[]``,
+ * ``actions`` loses only its bad entries, a seat's ``jail_cards`` becomes
+ * ``0``, and an optional field of the wrong type is left out so the
+ * component's own fallback covers it.
  */
 export function parseMonopolyView(raw: unknown): MonopolyView | null {
   if (!isRecord(raw)) return null
@@ -467,6 +561,7 @@ export function parseMonopolyView(raw: unknown): MonopolyView | null {
     bank: readBank(raw.bank),
     debt: readDebt(raw.debt),
     auction: readAuction(raw.auction),
+    offers: readOffers(raw.offers),
     actions: readActions(raw.actions),
   }
 

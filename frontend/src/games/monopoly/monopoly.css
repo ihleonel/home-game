@@ -718,6 +718,108 @@
   font-weight: 750;
 }
 
+/* S11: the negotiation block and the open offers. The block is the own seat's
+   live draft, so it wears the same accent outline as the auction and the debt;
+   the offers list stays neutral like the other public blocks. Pure CSS: no
+   asset travels with the skin. */
+.monopoly-trade {
+  border-color: var(--monopoly-you-border);
+}
+
+.monopoly-trade-receiver-field,
+.monopoly-trade-cash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.78rem;
+}
+
+.monopoly-trade-receiver,
+.monopoly-trade-cash {
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--monopoly-line);
+  border-radius: 0.5rem;
+  background: var(--monopoly-paper);
+  color: var(--monopoly-ink);
+  font-weight: 650;
+}
+
+.monopoly-trade-side + .monopoly-trade-side {
+  margin-top: 0.6rem;
+}
+
+.monopoly-trade-side-title {
+  margin: 0 0 0.25rem;
+  color: var(--monopoly-you);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.monopoly-trade-properties {
+  margin: 0 0 0.4rem;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-trade-property-item {
+  padding: 0.12rem 0;
+}
+
+.monopoly-trade-property-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--monopoly-ink);
+  font-size: 0.82rem;
+}
+
+.monopoly-trade-empty {
+  margin: 0 0 0.4rem;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.monopoly-offer-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-offer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+
+/* A stale offer is never hidden: it is only shown as no longer acceptable. */
+.monopoly-offer[data-valid='false'] {
+  opacity: 0.75;
+}
+
+.monopoly-offer-line {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-size: 0.82rem;
+}
+
+.monopoly-offer-invalid {
+  margin: 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.monopoly-offer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .monopoly-auction-bid {
   color: var(--monopoly-you);
 }
@@ -845,7 +947,9 @@
   gap: 0.5rem;
 }
 
-.monopoly-action {
+.monopoly-action,
+.monopoly-trade-send,
+.monopoly-offer-response {
   flex: 1 1 auto;
   min-height: 2.5rem;
   padding: 0.45rem 0.7rem;
@@ -856,7 +960,9 @@
   font-weight: 700;
 }
 
-.monopoly-action:disabled {
+.monopoly-action:disabled,
+.monopoly-trade-send:disabled,
+.monopoly-offer-response:disabled {
   cursor: default;
   opacity: 0.55;
 }
