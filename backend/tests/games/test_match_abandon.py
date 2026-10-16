@@ -216,10 +216,28 @@ class AbandonExpiredSeatsTests(TestCase):
         self.match.refresh_from_db()
         self.assertEqual(self.match.status, Match.Status.IN_PROGRESS)
 
-    def test_leaves_a_never_socketed_offline_seat_alone(self):
-        # An offline row that never held a socket is pre-existing product
-        # slack, not the disconnect this feature resolves; sweeping it would
-        # change unrelated behaviour.
+    def test_resolves_a_never_socketed_seat_once_its_window_expires(self):
+        # A membership posted over REST whose socket never opened carries no
+        # ``disconnected_at`` to measure, so its window is its last write --
+        # the same rule the membership reaper already applies to an offline
+        # row. Without it the seat has no exit at all: it cannot leave while
+        # it is ready, the reaper skips a busy room, and the vote never
+        # targets an offline row, so the match waits forever for somebody who
+        # is not there.
+        self.expire(self.second, presence=Participant.Presence.OFFLINE)
+        Participant.objects.filter(pk=self.second.pk).update(
+            updated_at=timezone.now()
+            - timedelta(seconds=RECONNECT_GRACE_SECONDS + 1)
+        )
+
+        outcome = abandon_expired_seats()
+
+        self.assertEqual(outcome.seats_resolved, 1)
+        self.assert_match_finished_by_abandonment()
+
+    def test_leaves_a_fresh_never_socketed_seat_alone(self):
+        # A row written moments ago keeps its whole window: the arrival may
+        # still be opening its socket, which is the race the window bounds.
         self.expire(self.second, presence=Participant.Presence.OFFLINE)
 
         outcome = abandon_expired_seats()
