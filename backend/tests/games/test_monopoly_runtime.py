@@ -231,6 +231,49 @@ class MonopolyRuntimeTests(SimpleTestCase):
             ['seat-0', 'seat-1'],
         )
 
+    def _seed_managing_brown(self):
+        """Give seat-0 complete brown and hand it the free building window."""
+        current = self._current()
+        current.state['owners'] = {'1': 'seat-0', '3': 'seat-0'}
+        current.state['players']['seat-0']['properties'] = [1, 3]
+        current.state['players']['seat-0']['cash'] = 1500
+        current.state['phase'] = 'managing'
+        current.state['turn'] = 'seat-0'
+        return current
+
+    def test_a_build_through_the_runtime_publishes_the_buildings(self):
+        current = self._seed_managing_brown()
+
+        result = self._submit('p0', 'build', value='1')
+
+        published = self.projector.publishes[-1]
+        self.assertEqual(result.version, current.version + 1)
+        self.assertEqual(result.state['buildings'], {'1': 1})
+        self.assertEqual(result.state['bank'], {'houses': 31, 'hotels': 12})
+        self.assertEqual(published['event'], 'match_updated')
+        self.assertEqual(
+            published['facts'],
+            (
+                {
+                    'name': 'building_bought',
+                    'seat': 'seat-0',
+                    'detail': {'space': 1, 'level': 1, 'price': 50},
+                },
+            ),
+        )
+        self.assertEqual(published['views']['seat-0']['buildings'], {'1': 1})
+        self.assertEqual(
+            published['views'][None]['bank'], {'houses': 31, 'hotels': 12}
+        )
+
+    def test_a_build_the_seat_was_not_offered_is_rejected(self):
+        self._seed_managing_brown()
+
+        with self.assertRaises(IllegalAction) as caught:
+            self._submit('p0', 'build', value='39')
+
+        self.assertEqual(caught.exception.action_name, 'build')
+
     def test_abandon_finishes_the_match_for_the_seat_that_stayed(self):
         final = abandon_seat(
             match_ref=self.record.match_ref,

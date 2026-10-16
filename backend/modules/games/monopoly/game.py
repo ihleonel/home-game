@@ -94,10 +94,11 @@ class MonopolyDefinition:
         """Return the seat-scoped or spectator view of the match (S13).
 
         The public economy of a Monopoly match -- positions, cash, owners, the
-        last throw and the last card turned up -- is visible to everyone, so a
-        spectator sees the same board as a player. The only difference is
-        ``you`` and ``actions``: the legal actions belong to one seat, so they
-        are offered to that seat and to nobody else.
+        houses standing on the board, the bank's remaining stock, the last throw
+        and the last card turned up -- is visible to everyone, so a spectator
+        sees the same board as a player. The only difference is ``you`` and
+        ``actions``: the legal actions belong to one seat, so they are offered
+        to that seat and to nobody else.
 
         The deck **order** never reaches this projection: a seat learns how many
         cards are left, and the card that was drawn is published only because it
@@ -113,6 +114,8 @@ class MonopolyDefinition:
             'turn': None if finished else state['turn'],
             'players': [self._player_view(state, seat_id_) for seat_id_ in state['seats']],
             'owners': dict(state['owners']),
+            'buildings': dict(state.get('buildings') or {}),
+            'bank': dict(state['bank']),
             'decks': {
                 deck: len(order) for deck, order in state['decks'].items()
             },

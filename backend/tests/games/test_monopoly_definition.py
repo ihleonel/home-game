@@ -228,6 +228,44 @@ class MonopolyDefinitionTests(SimpleTestCase):
             ['actions', 'players'],
         )
 
+    def test_the_opening_view_has_no_buildings_and_the_full_bank(self):
+        state = self._start()
+
+        seat_view = self.definition.view(state, 'seat-0')
+        spectator_view = self.definition.view(state, None)
+
+        self.assertEqual(seat_view['buildings'], {})
+        self.assertEqual(seat_view['bank'], {'houses': 32, 'hotels': 12})
+        self.assertEqual(spectator_view['buildings'], {})
+        self.assertEqual(spectator_view['bank'], {'houses': 32, 'hotels': 12})
+
+    def test_the_view_publishes_the_buildings_and_the_bank_stock(self):
+        state = self._start()
+        state['owners'] = {'1': 'seat-0', '3': 'seat-0'}
+        state['players']['seat-0']['properties'] = [1, 3]
+        state['phase'] = 'managing'
+
+        transition = self.definition.apply(
+            state, 'seat-0', Action(name='build', value='1'), None
+        )
+
+        seat_view = self.definition.view(transition.state, 'seat-0')
+        spectator_view = self.definition.view(transition.state, None)
+
+        self.assertEqual(seat_view['buildings'], {'1': 1})
+        self.assertEqual(seat_view['bank'], {'houses': 31, 'hotels': 12})
+        self.assertEqual(seat_view['you'], 'seat-0')
+        # The buildings are physical objects on the table: the spectator sees
+        # them and the bank stock too, and only loses ``you``/``actions``.
+        self.assertEqual(spectator_view['buildings'], {'1': 1})
+        self.assertEqual(spectator_view['bank'], {'houses': 31, 'hotels': 12})
+        self.assertNotIn('you', spectator_view)
+        self.assertEqual(spectator_view['actions'], [])
+
+        round_tripped = json.loads(json.dumps(transition.state))
+        self.assertEqual(round_tripped, transition.state)
+        self.assertEqual(self.definition.view(round_tripped, None), spectator_view)
+
     def test_the_view_publishes_the_card_that_was_turned_up(self):
         state = self._start()
         state = self.definition.apply(
