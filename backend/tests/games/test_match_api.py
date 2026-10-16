@@ -741,8 +741,11 @@ class MonopolyRollApiTests(APITestCase):
         self.assertEqual(len(faces), 2)
         self.assertIn(faces[0], range(1, 7))
         self.assertIn(faces[1], range(1, 7))
-        # The token left GO: no first throw can leave it where it started.
-        self.assertNotEqual(stored.state['players']['seat-0']['position'], 0)
+        # No "the token left GO" check: Community Chest's first printed card
+        # advances the token to GO, and this path throws with the live
+        # RandomSource, so a total of two legitimately leaves it at zero and
+        # the assertion was flaky by construction. What matters is the check
+        # below: the client is told the position that was stored.
         # The seat the client is told about is the seat that was persisted.
         self.assertEqual(
             response.data['view']['players'][0]['position'],
