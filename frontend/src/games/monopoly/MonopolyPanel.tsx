@@ -13,7 +13,7 @@ import {
 import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
 import './monopoly.css'
-import type { MonopolyAction, MonopolyPlayer, MonopolyView } from './view'
+import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
 
 function winnerLine(view: MonopolyView, match: MatchState<MonopolyView>): string {
   if (!view.winner) return 'La partida ha terminado.'
@@ -182,6 +182,51 @@ function ownSeatBlock(
   )
 }
 
+/**
+ * The open auction as the whole table sees it (S9).
+ *
+ * It reads only the public ``auction`` field: the space, the standing high bid
+ * and its holder, and the roster names still to bid. It deliberately renders no
+ * control: the eligible seats already receive their own ``bid`` and ``pass``
+ * actions, and the actions block draws one button per option.
+ */
+function auctionBlock(auction: MonopolyAuction, match: MatchState<MonopolyView>): ReactElement {
+  const noBids = auction.high_bid === 0 && auction.high_bidder === null
+  const waiting = auction.waiting_for.map((seat) => seatName(match, seat))
+  return (
+    <div className="monopoly-players-block monopoly-auction">
+      <h3 className="monopoly-block-title">Subasta</h3>
+      <dl className="monopoly-own-facts">
+        <div className="monopoly-own-fact">
+          <dt>Casilla</dt>
+          <dd className="monopoly-auction-space">{spaceAt(auction.space).name}</dd>
+        </div>
+        <div className="monopoly-own-fact">
+          <dt>Puja más alta</dt>
+          <dd className="monopoly-auction-bid">
+            {noBids ? 'Todavía no hay pujas.' : formatMoney(auction.high_bid)}
+          </dd>
+        </div>
+        {auction.high_bidder !== null && (
+          <div className="monopoly-own-fact">
+            <dt>Mayor postor</dt>
+            <dd className="monopoly-auction-bidder">
+              {`${seatName(match, auction.high_bidder)}${
+                auction.high_bidder === match.view.you ? ' (tú)' : ''
+              }`}
+            </dd>
+          </div>
+        )}
+      </dl>
+      <p className="monopoly-auction-waiting">
+        {waiting.length === 0
+          ? 'No queda nadie por pujar.'
+          : `Esperando la puja de ${waiting.join(', ')}.`}
+      </p>
+    </div>
+  )
+}
+
 type MonopolyPanelLayoutProps = {
   match: MatchState<MonopolyView>
   busy: boolean
@@ -266,6 +311,8 @@ export function MonopolyPanelLayout({
               </dl>
             </div>
           )}
+
+          {view.auction !== null && auctionBlock(view.auction, match)}
 
           {view.actions.length > 0 && (
             <div className="monopoly-actions-block">

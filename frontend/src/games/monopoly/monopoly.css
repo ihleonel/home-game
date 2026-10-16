@@ -202,6 +202,22 @@
   border-width: 2px;
 }
 
+/* The space under auction is marked without relying on colour: a dashed,
+   thicker border reads even in monochrome, and the inset ring keeps it visible
+   over the pressed state. The accessible name carries the same fact in words. */
+.monopoly-space-auction {
+  border-style: dashed;
+  border-width: 2px;
+  box-shadow: inset 0 0 0 2px var(--monopoly-you-border);
+}
+
+/* The open auction is a live line in the centre, set apart like the drawn
+   card so it cannot be mistaken for the roll. */
+.monopoly-auction-line {
+  border-left: 2px solid var(--monopoly-you-border);
+  padding-left: 0.3rem;
+}
+
 /* The drawn card is not a die roll: it gets its own marker so the two lines in
    the centre cannot be confused, and it is set apart from the detail below it. */
 .monopoly-card {
@@ -290,6 +306,22 @@
   border: 1px solid var(--monopoly-line);
   border-radius: 0.75rem;
   background: var(--monopoly-surface);
+}
+
+/* The auction is transient and blocks the turn, so its block is outlined in the
+   own-seat accent rather than the neutral line every other block carries. */
+.monopoly-auction {
+  border-color: var(--monopoly-you-border);
+}
+
+.monopoly-auction-bid {
+  color: var(--monopoly-you);
+}
+
+.monopoly-auction-waiting {
+  margin: 0.5rem 0 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.82rem;
 }
 
 .monopoly-block-title {

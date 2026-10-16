@@ -49,6 +49,7 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     pending: null,
     decks: null,
     last_card: null,
+    auction: null,
     actions: [],
     you: 'seat-0',
     ...overrides,
@@ -228,6 +229,65 @@ describe('the monopoly player panel', () => {
 
   it('shows no deck count when the view carries no deck information', () => {
     expect(panelMarkup(view({ decks: null }))).not.toContain('monopoly-deck-count')
+  })
+
+  it('shows the auction space, the high bid, its holder and who is still to bid', () => {
+    const page = panelMarkup(
+      view({
+        auction: { space: 3, high_bid: 70, high_bidder: 'seat-1', waiting_for: ['seat-0'] },
+      }),
+    )
+
+    expect(page).toContain('monopoly-auction-space">Avenida Báltica<')
+    expect(page).toContain('monopoly-auction-bid">$70<')
+    expect(page).toContain('monopoly-auction-bidder">Beto<')
+    expect(page).toContain('Esperando la puja de Ana.')
+  })
+
+  it('says there are no bids yet when nobody has bid', () => {
+    const page = panelMarkup(
+      view({
+        auction: { space: 3, high_bid: 0, high_bidder: null, waiting_for: ['seat-0', 'seat-1'] },
+      }),
+    )
+
+    expect(page).toContain('Todavía no hay pujas.')
+    expect(page).not.toContain('monopoly-auction-bidder')
+  })
+
+  it('shows the bidder as the viewer when it is the viewer own seat', () => {
+    const page = panelMarkup(
+      view({
+        auction: { space: 3, high_bid: 70, high_bidder: 'seat-0', waiting_for: ['seat-1'] },
+      }),
+    )
+
+    expect(page).toContain('monopoly-auction-bidder">Ana (tú)<')
+  })
+
+  it('renders no auction block when there is no auction', () => {
+    const page = panelMarkup(view({ auction: null }))
+
+    expect(page).not.toContain('monopoly-auction')
+    expect(page).not.toContain('Subasta')
+  })
+
+  it('renders the server bid options and the pass without adding an auction control', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'bid', prompt: 'Pujá', options: ['10', '20', '50'] },
+      { name: 'pass', prompt: 'Pasá la subasta.', options: [] },
+    ]
+    const open = view({
+      auction: { space: 3, high_bid: 0, high_bidder: null, waiting_for: ['seat-0', 'seat-1'] },
+      actions,
+    })
+    const buttons = actionButtons(open)
+
+    expect(buttons).toHaveLength(4)
+    expect(textOf(buttonWithLabel(buttons, 'Pujá: 10'))).toBe('Pujá: 10')
+    expect(textOf(buttonWithLabel(buttons, 'Pujá: 20'))).toBe('Pujá: 20')
+    expect(textOf(buttonWithLabel(buttons, 'Pujá: 50'))).toBe('Pujá: 50')
+    expect(textOf(buttonWithLabel(buttons, 'Pasá la subasta.'))).toBe('Pasá la subasta.')
   })
 
   it('groups the own properties by colour with their printed data', () => {

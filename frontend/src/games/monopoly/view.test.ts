@@ -44,6 +44,7 @@ function rawView(overrides: Record<string, unknown> = {}): Record<string, unknow
       id: 'chance-08',
       title: 'El banco te paga un dividendo de $50.',
     },
+    auction: null,
     last_roll: [1, 2],
     pending: null,
     actions: [{ name: 'roll', prompt: 'Tirá los dados.', options: [] }],
@@ -80,6 +81,7 @@ describe('the monopoly view parser', () => {
     delete payload.you
     delete payload.decks
     delete payload.last_card
+    delete payload.auction
 
     expect(parseMonopolyView(payload)).toEqual({
       finished: false,
@@ -90,10 +92,73 @@ describe('the monopoly view parser', () => {
       owners: { '3': 'seat-0' },
       decks: null,
       last_card: null,
+      auction: null,
       last_roll: null,
       pending: null,
       actions: [],
     })
+  })
+
+  it('reads a well-formed auction field by field', () => {
+    const auction = {
+      space: 3,
+      high_bid: 70,
+      high_bidder: 'seat-1',
+      waiting_for: ['seat-0', 'seat-1'],
+    }
+    const view = parseMonopolyView(rawView({ auction }))
+
+    expect(view?.auction).toEqual(auction)
+  })
+
+  it('recognizes the bidding phase an open auction runs in', () => {
+    const view = parseMonopolyView(rawView({ phase: 'awaiting_bid' }))
+
+    expect(view).not.toBeNull()
+    expect(view?.phase).toBe('awaiting_bid')
+  })
+
+  it('treats a payload without an auction as no auction and keeps the view', () => {
+    const payload = rawView()
+    delete payload.auction
+
+    const view = parseMonopolyView(payload)
+
+    expect(view).not.toBeNull()
+    expect(view?.auction).toBeNull()
+    expect(view?.phase).toBe('awaiting_roll')
+    expect(view?.players).toHaveLength(2)
+  })
+
+  it('drops a malformed auction as a whole and keeps the rest of the view', () => {
+    const valid = {
+      space: 3,
+      high_bid: 70,
+      high_bidder: 'seat-1',
+      waiting_for: ['seat-0'],
+    }
+
+    expect(parseMonopolyView(rawView({ auction: 'auction' }))?.auction).toBeNull()
+    expect(
+      parseMonopolyView(
+        rawView({ auction: { high_bid: 70, high_bidder: 'seat-1', waiting_for: ['seat-0'] } }),
+      )?.auction,
+    ).toBeNull()
+    expect(parseMonopolyView(rawView({ auction: { ...valid, high_bid: -1 } }))?.auction).toBeNull()
+    expect(parseMonopolyView(rawView({ auction: { ...valid, high_bidder: 7 } }))?.auction).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ auction: { ...valid, waiting_for: 'seat-0' } }))?.auction,
+    ).toBeNull()
+    expect(
+      parseMonopolyView(rawView({ auction: { ...valid, waiting_for: ['seat-0', 7] } }))?.auction,
+    ).toBeNull()
+
+    const view = parseMonopolyView(rawView({ auction: { ...valid, waiting_for: 'seat-0' } }))
+
+    expect(view).not.toBeNull()
+    expect(view?.players).toHaveLength(2)
+    expect(view?.owners).toEqual({ '3': 'seat-0' })
+    expect(view?.last_card).not.toBeNull()
   })
 
   it('reads the drawn card, the deck counts and the jail cards field by field', () => {
@@ -307,7 +372,7 @@ describe('the monopoly view parser', () => {
     ).toBeNull()
   })
 
-  it('rejects a payload whose phase is not one of the three', () => {
+  it('rejects a payload whose phase is not one of the known phases', () => {
     expect(parseMonopolyView(rawView({ phase: 'resolving' }))).toBeNull()
     expect(parseMonopolyView(rawView({ phase: undefined }))).toBeNull()
   })

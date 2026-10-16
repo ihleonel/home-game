@@ -150,6 +150,31 @@ class MonopolyPreparationTests(MonopolyRulesTestCase):
         self.assertEqual(second['players']['seat-0']['properties'], [])
         self.assertEqual(second['owners'], {})
 
+    def test_the_phase_constants_are_a_two_sided_contract(self):
+        """The frontend parser mirrors this list, so a new phase costs two edits.
+
+        ``view.ts`` recognizes a payload only when its ``phase`` is one of these
+        names. Adding a phase here without adding it there makes every view
+        during that phase unrecognizable, which is exactly what the auction did
+        before ``awaiting_bid`` reached the parser: the whole match screen,
+        auction included, fell back to the "vista de partida no disponible"
+        notice. Pinning the set turns that into a deliberate change.
+        """
+        phases = {
+            name: getattr(rules, name)
+            for name in dir(rules)
+            if name.startswith('PHASE_')
+        }
+        self.assertEqual(
+            phases,
+            {
+                'PHASE_AWAITING_ROLL': 'awaiting_roll',
+                'PHASE_AWAITING_DECISION': 'awaiting_decision',
+                'PHASE_MANAGING': 'managing',
+                'PHASE_AWAITING_BID': 'awaiting_bid',
+            },
+        )
+
 
 class MonopolyTurnTests(MonopolyRulesTestCase):
     def test_roll_moves_the_token_and_records_the_dice(self):

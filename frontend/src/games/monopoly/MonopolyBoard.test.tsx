@@ -49,6 +49,7 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     pending: null,
     decks: null,
     last_card: null,
+    auction: null,
     actions: [],
     you: 'seat-0',
     ...overrides,
@@ -201,6 +202,42 @@ describe('the monopoly board', () => {
 
   it('renders no drawn card once nothing has been turned up', () => {
     expect(markup(view({ last_card: null }))).not.toContain('monopoly-card')
+  })
+
+  it('marks the space under auction with a class, an attribute and an accessible name', () => {
+    const auctioned = view({
+      auction: { space: 3, high_bid: 0, high_bidder: null, waiting_for: [] },
+    })
+    const buttons = buttonElements(auctioned)
+    const button = spaceButton(buttons, 'Avenida Báltica')
+
+    expect((button.props as { className: string }).className).toContain('monopoly-space-auction')
+    expect((button.props as Record<string, unknown>)['data-auction']).toBe('true')
+    expect(labelOf(button)).toContain('En subasta')
+    expect(
+      (spaceButton(buttons, 'Avenida Mediterráneo').props as Record<string, unknown>)[
+        'data-auction'
+      ],
+    ).toBeUndefined()
+  })
+
+  it('names the space under auction in the centre', () => {
+    const page = markup(
+      view({
+        auction: { space: 3, high_bid: 70, high_bidder: 'seat-1', waiting_for: ['seat-0'] },
+      }),
+    )
+
+    expect(page).toContain('monopoly-auction')
+    expect(page).toContain('Subasta de Avenida Báltica')
+  })
+
+  it('renders no auction mark or line when there is no auction', () => {
+    const page = markup(view({ auction: null }))
+
+    expect(page).not.toContain('monopoly-space-auction')
+    expect(page).not.toContain('data-auction')
+    expect(page).not.toContain('Subasta de')
   })
 
   it('shows the selected space detail with its printed rents and nothing when nothing is selected', () => {

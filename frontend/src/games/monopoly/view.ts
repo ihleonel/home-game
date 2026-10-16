@@ -2,14 +2,15 @@ import type { MatchRuntimeView } from '../registry'
 import { BOARD_SIZE } from './board'
 
 /**
- * The three phases the rules persist (S6 of ``monopoly.md``).
+ * The phases the rules persist (S6 of ``monopoly.md`` plus the bidding phase
+ * the auction increment adds, S2 of ``monopoly-auction.md``).
  *
  * The parser only accepts these: a phase it does not know would leave the
  * screen offering actions no transition understands.
  */
-export type MonopolyPhase = 'awaiting_roll' | 'awaiting_decision' | 'managing'
+export type MonopolyPhase = 'awaiting_roll' | 'awaiting_decision' | 'awaiting_bid' | 'managing'
 
-const PHASES: readonly string[] = ['awaiting_roll', 'awaiting_decision', 'managing']
+const PHASES: readonly string[] = ['awaiting_roll', 'awaiting_decision', 'awaiting_bid', 'managing']
 
 /** One seat as the public economy of a match reports it. */
 export type MonopolyPlayer = {
@@ -67,6 +68,20 @@ export type MonopolyPending = {
 }
 
 /**
+ * The open auction of a declined property (S7).
+ *
+ * The bids themselves are not here: they travel as the eligible seats' own
+ * ``bid`` and ``pass`` actions. This field is only what the whole table sees --
+ * the space, the standing high bid and its holder, and who is still to bid.
+ */
+export type MonopolyAuction = {
+  space: number
+  high_bid: number
+  high_bidder: string | null
+  waiting_for: string[]
+}
+
+/**
  * The monopoly play payload, on top of the runtime fields every view carries.
  *
  * ``finished``, ``winner``, ``ended_by_abandon`` and ``you`` stay in
@@ -86,6 +101,7 @@ export type MonopolyView = MatchRuntimeView & {
   pending: MonopolyPending | null
   decks: MonopolyDecks | null
   last_card: MonopolyLastCard | null
+  auction: MonopolyAuction | null
   actions: MonopolyAction[]
 }
 
@@ -214,6 +230,31 @@ function readPending(value: unknown): MonopolyPending | null {
   return { kind, space }
 }
 
+/**
+ * Read the open auction, or ``null``.
+ *
+ * All-or-nothing by design: a half-read auction would show a table a standing
+ * bid or a waiting list the server never reported, so one bad field drops the
+ * whole auction rather than leaving the rest of it looking authoritative. The
+ * amounts travel as the seats' own actions, so nothing here computes a bid.
+ */
+function readAuction(value: unknown): MonopolyAuction | null {
+  if (!isRecord(value)) return null
+  const { space, high_bid, high_bidder, waiting_for } = value
+  if (!isBoardIndex(space)) return null
+  if (!isInteger(high_bid) || high_bid < 0) return null
+  if (!(high_bidder === null || (typeof high_bidder === 'string' && high_bidder.length > 0))) {
+    return null
+  }
+  if (!Array.isArray(waiting_for)) return null
+  const waiting: string[] = []
+  for (const seat of waiting_for) {
+    if (typeof seat !== 'string' || seat.length === 0) return null
+    waiting.push(seat)
+  }
+  return { space, high_bid, high_bidder, waiting_for: waiting }
+}
+
 /** Read one offered action, or ``null`` when it could not be submitted. */
 function readAction(value: unknown): MonopolyAction | null {
   if (!isRecord(value)) return null
@@ -259,9 +300,10 @@ function readActions(value: unknown): MonopolyAction[] {
  * Past those identifiers it degrades instead of rejecting, exactly as every
  * other parser in this folder does: a malformed optional field costs that
  * field, never the whole screen. ``turn``, ``last_roll``, ``pending``,
- * ``decks`` and ``last_card`` become ``null``, ``actions`` loses only its bad
- * entries, a seat's ``jail_cards`` becomes ``0``, and an optional field of the
- * wrong type is left out so the component's own fallback covers it.
+ * ``decks``, ``last_card`` and ``auction`` become ``null``, ``actions`` loses
+ * only its bad entries, a seat's ``jail_cards`` becomes ``0``, and an optional
+ * field of the wrong type is left out so the component's own fallback covers
+ * it.
  */
 export function parseMonopolyView(raw: unknown): MonopolyView | null {
   if (!isRecord(raw)) return null
@@ -292,6 +334,7 @@ export function parseMonopolyView(raw: unknown): MonopolyView | null {
     pending: readPending(raw.pending),
     decks: readDecks(raw.decks),
     last_card: readLastCard(raw.last_card),
+    auction: readAuction(raw.auction),
     actions: readActions(raw.actions),
   }
 

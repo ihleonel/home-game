@@ -46,10 +46,15 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   nearest railroad with its doubled rent, the nearest utility with its fresh throw and ten times
   the throw, going back three spaces, going to jail, the Get Out of Jail Free card a seat holds
   until it uses it, money in both directions with the bank and with every other player, and the
-  repairs formula. Two limits are still deliberate rather than oversights: declining an unowned
-  property leaves it with the bank instead of auctioning it, because the auction is its own
-  increment; and building, mortgages and trading are absent, so no seat can raise cash before
-  going bankrupt and a repairs card costs nothing while nothing is built. The printed rules do
+  repairs formula. An auction follows a declined purchase: the property goes to the bank's open
+  outcry, every solvent seat that has not passed may bid -- including the one who declined -- and
+  it ends when one bidder is left standing, or with the space back in the bank's hands when nobody
+  bids at all. A fresh bid reopens the auction for whoever had passed, and the seat holding the
+  high bid can only raise it, because a bid cannot be withdrawn. Bids climb a small ladder over
+  the high bid, capped by the bidder's cash, because the runtime only accepts enumerated options
+  and the printed rules allow any price. One limit is still deliberate rather than an oversight:
+  building, mortgages and trading are absent, so no seat can raise cash before going bankrupt and
+  a repairs card costs nothing while nothing is built. The printed rules do
   not cover a debt owed to several players at once, so a group payment that cannot be met pays
   its shares in seat order and the first share that cannot be afforded is the bankruptcy, with
   that player as the creditor.

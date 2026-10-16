@@ -37,11 +37,12 @@ function ownerName(match: MatchState<MonopolyView>, index: number): string | nul
  * has one -- so a screen reader reaches the same facts the badge and the band
  * show a sighted player.
  */
-function spaceAriaLabel(space: Space, owner: string | null): string {
+function spaceAriaLabel(space: Space, owner: string | null, auctioned: boolean): string {
   const parts = [space.name, KIND_LABELS[space.kind]]
   if (space.group) parts.push(GROUP_LABELS[space.group])
   if (isPurchasable(space)) parts.push(`Precio ${formatMoney(purchasePrice(space.index))}`)
   if (owner) parts.push(`Dueño ${owner}`)
+  if (auctioned) parts.push('En subasta')
   return parts.join('. ')
 }
 
@@ -142,14 +143,16 @@ export function MonopolyBoard({
       {BOARD.map((space) => {
         const area = spaceArea(space.index)
         const owner = ownerName(match, space.index)
+        const auctioned = view.auction !== null && view.auction.space === space.index
         const holders = view.players.filter(
           (player) => !player.eliminated && player.position === space.index,
         )
         return (
           <button
-            aria-label={spaceAriaLabel(space, owner)}
+            aria-label={spaceAriaLabel(space, owner, auctioned)}
             aria-pressed={selected === space.index}
-            className="monopoly-space"
+            className={auctioned ? 'monopoly-space monopoly-space-auction' : 'monopoly-space'}
+            data-auction={auctioned ? 'true' : undefined}
             data-group={space.group ?? undefined}
             data-kind={space.kind}
             key={space.index}
@@ -186,6 +189,11 @@ export function MonopolyBoard({
         {view.last_card !== null && (
           <p className="monopoly-roll monopoly-card" role="status">
             {`${deckLabel(view.last_card.deck)}: ${view.last_card.title}`}
+          </p>
+        )}
+        {view.auction !== null && (
+          <p className="monopoly-roll monopoly-auction-line" role="status">
+            {`Subasta de ${spaceAt(view.auction.space).name}`}
           </p>
         )}
         {chosen !== null && (
