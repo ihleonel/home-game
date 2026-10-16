@@ -7,7 +7,11 @@ its caller.
 """
 
 from datetime import timedelta
+from importlib import import_module
+from types import SimpleNamespace
 
+from django.apps import apps as django_apps
+from django.db import connection as db_connection
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework import status as http_status
@@ -75,6 +79,42 @@ class AutomaticVoteGatewayTests(TestCase):
 
         self.assertEqual(vote.origin, ExpulsionVote.Origin.AUTOMATIC)
         self.assertIsNone(vote.initiated_by_id)
+
+    def test_backfill_marks_historical_rows_with_a_caller_as_manual(self):
+        # A direct real-DB run of the 0010 data operation: the migration graph
+        # itself is exercised by the test-DB build, but the row predicate is not
+        # (the suite starts at the latest migration). This pins it.
+        caller = create_participant(self.room, name='Legacy Caller')
+        legacy = ExpulsionVote.objects.create(
+            room=self.room,
+            initiated_by=caller,
+            origin=ExpulsionVote.Origin.AUTOMATIC,
+        )
+        other_room = Room.objects.create(game_id='otro-juego')
+        automatic = ExpulsionVote.objects.create(
+            room=other_room,
+            origin=ExpulsionVote.Origin.AUTOMATIC,
+        )
+        migration = import_module(
+            'modules.rooms.migrations.'
+            '0010_backfill_manual_expulsion_vote_origin'
+        )
+
+        migration.backfill_manual_origin(
+            django_apps, SimpleNamespace(connection=db_connection)
+        )
+
+        legacy.refresh_from_db()
+        automatic.refresh_from_db()
+        self.assertEqual(legacy.origin, ExpulsionVote.Origin.MANUAL)
+        self.assertEqual(automatic.origin, ExpulsionVote.Origin.AUTOMATIC)
+
+        # Idempotent: a second run changes nothing.
+        migration.backfill_manual_origin(
+            django_apps, SimpleNamespace(connection=db_connection)
+        )
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.origin, ExpulsionVote.Origin.MANUAL)
 
 
 class ManualVoteOriginApiTests(APITestCase):

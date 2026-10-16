@@ -649,6 +649,91 @@ class SweepVotingIntegrationTests(TestCase):
             ghost.refresh_from_db()
             self.assertIsNone(ghost.left_at)
 
+    def test_a_rejected_vote_spends_the_absence_and_the_sweep_reaps_the_target(self):
+        # Real gateway coverage for ``absence_is_spent_for_update`` (S2): a
+        # rejected vote that started after the absence covers it, so the sweep
+        # reaps the target instead of voting again.
+        room = create_room()
+        target = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Target',
+        )
+        self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter One'
+            )
+        )
+        self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter Two'
+            )
+        )
+        rejected = ExpulsionVote.objects.create(
+            room=room,
+            status=ExpulsionVote.Status.REJECTED,
+            resolution_reason='voter_rejected',
+        )
+        ExpulsionVoteTarget.objects.create(vote=rejected, participant=target)
+        dependencies = compose_room_dependencies()
+
+        with patch(BROADCAST_PATH):
+            with self.captureOnCommitCallbacks(execute=True):
+                outcome = dependencies.reaping.reap(room_id=room.pk)
+
+        self.assertEqual(outcome, ReapOutcome(1, 1, 0))
+        target.refresh_from_db()
+        self.assertIsNotNone(target.left_at)
+        self.assertFalse(
+            ExpulsionVote.objects.filter(
+                status=ExpulsionVote.Status.PENDING
+            ).exists()
+        )
+
+    def test_a_cancelled_vote_does_not_spend_the_absence_and_the_room_votes_again(self):
+        # Real gateway coverage for the other half of the rule: a cancelled vote
+        # never spends the absence, so with the quorum connected the sweep opens
+        # a fresh automatic vote instead of reaping.
+        room = create_room()
+        target = create_participant(
+            room,
+            presence=Participant.Presence.INACTIVE,
+            disconnected_at=stale_moment(),
+            display_name='Target',
+        )
+        self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter One'
+            )
+        )
+        self.connect(
+            create_participant(
+                room, presence=Participant.Presence.ONLINE, display_name='Voter Two'
+            )
+        )
+        cancelled = ExpulsionVote.objects.create(
+            room=room,
+            status=ExpulsionVote.Status.CANCELLED,
+            resolution_reason='target_reconnected',
+        )
+        ExpulsionVoteTarget.objects.create(vote=cancelled, participant=target)
+        dependencies = compose_room_dependencies()
+
+        with patch(BROADCAST_PATH):
+            with self.captureOnCommitCallbacks(execute=True):
+                outcome = dependencies.reaping.reap(room_id=room.pk)
+
+        self.assertEqual(outcome, ReapOutcome(0, 0, 0))
+        target.refresh_from_db()
+        self.assertIsNone(target.left_at)
+        fresh = ExpulsionVote.objects.get(status=ExpulsionVote.Status.PENDING)
+        self.assertEqual(fresh.origin, ExpulsionVote.Origin.AUTOMATIC)
+        self.assertEqual(
+            list(fresh.targets.values_list('participant_id', flat=True)),
+            [target.pk],
+        )
+
     def test_zero_connected_voters_with_only_absences_deletes_the_room(self):
         room = create_room()
         create_participant(
