@@ -23,6 +23,7 @@ from rest_framework.test import APITestCase
 from modules.games.duelo import rules
 from modules.games.interfaces.composition import compose_match_dependencies
 from modules.games.interfaces.match_start import open_match_for_room
+from modules.games.monopoly import cards
 from modules.games.models import Match, MatchSeat
 from modules.games.runtime.domain.errors import WrongSeatCount
 from modules.rooms.models import Participant, Room
@@ -655,19 +656,22 @@ class TaTeTiDrawApiTests(APITestCase):
 
 
 class _DiceRng:
-    """Deterministic ``RandomSource``: a fixed opening order plus scripted dice.
+    """Deterministic ``RandomSource``: scripted dice, decks left in printed order.
 
     The throw-off throws two dice per seat before the first roll of the match,
     so the script is the flat sequence of faces in the order the seats are asked
-    for them.
+    for them. The opening seat therefore comes from the faces and never from
+    the shuffle, so ``shuffle`` returns the cards it was handed: a source that
+    answers a deck shuffle with anything else stores that other thing as the
+    deck, which is what made this suite fail whenever the first real roll landed
+    on a card space. ``MonopolyRulesTestCase`` rejects such a source outright.
     """
 
-    def __init__(self, order, faces=()):
-        self.order = list(order)
+    def __init__(self, faces=()):
         self.faces = list(faces)
 
     def shuffle(self, items):
-        return list(self.order)
+        return list(items)
 
     def roll(self, sides):
         if not self.faces:
@@ -714,7 +718,7 @@ class MonopolyRollApiTests(APITestCase):
 
     def test_the_first_roll_through_the_endpoint_throws_the_dice(self):
         # seat-0 throws 12 against seat-1's 2, so seat-0 opens the match.
-        opened = self._open(_DiceRng(('seat-0', 'seat-1'), [6, 6, 1, 1]))
+        opened = self._open(_DiceRng([6, 6, 1, 1]))
         match_ref = opened.record.match_ref
         self.assertEqual(Match.objects.get(public_id=match_ref).state['turn'], 'seat-0')
 
@@ -744,3 +748,20 @@ class MonopolyRollApiTests(APITestCase):
             response.data['view']['players'][0]['position'],
             stored.state['players']['seat-0']['position'],
         )
+
+    def test_the_match_the_start_path_persists_holds_two_real_decks(self):
+        """The stored decks are the 16 printed cards of each deck, in some order.
+
+        This class used to answer the deck shuffle with the seat ids, so the
+        match stored seat ids as its deck order and only blew up later, when a
+        roll landed on a card space: the suite failed two runs out of three for
+        a reason nothing pointed at. The start path now rejects a source that
+        does not return the deck it was given, and this pins the stored result.
+        """
+        opened = self._open(_DiceRng([6, 6, 1, 1]))
+        decks = Match.objects.get(public_id=opened.record.match_ref).state['decks']
+
+        for deck in (cards.CHANCE, cards.COMMUNITY_CHEST):
+            ids = list(cards.deck_ids(deck))
+            self.assertEqual(len(decks[deck]), len(ids))
+            self.assertEqual(set(decks[deck]), set(ids))

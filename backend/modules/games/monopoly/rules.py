@@ -146,10 +146,27 @@ def fresh_decks(rng) -> dict:
     Production goes through this so a match never starts on an unshuffled deck;
     the order is hidden information the state keeps and the view never
     publishes beyond how many cards are left.
+
+    The result is checked: a ``RandomSource`` that answers a deck shuffle with
+    anything but a permutation of the cards it was handed would silently store
+    that other thing as the deck. A test double handed the decks the seat ids
+    exactly this way, and the match failed much later, only when a roll landed
+    on a card space, which made the suite flaky for reasons nothing pointed at.
+    A bad shuffle therefore fails here, loudly, at the moment it happens.
     """
     if rng is None:
         raise ValueError('a fresh deck needs a RandomSource to be shuffled')
-    return {deck: rng.shuffle(list(cards.deck_ids(deck))) for deck in cards.DECKS}
+    decks = {}
+    for deck in cards.DECKS:
+        ids = list(cards.deck_ids(deck))
+        shuffled = list(rng.shuffle(list(ids)))
+        if len(shuffled) != len(ids) or set(shuffled) != set(ids):
+            raise ValueError(
+                f'{deck}: the RandomSource did not return a permutation of the '
+                f'{len(ids)} cards it was given'
+            )
+        decks[deck] = shuffled
+    return decks
 
 
 def _deck_order(decks) -> dict:

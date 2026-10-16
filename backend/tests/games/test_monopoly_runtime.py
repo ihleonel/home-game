@@ -29,14 +29,20 @@ from tests.games.support import FakeLifecycle, FakeProjector, FakeStore
 
 
 class ScriptedRng:
-    """Deterministic ``RandomSource``: a fixed opening order plus dice faces."""
+    """Deterministic ``RandomSource``: scripted dice, decks left in printed order.
 
-    def __init__(self, order=(), dice=()):
-        self.order = list(order)
+    The opening seat comes from the scripted faces, never from the shuffle, so
+    ``shuffle`` returns the cards it was handed: a source that answers a deck
+    shuffle with anything else stores that other thing as the deck, which is
+    the defect this class carried as ``order`` and the reason the suite was
+    flaky. ``fresh_decks`` now rejects such a source outright.
+    """
+
+    def __init__(self, dice=()):
         self.dice = list(dice)
 
     def shuffle(self, items):
-        return list(self.order)
+        return list(items)
 
     def roll(self, sides):
         if not self.dice:
@@ -53,7 +59,6 @@ class MonopolyRuntimeTests(SimpleTestCase):
         self.lifecycle = FakeLifecycle()
         # seat-0 opens, so seat-1 is the first seat made to wait its turn.
         self.rng = ScriptedRng(
-            order=('seat-0', 'seat-1'),
             dice=[
                 6, 6, 1, 1,  # the throw-off: seat-0 throws 12 and opens the match
                 1, 2,  # seat-0: Baltic, bought

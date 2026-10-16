@@ -1374,6 +1374,21 @@ class _ReversingRng:
         return 1
 
 
+class _SeatIdsRng:
+    """``RandomSource`` that answers every shuffle with seat ids, not decks.
+
+    It is the shape the two test doubles of this suite had, and the reason the
+    backend suite was flaky: the decks were stored as seat ids and the match
+    only failed when a roll landed on a card space.
+    """
+
+    def shuffle(self, items):
+        return ['seat-0', 'seat-1']
+
+    def roll(self, sides):
+        return 1
+
+
 class MonopolyDeckTests(MonopolyRulesTestCase):
     """How a deck is shuffled, drawn from and recycled (S1, S3)."""
 
@@ -1396,6 +1411,12 @@ class MonopolyDeckTests(MonopolyRulesTestCase):
             decks[cards.COMMUNITY_CHEST],
             list(reversed(cards.deck_ids(cards.COMMUNITY_CHEST))),
         )
+
+    def test_fresh_decks_reject_a_source_that_does_not_shuffle_the_deck(self):
+        # A source that returns something else would store it as the deck and
+        # fail much later, on a card space, so it has to fail here instead.
+        with self.assertRaises(ValueError):
+            rules.fresh_decks(_SeatIdsRng())
 
     def test_a_drawn_card_goes_to_the_bottom_of_its_own_deck(self):
         state = self._top_card(
