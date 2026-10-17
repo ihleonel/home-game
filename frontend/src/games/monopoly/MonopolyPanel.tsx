@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import type { MatchRendererProps, MatchState } from '../registry'
 import { BOARD_SIZE, isPurchasable, spaceAt } from './board'
 import type { Space } from './board'
@@ -22,6 +22,65 @@ import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
 import './monopoly.css'
 import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
+
+/**
+ * The three views of a match screen (S1 of ``monopoly-view-switcher.md``).
+ *
+ * The player moves between them and only one is on screen at a time. They split
+ * the table's information the way a player uses it: the board, the seat's own
+ * estate, and the state the whole table shares.
+ */
+export type MonopolyPane = 'tablero' | 'cartera' | 'mesa'
+
+/** The tab strip, in the order it is drawn (S1). */
+const PANES: readonly { key: MonopolyPane; label: string }[] = [
+  { key: 'tablero', label: 'Tablero' },
+  { key: 'cartera', label: 'Cartera' },
+  { key: 'mesa', label: 'Mesa' },
+]
+
+/**
+ * The view a match opens on: the board.
+ *
+ * A turn starts by reading the board and every other view is a detour from it,
+ * so the board is what the player comes back to.
+ */
+const OPENING_PANE: MonopolyPane = 'tablero'
+
+/** The id of a view's tab, and the one its panel points back to (S1). */
+function paneTabId(pane: MonopolyPane): string {
+  return `monopoly-tab-${pane}`
+}
+
+/** The id of a view's panel, and the one its tab controls (S1). */
+function panePanelId(pane: MonopolyPane): string {
+  return `monopoly-pane-${pane}`
+}
+
+/**
+ * The view an arrow, Home or End key moves to, or ``null`` for a key the strip
+ * does not handle (S1).
+ *
+ * The two arrows wrap around the ends so the last view never dead-ends. The
+ * strip deliberately does not move focus itself: the roving ``tabIndex`` leaves
+ * exactly the open view's tab reachable, so the view on screen and the tab the
+ * keyboard reaches can never disagree.
+ */
+function paneForKey(current: MonopolyPane, key: string): MonopolyPane | null {
+  const index = PANES.findIndex((pane) => pane.key === current)
+  switch (key) {
+    case 'ArrowRight':
+      return PANES[(index + 1) % PANES.length].key
+    case 'ArrowLeft':
+      return PANES[(index - 1 + PANES.length) % PANES.length].key
+    case 'Home':
+      return PANES[0].key
+    case 'End':
+      return PANES[PANES.length - 1].key
+    default:
+      return null
+  }
+}
 
 /**
  * The draft the negotiation block composes (S11).
@@ -654,15 +713,18 @@ type MonopolyPanelLayoutProps = {
   onSelect: (index: number) => void
   trade: MonopolyTradeDraft
   onTradeChange: (next: MonopolyTradeDraft) => void
+  activeView: MonopolyPane
+  onViewChange: (next: MonopolyPane) => void
 }
 
 /**
  * The own-seat panel and its layout (S5).
  *
- * It owns the ``which space is open`` state and hands it to the board, so the
- * board stays a pure function of its props. It renders the actions the server
- * already sent -- with their prompts verbatim -- and never computes a rule, a
- * legal action or a current rent.
+ * It owns the ``which space is open`` state, the view the player is looking at
+ * (S2 of ``monopoly-view-switcher.md``) and hands both to the board and to the
+ * layout, so those stay pure functions of their props. It renders the actions
+ * the server already sent -- with their prompts verbatim -- and never computes
+ * a rule, a legal action or a current rent.
  *
  * The inner layout is a separate component because it is a pure function of its
  * props: the project renders with ``react-dom/server`` and walks the element
@@ -673,6 +735,7 @@ type MonopolyPanelLayoutProps = {
 export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<MonopolyView>) {
   const [selected, setSelected] = useState<number | null>(null)
   const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
+  const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
   return (
     <MonopolyPanelLayout
       match={match}
@@ -682,6 +745,8 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
       onSelect={setSelected}
       trade={trade}
       onTradeChange={setTrade}
+      activeView={pane}
+      onViewChange={setPane}
     />
   )
 }
@@ -694,6 +759,8 @@ export function MonopolyPanelLayout({
   onSelect,
   trade,
   onTradeChange,
+  activeView,
+  onViewChange,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
@@ -701,27 +768,110 @@ export function MonopolyPanelLayout({
   const canPropose = view.actions.some((action) => action.name === 'propose')
   const genericActions = view.actions.filter((action) => !TRADE_RESPONSES.has(action.name))
 
+  /**
+   * One view's panel.
+   *
+   * ``hidden`` is what takes an unopened view out of the tab order and out of
+   * the accessibility tree, so a button of a view nobody opened can never be
+   * focused. CSS alone would not do it: a ``display`` rule of ours would beat
+   * the ``display: none`` a user agent gives ``[hidden]``. The panel stays in
+   * the markup so every tab's ``aria-controls`` always resolves.
+   */
+  const pane = (key: MonopolyPane, children: ReactNode): ReactElement => (
+    <div
+      aria-labelledby={paneTabId(key)}
+      className={`monopoly-pane monopoly-pane-${key}`}
+      hidden={activeView !== key}
+      id={panePanelId(key)}
+      role="tabpanel"
+    >
+      {children}
+    </div>
+  )
+
   return (
     <section className="monopoly-panel" aria-label="Mesa de Monopoly">
-      <div className="monopoly-layout">
-        <div className="monopoly-board-column">
-          <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
-        </div>
+      {view.finished && !view.ended_by_abandon && view.winner && (
+        <p className="monopoly-winner" role="status">
+          {winnerLine(view, match)}
+        </p>
+      )}
 
-        <div className="monopoly-side">
-          {view.finished && !view.ended_by_abandon && view.winner && (
-            <p className="monopoly-winner" role="status">
-              {winnerLine(view, match)}
-            </p>
+      <div
+        aria-label="Vistas de la partida"
+        className="monopoly-tabs"
+        onKeyDown={(event) => {
+          const next = paneForKey(activeView, event.key)
+          if (next === null) return
+          event.preventDefault()
+          onViewChange(next)
+        }}
+        role="tablist"
+      >
+        {PANES.map(({ key, label }) => (
+          <button
+            aria-controls={panePanelId(key)}
+            aria-selected={key === activeView}
+            className="monopoly-tab"
+            data-pane={key}
+            id={paneTabId(key)}
+            key={key}
+            onClick={() => onViewChange(key)}
+            role="tab"
+            tabIndex={key === activeView ? 0 : -1}
+            type="button"
+          >
+            <span className="monopoly-tab-label">{label}</span>
+          </button>
+        ))}
+      </div>
+
+      {pane('tablero', <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />)}
+
+      {pane(
+        'cartera',
+        <div className="monopoly-own">
+          <h3 className="monopoly-block-title">Tu situación</h3>
+          {own === null ? (
+            <p className="monopoly-spectator">Estás como espectador.</p>
+          ) : (
+            ownSeatBlock(own, ownGroups, view.buildings, view.mortgaged)
           )}
+        </div>,
+      )}
 
-          <div className="monopoly-own">
-            <h3 className="monopoly-block-title">Tu situación</h3>
-            {own === null ? (
-              <p className="monopoly-spectator">Estás como espectador.</p>
-            ) : (
-              ownSeatBlock(own, ownGroups, view.buildings, view.mortgaged)
-            )}
+      {pane(
+        'mesa',
+        <>
+          <div className="monopoly-players-block">
+            <h3 className="monopoly-block-title">Jugadores</h3>
+            <ul className="monopoly-players">
+              {view.players.map((player) => {
+                const isYou = player.seat === view.you
+                return (
+                  <li
+                    className={
+                      player.eliminated
+                        ? 'monopoly-player monopoly-player-out'
+                        : 'monopoly-player'
+                    }
+                    key={player.seat}
+                  >
+                    <span className="monopoly-player-name">
+                      {`${seatName(match, player.seat)}${isYou ? ' (tú)' : ''}`}
+                    </span>
+                    <span className="monopoly-player-cash">{formatMoney(player.cash)}</span>
+                    <span className="monopoly-player-position">
+                      {spaceAt(player.position).name}
+                    </span>
+                    {player.in_jail && <span className="monopoly-player-jail">En la cárcel</span>}
+                    {player.eliminated && (
+                      <span className="monopoly-player-out-label">Fuera de la partida</span>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
           </div>
 
           {own !== null && canPropose &&
@@ -786,39 +936,8 @@ export function MonopolyPanelLayout({
               </div>
             </div>
           )}
-
-          <div className="monopoly-players-block">
-            <h3 className="monopoly-block-title">Jugadores</h3>
-            <ul className="monopoly-players">
-              {view.players.map((player) => {
-                const isYou = player.seat === view.you
-                return (
-                  <li
-                    className={
-                      player.eliminated
-                        ? 'monopoly-player monopoly-player-out'
-                        : 'monopoly-player'
-                    }
-                    key={player.seat}
-                  >
-                    <span className="monopoly-player-name">
-                      {`${seatName(match, player.seat)}${isYou ? ' (tú)' : ''}`}
-                    </span>
-                    <span className="monopoly-player-cash">{formatMoney(player.cash)}</span>
-                    <span className="monopoly-player-position">
-                      {spaceAt(player.position).name}
-                    </span>
-                    {player.in_jail && <span className="monopoly-player-jail">En la cárcel</span>}
-                    {player.eliminated && (
-                      <span className="monopoly-player-out-label">Fuera de la partida</span>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        </div>
-      </div>
+        </>,
+      )}
     </section>
   )
 }

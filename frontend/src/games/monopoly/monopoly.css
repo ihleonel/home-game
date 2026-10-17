@@ -32,6 +32,9 @@
   --monopoly-green: #2c8a55;
   --monopoly-dark-blue: #29378f;
 
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
   margin: 0.5rem 0 1.25rem;
   padding: 1rem;
   border: 1px solid var(--line-strong);
@@ -39,22 +42,47 @@
   background: var(--surface-raised);
 }
 
-.monopoly-layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
+/* S1: the view strip. It replaces the two-column grid that used to put the
+   board and the panel side by side, so the board now gets the whole width of
+   its own view instead of the leftover of a fixed side column. */
+.monopoly-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  border-bottom: 1px solid var(--monopoly-line);
 }
 
-/* Narrow screens: the board fills the width and the panel sits below it. */
-.monopoly-board-column {
-  min-width: 0;
+.monopoly-tab {
+  border: 1px solid var(--monopoly-line);
+  border-bottom: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  padding: 0.45rem 0.9rem;
+  background: var(--monopoly-band-empty);
+  color: var(--monopoly-ink-soft);
+  font-size: 0.85rem;
+  font-weight: 750;
 }
 
-.monopoly-side {
+.monopoly-tab[aria-selected='true'] {
+  background: var(--monopoly-paper);
+  color: var(--monopoly-ink);
+}
+
+/* One view at a time, and the closed ones cannot be reached: see the ``hidden``
+   restatement below. */
+.monopoly-pane {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
   min-width: 0;
+}
+
+/* The ``display: flex`` above is an author rule, and every author rule beats
+   the ``display: none`` a user agent gives ``[hidden]``. Without this line the
+   two closed views would stay on screen -- all three panes at once, which is
+   the one thing this increment removes (S1). */
+.monopoly-pane[hidden] {
+  display: none;
 }
 
 .monopoly-board {
@@ -1033,12 +1061,5 @@
 @media (max-width: 560px) {
   .monopoly-space-name {
     display: none;
-  }
-}
-
-@media (min-width: 900px) {
-  .monopoly-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
-    align-items: start;
   }
 }

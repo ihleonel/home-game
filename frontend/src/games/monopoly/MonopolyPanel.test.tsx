@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
 import { MonopolyPanel, MonopolyPanelLayout } from './MonopolyPanel'
-import type { MonopolyTradeDraft } from './MonopolyPanel'
+import type { MonopolyPane, MonopolyTradeDraft } from './MonopolyPanel'
 import type { MonopolyAction, MonopolyPlayer, MonopolyView } from './view'
 
 const roster: MatchSeatRosterEntry[] = [
@@ -78,6 +78,8 @@ type LayoutOptions = {
   onAction?: (name: string, value: string | null) => void
   trade?: MonopolyTradeDraft
   onTradeChange?: (next: MonopolyTradeDraft) => void
+  activeView?: MonopolyPane
+  onViewChange?: (next: MonopolyPane) => void
 }
 
 function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
@@ -89,6 +91,8 @@ function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): Layout
     onSelect: () => {},
     trade: options.trade ?? tradeDraft(),
     onTradeChange: options.onTradeChange ?? (() => {}),
+    activeView: options.activeView ?? 'tablero',
+    onViewChange: options.onViewChange ?? (() => {}),
   }
 }
 
@@ -153,6 +157,18 @@ function elementsWithClass(
     const classes = ((element.props as { className?: string }).className ?? '').split(/\s+/)
     return classes.includes(className)
   })
+}
+
+/** Every host element carrying ``role``, reached through the pure layout. */
+function elementsWithRole(
+  rawView: MonopolyView,
+  role: string,
+  options: LayoutOptions = {},
+): ReactElement[] {
+  const tree = MonopolyPanelLayout(layoutProps(rawView, options))
+  return hostElements(tree).filter(
+    (element) => (element.props as { role?: string }).role === role,
+  )
 }
 
 function buttonWithLabel(buttons: ReactElement[], label: string): ReactElement {
@@ -776,5 +792,151 @@ describe('the monopoly negotiation panel', () => {
     ;(withdraw.props as { onClick: () => void }).onClick()
 
     expect(onAction).toHaveBeenCalledWith('withdraw', '1')
+  })
+})
+
+/**
+ * The view switcher (S1/S2 of ``monopoly-view-switcher.md``).
+ *
+ * These tests cover the pure layout, which is the whole shell: the wrapper adds
+ * nothing but the ``useState`` that holds the pane. They pin the tab list, the
+ * one-pane-at-a-time rule, the ARIA wiring and what a keyboard press submits.
+ */
+describe('the monopoly view switcher', () => {
+  const panes = ['tablero', 'cartera', 'mesa'] as const
+
+  function paneOfTab(tab: ReactElement): string {
+    return (tab.props as { 'data-pane': string })['data-pane']
+  }
+
+  function tabs(options: LayoutOptions = {}): ReactElement[] {
+    return elementsWithRole(view(), 'tab', options)
+  }
+
+  function panels(options: LayoutOptions = {}): ReactElement[] {
+    return elementsWithRole(view(), 'tabpanel', options)
+  }
+
+  it('draws the three views as the tabs of one tab list', () => {
+    const page = panelMarkup(view())
+    const tabLists = elementsWithRole(view(), 'tablist')
+
+    expect(tabLists).toHaveLength(1)
+    expect(tabs().map(paneOfTab)).toEqual([...panes])
+    expect(page).toContain('monopoly-tab-label">Tablero<')
+    expect(page).toContain('monopoly-tab-label">Cartera<')
+    expect(page).toContain('monopoly-tab-label">Mesa<')
+  })
+
+  it('marks exactly the open view as the selected tab', () => {
+    const selected = (activeView: MonopolyPane) =>
+      tabs({ activeView }).filter(
+        (tab) => (tab.props as { 'aria-selected'?: boolean })['aria-selected'] === true,
+      )
+
+    for (const pane of panes) {
+      const marked = selected(pane)
+      expect(marked).toHaveLength(1)
+      expect(paneOfTab(marked[0])).toBe(pane)
+    }
+  })
+
+  it('leaves exactly the open view reachable with the Tab key', () => {
+    const reachable = (activeView: MonopolyPane) =>
+      tabs({ activeView })
+        .filter((tab) => (tab.props as { tabIndex?: number }).tabIndex === 0)
+        .map(paneOfTab)
+
+    for (const pane of panes) {
+      expect(reachable(pane)).toEqual([pane])
+      expect(tabs({ activeView: pane })).toHaveLength(3)
+    }
+  })
+
+  it('shows only the open view and keeps the other two out of the way', () => {
+    for (const pane of panes) {
+      const open = panels({ activeView: pane }).filter(
+        (panel) => (panel.props as { hidden?: boolean }).hidden !== true,
+      )
+
+      expect(open).toHaveLength(1)
+      expect((open[0].props as { id: string }).id).toBe(`monopoly-pane-${pane}`)
+      expect(panels({ activeView: pane })).toHaveLength(3)
+    }
+  })
+
+  it('wires every tab to the panel it opens', () => {
+    const page = panelMarkup(view({ you: undefined }), { activeView: 'mesa' })
+
+    for (const pane of panes) {
+      const tab = tabs().find((element) => paneOfTab(element) === pane)
+      const panel = panels().find(
+        (element) => (element.props as { id?: string }).id === `monopoly-pane-${pane}`,
+      )
+
+      expect(tab).toBeDefined()
+      expect(panel).toBeDefined()
+      expect((tab!.props as { id: string }).id).toBe(`monopoly-tab-${pane}`)
+      expect((tab!.props as { 'aria-controls': string })['aria-controls']).toBe(
+        `monopoly-pane-${pane}`,
+      )
+      expect((panel!.props as { 'aria-labelledby': string })['aria-labelledby']).toBe(
+        `monopoly-tab-${pane}`,
+      )
+    }
+
+    expect(page).toContain('role="tablist"')
+    expect(page).toContain('aria-label="Vistas de la partida"')
+  })
+
+  it('submits the view the player picks', () => {
+    const onViewChange = vi.fn()
+    const mesa = tabs({ onViewChange }).find((tab) => paneOfTab(tab) === 'mesa')
+
+    ;(mesa!.props as { onClick: () => void }).onClick()
+
+    expect(onViewChange).toHaveBeenCalledWith('mesa')
+  })
+
+  it('moves between the views with the arrow, home and end keys', () => {
+    const onViewChange = vi.fn()
+    const preventDefault = vi.fn()
+    const tabList = elementsWithRole(view(), 'tablist', {
+      activeView: 'cartera',
+      onViewChange,
+    })[0]
+    const press = (key: string) =>
+      (
+        tabList.props as {
+          onKeyDown: (event: { key: string; preventDefault: () => void }) => void
+        }
+      ).onKeyDown({ key, preventDefault })
+
+    // The four keys move relative to the open view, and the two arrow keys wrap
+    // around the ends so the last view never dead-ends.
+    press('ArrowRight')
+    expect(onViewChange).toHaveBeenLastCalledWith('mesa')
+    press('ArrowLeft')
+    expect(onViewChange).toHaveBeenLastCalledWith('tablero')
+    press('Home')
+    expect(onViewChange).toHaveBeenLastCalledWith('tablero')
+    press('End')
+    expect(onViewChange).toHaveBeenLastCalledWith('mesa')
+    expect(preventDefault).toHaveBeenCalledTimes(4)
+
+    press('Enter')
+    expect(onViewChange).toHaveBeenCalledTimes(4)
+    expect(preventDefault).toHaveBeenCalledTimes(4)
+  })
+
+  it('opens on the board view when the match mounts', () => {
+    const page = panelMarkup(view())
+    const open = panels().filter(
+      (panel) => (panel.props as { hidden?: boolean }).hidden !== true,
+    )
+
+    expect(open).toHaveLength(1)
+    expect((open[0].props as { id: string }).id).toBe('monopoly-pane-tablero')
+    expect(page).toContain('id="monopoly-pane-tablero"')
   })
 })
