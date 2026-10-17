@@ -6,7 +6,7 @@ import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
 import { MonopolyPanel, MonopolyPanelLayout } from './MonopolyPanel'
 import type { MonopolyPane, MonopolyTradeDraft } from './MonopolyPanel'
-import type { MonopolyAction, MonopolyPlayer, MonopolyView } from './view'
+import type { MonopolyAction, MonopolyOffer, MonopolyPlayer, MonopolyView } from './view'
 
 const roster: MatchSeatRosterEntry[] = [
   {
@@ -127,6 +127,36 @@ function panelMarkup(
   options: LayoutOptions = {},
 ): string {
   return renderToStaticMarkup(<MonopolyPanelLayout {...layoutProps(rawView, options)} />)
+}
+
+/** The class names of one host element, split the way the app builds them. */
+function classesOf(element: ReactElement): string[] {
+  return ((element.props as { className?: string }).className ?? '').split(/\s+/)
+}
+
+/**
+ * The host elements the player can actually see.
+ *
+ * It differs from ``hostElements`` in one thing: the walk never enters a subtree
+ * that carries ``hidden``, which is what the browser does. That is what lets a
+ * test tell "the panel renders this block somewhere" from "the player can reach
+ * it in the view that is open".
+ */
+function visibleElements(node: ReactNode, found: ReactElement[] = []): ReactElement[] {
+  if (Array.isArray(node)) {
+    for (const child of node) visibleElements(child, found)
+    return found
+  }
+  if (!isValidElement(node)) return found
+  if ((node.props as { hidden?: boolean }).hidden === true) return found
+  const component = node.type
+  if (typeof component === 'function') {
+    visibleElements((component as (p: unknown) => ReactElement)(node.props), found)
+    return found
+  }
+  found.push(node)
+  visibleElements((node.props as { children?: ReactNode }).children, found)
+  return found
 }
 
 function actionButtons(
@@ -938,5 +968,93 @@ describe('the monopoly view switcher', () => {
     expect(open).toHaveLength(1)
     expect((open[0].props as { id: string }).id).toBe('monopoly-pane-tablero')
     expect(page).toContain('id="monopoly-pane-tablero"')
+  })
+
+  it('keeps the offered actions reachable from every view', () => {
+    const actions: MonopolyAction[] = [
+      { name: 'roll', prompt: 'Tirá los dados', options: [], freeform: false },
+      { name: 'end_turn', prompt: 'Terminá el turno', options: [], freeform: false },
+    ]
+
+    for (const pane of panes) {
+      const reachable = visibleElements(
+        MonopolyPanelLayout(layoutProps(view({ actions }), { activeView: pane })),
+      ).filter((element) => classesOf(element).includes('monopoly-action'))
+
+      expect(reachable.map(textOf)).toEqual(['Tirá los dados', 'Terminá el turno'])
+    }
+  })
+
+  it('keeps the open debt beside the actions in every view', () => {
+    const raising = view({
+      phase: 'raising_cash',
+      debt: { seat: 'seat-0', creditor: null, amount: 50 },
+      actions: [{ name: 'pay_debt', prompt: 'Pagá la deuda', options: [], freeform: false }],
+    })
+
+    for (const pane of panes) {
+      const classes = visibleElements(
+        MonopolyPanelLayout(layoutProps(raising, { activeView: pane })),
+      ).map(classesOf)
+      const debt = classes.findIndex((names) => names.includes('monopoly-debt'))
+      const actions = classes.findIndex((names) => names.includes('monopoly-actions-block'))
+
+      expect(debt).toBeGreaterThan(-1)
+      expect(actions).toBeGreaterThan(-1)
+      expect(debt).toBeLessThan(actions)
+    }
+  })
+
+  it('counts the open offers on the table tab', () => {
+    const offer = (id: string): MonopolyOffer => ({
+      id,
+      proposer: 'seat-1',
+      receiver: 'seat-0',
+      give: { properties: [], cash: 100 },
+      want: { properties: [], cash: 0 },
+      valid: true,
+    })
+    const badges = (ids: string[]) => {
+      const rendered = elementsWithRole(view({ offers: ids.map(offer) }), 'tab')
+      const mesa = rendered.find((tab) => paneOfTab(tab) === 'mesa')
+      return hostElements(mesa as ReactNode).filter((element) =>
+        classesOf(element).includes('monopoly-tab-badge'),
+      )
+    }
+    // The count is a number, so ``textOf`` (which only reads string children)
+    // would read it as empty.
+    const badgeText = (element: ReactElement) =>
+      String((element.props as { children?: ReactNode }).children)
+
+    expect(badges([])).toEqual([])
+    expect(badges(['1']).map(badgeText)).toEqual(['1'])
+    expect(badges(['1', '2']).map(badgeText)).toEqual(['2'])
+    // The count is decoration: the tab itself carries the same fact in its
+    // accessible name, so a screen reader never reads a bare number.
+    expect(
+      (badges(['1', '2'])[0].props as { 'aria-hidden'?: string })['aria-hidden'],
+    ).toBe('true')
+  })
+
+  it('names the table tab with the offers waiting in it', () => {
+    const offer = (id: string): MonopolyOffer => ({
+      id,
+      proposer: 'seat-1',
+      receiver: 'seat-0',
+      give: { properties: [], cash: 100 },
+      want: { properties: [], cash: 0 },
+      valid: true,
+    })
+    const label = (rawView: MonopolyView) =>
+      (
+        elementsWithRole(rawView, 'tab').find((tab) => paneOfTab(tab) === 'mesa')!
+          .props as { 'aria-label'?: string }
+      )['aria-label']
+
+    expect(label(view({ offers: [] }))).toBeUndefined()
+    expect(label(view({ offers: [offer('1')] }))).toBe('Mesa (1 oferta abierta)')
+    expect(label(view({ offers: [offer('1'), offer('2')] }))).toBe(
+      'Mesa (2 ofertas abiertas)',
+    )
   })
 })

@@ -68,6 +68,28 @@
   color: var(--monopoly-ink);
 }
 
+/* S6: the offers waiting in the table view, so a view change never leaves an
+   offer nobody saw. The number is decoration -- the tab's accessible name
+   carries the same fact -- which is why it is marked ``aria-hidden``. */
+.monopoly-tab-badge {
+  margin-left: 0.4rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--monopoly-you-border);
+  color: var(--monopoly-paper);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+/* S5: the debt and the offered actions stay outside every view, so whichever
+   view is open they are on screen and no view change can hide an obligation. */
+.monopoly-persistent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
 /* One view at a time, and the closed ones cannot be reached: see the ``hidden``
    restatement below. */
 .monopoly-pane {

@@ -58,6 +58,24 @@ function panePanelId(pane: MonopolyPane): string {
 }
 
 /**
+ * The accessible name of a view's tab, or ``undefined`` when the tab needs no
+ * more than its own label (S6).
+ *
+ * Only the table's tab earns one, and only while it holds an offer somebody has
+ * to answer. A bare count read aloud is a number with no meaning, so the strip
+ * keeps the visible badge decorative and states the fact in the tab's name
+ * instead, where a screen reader reaches it without reading a stray digit.
+ */
+function paneTabLabel(
+  pane: MonopolyPane,
+  label: string,
+  openOffers: number,
+): string | undefined {
+  if (pane !== 'mesa' || openOffers === 0) return undefined
+  return `${label} (${openOffers} ${openOffers === 1 ? 'oferta abierta' : 'ofertas abiertas'})`
+}
+
+/**
  * The view an arrow, Home or End key moves to, or ``null`` for a key the strip
  * does not handle (S1).
  *
@@ -767,6 +785,8 @@ export function MonopolyPanelLayout({
   const ownGroups = own === null ? [] : ownPropertyGroups(own)
   const canPropose = view.actions.some((action) => action.name === 'propose')
   const genericActions = view.actions.filter((action) => !TRADE_RESPONSES.has(action.name))
+  const openOffers = (view.offers ?? []).length
+  const debt = view.phase === 'raising_cash' ? view.debt : null
 
   /**
    * One view's panel.
@@ -811,6 +831,7 @@ export function MonopolyPanelLayout({
         {PANES.map(({ key, label }) => (
           <button
             aria-controls={panePanelId(key)}
+            aria-label={paneTabLabel(key, label, openOffers)}
             aria-selected={key === activeView}
             className="monopoly-tab"
             data-pane={key}
@@ -822,9 +843,45 @@ export function MonopolyPanelLayout({
             type="button"
           >
             <span className="monopoly-tab-label">{label}</span>
+            {key === 'mesa' && openOffers > 0 && (
+              <span aria-hidden="true" className="monopoly-tab-badge">
+                {openOffers}
+              </span>
+            )}
           </button>
         ))}
       </div>
+
+      {/*
+        The debt and the offered actions live outside every view (S5), so
+        whichever view is open they are on screen: changing view can never hide
+        an obligation the seat still has to answer.
+      */}
+      {(debt !== null || genericActions.length > 0) && (
+        <div className="monopoly-persistent">
+          {debt !== null && (
+            <div className="monopoly-players-block monopoly-debt">
+              <h3 className="monopoly-block-title">Deuda</h3>
+              <p className="monopoly-debt-line">
+                {`Deuda: ${formatMoney(debt.amount)} ${
+                  debt.creditor === null ? 'con el banco' : `con ${seatName(match, debt.creditor)}`
+                }`}
+              </p>
+            </div>
+          )}
+
+          {genericActions.length > 0 && (
+            <div className="monopoly-actions-block">
+              <h3 className="monopoly-block-title">Acciones</h3>
+              <div className="monopoly-actions" role="group" aria-label="Acciones disponibles">
+                {genericActions.map((action) =>
+                  actionButtons(action, busy, onAction, view.buildings),
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {pane('tablero', <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />)}
 
@@ -912,30 +969,6 @@ export function MonopolyPanelLayout({
           )}
 
           {view.auction !== null && auctionBlock(view.auction, match)}
-
-          {view.phase === 'raising_cash' && view.debt !== null && (
-            <div className="monopoly-players-block monopoly-debt">
-              <h3 className="monopoly-block-title">Deuda</h3>
-              <p className="monopoly-debt-line">
-                {`Deuda: ${formatMoney(view.debt.amount)} ${
-                  view.debt.creditor === null
-                    ? 'con el banco'
-                    : `con ${seatName(match, view.debt.creditor)}`
-                }`}
-              </p>
-            </div>
-          )}
-
-          {genericActions.length > 0 && (
-            <div className="monopoly-actions-block">
-              <h3 className="monopoly-block-title">Acciones</h3>
-              <div className="monopoly-actions" role="group" aria-label="Acciones disponibles">
-                {genericActions.map((action) =>
-                  actionButtons(action, busy, onAction, view.buildings),
-                )}
-              </div>
-            </div>
-          )}
         </>,
       )}
     </section>
