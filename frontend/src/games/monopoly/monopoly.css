@@ -1066,6 +1066,22 @@
   background: color-mix(in srgb, var(--monopoly-group-colour) 8%, var(--monopoly-card));
 }
 
+/* S14: the four actions that act on this property live on its card, sized and
+   weighted so they read as part of the card and not as the strip's buttons. */
+.monopoly-property-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.monopoly-property-action {
+  flex: 0 1 auto;
+  min-height: 2.1rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+}
+
 .monopoly-property-name {
   color: var(--monopoly-ink);
   font-weight: 650;
@@ -1109,7 +1125,8 @@
 
 .monopoly-action,
 .monopoly-trade-send,
-.monopoly-offer-response {
+.monopoly-offer-response,
+.monopoly-property-action {
   flex: 1 1 auto;
   min-height: 2.5rem;
   padding: 0.45rem 0.7rem;

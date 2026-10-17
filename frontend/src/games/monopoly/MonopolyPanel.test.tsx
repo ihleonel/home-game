@@ -160,6 +160,24 @@ function visibleElements(node: ReactNode, found: ReactElement[] = []): ReactElem
   return found
 }
 
+/**
+ * The property-card buttons of each wallet card, in the order the cards are
+ * drawn (S14).
+ *
+ * One array per card, so a test can say *which* card holds a button and not just
+ * that the button exists somewhere in the panel.
+ */
+function cardButtonsByCard(rawView: MonopolyView, options: LayoutOptions = {}): string[][] {
+  const tree = MonopolyPanelLayout(layoutProps(rawView, options))
+  return hostElements(tree)
+    .filter((element) => classesOf(element).includes('monopoly-property'))
+    .map((card) =>
+      hostElements(card)
+        .filter((element) => classesOf(element).includes('monopoly-property-action'))
+        .map(textOf),
+    )
+}
+
 function actionButtons(
   rawView: MonopolyView,
   options: LayoutOptions = {},
@@ -461,6 +479,98 @@ describe('the monopoly player panel', () => {
 
     expect(textOf(buttons[0])).toBe('Hipotecá: nope')
     expect(textOf(buttons[1])).toBe('Hipotecá: 2')
+  })
+
+  it('draws the four property actions on the card of the property they act on', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1, 5] }), player({ seat: 'seat-1' })],
+      // All four on the same property is not a legal board position; the fixture
+      // offers them together on purpose, because what this test pins is the
+      // order a card draws them in and which card takes each one.
+      actions: [
+        { name: 'build', prompt: 'Construí', options: ['1'], freeform: false },
+        { name: 'sell', prompt: 'Vendé', options: ['1'], freeform: false },
+        { name: 'mortgage', prompt: 'Hipotecá', options: ['1', '5'], freeform: false },
+        { name: 'unmortgage', prompt: 'Levantá la hipoteca', options: ['1'], freeform: false },
+      ],
+    })
+
+    expect(cardButtonsByCard(seated)).toEqual([
+      ['Construí · $50', 'Vendé · +$25', 'Hipotecá · +$30', 'Levantá la hipoteca · −$33'],
+      ['Hipotecá · +$100'],
+    ])
+  })
+
+  it('prices a card build from the level the property already has', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1] }), player({ seat: 'seat-1' })],
+      actions: [{ name: 'build', prompt: 'Construí', options: ['1'], freeform: false }],
+      buildings: { '1': 4 },
+    })
+
+    expect(cardButtonsByCard(seated)).toEqual([['Construí · $50']])
+  })
+
+  it('submits the offered index from the card button', () => {
+    const onAction = vi.fn()
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1, 5] }), player({ seat: 'seat-1' })],
+      actions: [{ name: 'mortgage', prompt: 'Hipotecá', options: ['1', '5'], freeform: false }],
+    })
+    const buttons = elementsWithClass(seated, 'monopoly-property-action', { onAction })
+
+    ;(buttons[1].props as { onClick: () => void }).onClick()
+
+    expect(onAction).toHaveBeenCalledWith('mortgage', '5')
+  })
+
+  it('splits one action between the card and the strip', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1] }), player({ seat: 'seat-1' })],
+      actions: [{ name: 'mortgage', prompt: 'Hipotecá', options: ['1', '5'], freeform: false }],
+    })
+
+    // The seat owns 1 and not 5, so the card for 1 takes its option and the
+    // strip keeps the other one: an option no card can place is never dropped.
+    expect(cardButtonsByCard(seated)).toEqual([['Hipotecá · +$30']])
+    expect(actionButtons(seated).map(textOf)).toEqual(['Hipotecá en Ferrocarril Reading · +$100'])
+  })
+
+  it('leaves a build option that is not a street in the strip', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [5] }), player({ seat: 'seat-1' })],
+      actions: [{ name: 'build', prompt: 'Construí', options: ['5'], freeform: false }],
+    })
+
+    // Building is a street-only rule, so a railroad's card cannot price the
+    // option and it stays a strip button instead of leaving the screen.
+    expect(cardButtonsByCard(seated)).toEqual([[]])
+    expect(actionButtons(seated).map(textOf)).toEqual(['Construí: 5'])
+  })
+
+  it('keeps the turn actions in the strip while the cards take theirs', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1] }), player({ seat: 'seat-1' })],
+      actions: [
+        { name: 'mortgage', prompt: 'Hipotecá', options: ['1'], freeform: false },
+        { name: 'roll', prompt: 'Tirá los dados', options: [], freeform: false },
+        { name: 'end_turn', prompt: 'Terminá el turno', options: [], freeform: false },
+      ],
+    })
+
+    expect(actionButtons(seated).map(textOf)).toEqual(['Tirá los dados', 'Terminá el turno'])
+    expect(cardButtonsByCard(seated)).toEqual([['Hipotecá · +$30']])
+  })
+
+  it('draws no actions block when every offered action belongs to a card', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1] }), player({ seat: 'seat-1' })],
+      actions: [{ name: 'mortgage', prompt: 'Hipotecá', options: ['1'], freeform: false }],
+    })
+    const page = panelMarkup(seated)
+
+    expect(page).toContain('monopoly-property-actions')
+    expect(page).not.toContain('monopoly-actions-block')
   })
 
   it('shows the development level of each built own property', () => {
@@ -1125,5 +1235,24 @@ describe('the monopoly view switcher', () => {
     expect(label(view({ offers: [offer('1'), offer('2')] }))).toBe(
       'Mesa (2 ofertas abiertas)',
     )
+  })
+
+  it('counts on the wallet tab the actions waiting on the seat own properties', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [1, 5] }), player({ seat: 'seat-1' })],
+      actions: [{ name: 'mortgage', prompt: 'Hipotecá', options: ['1', '5'], freeform: false }],
+    })
+    const carteraTab = (rawView: MonopolyView) =>
+      elementsWithRole(rawView, 'tab').find((tab) => paneOfTab(tab) === 'cartera')
+    const waiting = (rawView: MonopolyView) =>
+      (carteraTab(rawView)!.props as { 'aria-label'?: string })['aria-label']
+
+    expect(waiting(view())).toBeUndefined()
+    expect(waiting(seated)).toBe('Cartera (2 acciones sobre tus propiedades)')
+
+    const badge = hostElements(carteraTab(seated) as ReactNode).find((element) =>
+      classesOf(element).includes('monopoly-tab-badge'),
+    )
+    expect(String((badge!.props as { children?: ReactNode }).children)).toBe('2')
   })
 })

@@ -59,20 +59,36 @@ function panePanelId(pane: MonopolyPane): string {
 
 /**
  * The accessible name of a view's tab, or ``undefined`` when the tab needs no
- * more than its own label (S6).
+ * more than its own label (S6/S16).
  *
- * Only the table's tab earns one, and only while it holds an offer somebody has
- * to answer. A bare count read aloud is a number with no meaning, so the strip
- * keeps the visible badge decorative and states the fact in the tab's name
- * instead, where a screen reader reaches it without reading a stray digit.
+ * Two views can have something waiting in them, and they wait for different
+ * things: the table waits on the offers nobody has answered, and the wallet waits
+ * on the actions the server offered on the seat's own properties, which are the
+ * buttons its cards hold. Both are returned the same way, so the tab's visible
+ * count and its announced one are built from a single value and cannot disagree.
+ *
+ * A bare count read aloud is a number with no meaning, so the strip keeps the
+ * visible badge decorative and states the fact in the tab's name instead, where
+ * a screen reader reaches it without reading a stray digit.
  */
-function paneTabLabel(
+type PaneWaiting = { count: number; noun: string }
+
+function paneWaiting(
   pane: MonopolyPane,
-  label: string,
   openOffers: number,
-): string | undefined {
-  if (pane !== 'mesa' || openOffers === 0) return undefined
-  return `${label} (${openOffers} ${openOffers === 1 ? 'oferta abierta' : 'ofertas abiertas'})`
+  propertyActions: number,
+): PaneWaiting | null {
+  if (pane === 'mesa' && openOffers > 0) {
+    return { count: openOffers, noun: openOffers === 1 ? 'oferta abierta' : 'ofertas abiertas' }
+  }
+  if (pane === 'cartera' && propertyActions > 0) {
+    return {
+      count: propertyActions,
+      noun:
+        propertyActions === 1 ? 'acción sobre tus propiedades' : 'acciones sobre tus propiedades',
+    }
+  }
+  return null
 }
 
 /**
@@ -134,6 +150,15 @@ const EMPTY_TRADE_DRAFT: MonopolyTradeDraft = {
  * be drawn twice.
  */
 const TRADE_RESPONSES = new Set(['accept', 'reject', 'withdraw'])
+
+/**
+ * The four actions that act on one property, and therefore belong on its card
+ * (S14 of ``monopoly-view-switcher.md``).
+ *
+ * They are named here so the strip and the card agree on which options are the
+ * card's business, and so a fifth one cannot be added to one side only.
+ */
+const PROPERTY_ACTIONS = new Set(['build', 'sell', 'mortgage', 'unmortgage'])
 
 /** Board indexes in board order, without repeats (S3). */
 function boardIndexList(indexes: number[]): string {
@@ -342,6 +367,95 @@ function optionLabel(
   return `${action.prompt}: ${option}`
 }
 
+/** One option a property card can draw, ready to become a button (S14). */
+type PropertyAction = {
+  /** The action name the runtime grades the submission against. */
+  name: string
+  /** The option the server offered, submitted unchanged. */
+  option: string
+  /** The button's text: the server's verb and the money the option moves. */
+  label: string
+}
+
+/**
+ * Whether a property card claims this option (S14).
+ *
+ * A card claims an option only when a card for that space exists, which is the
+ * one condition that matters: an option the client cannot place has to stay with
+ * the strip instead of leaving the screen. ``cardIndexes`` is built from the very
+ * groups the wallet renders, so "claimed" can never mean "no card exists".
+ *
+ * ``build`` and ``sell`` keep their own restriction: they are street-only rules,
+ * so an option of theirs that does not name a street is not a price a card can
+ * pay and is left to the strip.
+ */
+function claimedByCard(
+  cardIndexes: Set<number>,
+  action: MonopolyAction,
+  option: string,
+): boolean {
+  if (!PROPERTY_ACTIONS.has(action.name)) return false
+  const index = optionIndex(option)
+  if (index === null || !cardIndexes.has(index)) return false
+  if (action.name === 'build' || action.name === 'sell') return spaceAt(index).kind === 'street'
+  return true
+}
+
+/**
+ * The label of one option a card draws (S14).
+ *
+ * The card already names the property, so the label is the server's own verb
+ * plus the money the option moves and never the space name a second time. Every
+ * price comes from ``deeds.ts``, the same table the printed board is drawn from:
+ * the client still decides no rule and still prices nothing the server did not
+ * offer.
+ */
+function cardOptionLabel(action: MonopolyAction, index: number, level: number): string {
+  if (action.name === 'build') {
+    return `${action.prompt} · ${formatMoney(buildPrice(deedFor(index), level))}`
+  }
+  if (action.name === 'sell') {
+    return `${action.prompt} · +${formatMoney(sellBack(deedFor(index)))}`
+  }
+  if (action.name === 'mortgage') return `${action.prompt} · +${formatMoney(mortgageValue(index))}`
+  if (action.name === 'unmortgage') {
+    return `${action.prompt} · −${formatMoney(mortgageLiftCost(index))}`
+  }
+  return `${action.prompt}`
+}
+
+/**
+ * The options each property card draws, keyed by board index (S14).
+ *
+ * The order is fixed here -- build, sell, mortgage, unmortgage -- so a card's
+ * buttons never move between frames because the server reordered its own list.
+ */
+function propertyActionsByIndex(
+  actions: MonopolyAction[],
+  cardIndexes: Set<number>,
+  buildings: Record<string, number>,
+): Map<number, PropertyAction[]> {
+  const byIndex = new Map<number, PropertyAction[]>()
+  for (const name of ['build', 'sell', 'mortgage', 'unmortgage']) {
+    const action = actions.find((candidate) => candidate.name === name)
+    if (!action) continue
+    for (const option of action.options) {
+      if (!claimedByCard(cardIndexes, action, option)) continue
+      const index = Number(option)
+      const level: number = buildings[String(index)] ?? 0
+      const drawn = byIndex.get(index) ?? []
+      drawn.push({ name: action.name, option, label: cardOptionLabel(action, index, level) })
+      byIndex.set(index, drawn)
+    }
+  }
+  return byIndex
+}
+
+/** The options of one action its card took, so the strip does not draw them twice (S14). */
+function claimedOptions(action: MonopolyAction, cardIndexes: Set<number>): Set<string> {
+  return new Set(action.options.filter((option) => claimedByCard(cardIndexes, action, option)))
+}
+
 /**
  * One button per action the server offered this seat.
  *
@@ -354,12 +468,18 @@ function optionLabel(
  * A ``freeform`` action is **skipped**: its value is composed by the
  * negotiation block, and a generic button would submit ``null`` to an action
  * that requires a composed value (S11).
+ *
+ * An option a property card claimed is **skipped** as well (S14): it is drawn on
+ * its card, and drawing it here too would offer the same submission twice. What
+ * is left still goes through the presentation above, so an option no card could
+ * place keeps the label it always had.
  */
 function actionButtons(
   action: MonopolyAction,
   busy: boolean,
   onAction: (name: string, value: string | null) => void,
   buildings: Record<string, number>,
+  claimed: ReadonlySet<string>,
 ): ReactElement[] {
   if (action.freeform) return []
   if (action.options.length === 0) {
@@ -375,24 +495,29 @@ function actionButtons(
       </button>,
     ]
   }
-  return action.options.map((option) => (
-    <button
-      className="monopoly-action"
-      disabled={busy}
-      key={`${action.name}:${option}`}
-      onClick={() => onAction(action.name, option)}
-      type="button"
-    >
-      {optionLabel(action, option, buildings)}
-    </button>
-  ))
+  return action.options
+    .filter((option) => !claimed.has(option))
+    .map((option) => (
+      <button
+        className="monopoly-action"
+        disabled={busy}
+        key={`${action.name}:${option}`}
+        onClick={() => onAction(action.name, option)}
+        type="button"
+      >
+        {optionLabel(action, option, buildings)}
+      </button>
+    ))
 }
 
 function ownSeatBlock(
   own: MonopolyPlayer,
   ownGroups: OwnGroup[],
+  cardActions: Map<number, PropertyAction[]>,
   buildings: Record<string, number>,
   mortgaged: Record<string, true>,
+  busy: boolean,
+  onAction: (name: string, value: string | null) => void,
 ): ReactElement {
   return (
     <>
@@ -439,6 +564,7 @@ function ownSeatBlock(
                 {group.spaces.map((space) => {
                   const level: number | undefined = buildings[String(space.index)]
                   const isMortgaged = mortgaged[String(space.index)] === true
+                  const actions = cardActions.get(space.index) ?? []
                   return (
                     <li className="monopoly-property" key={space.index}>
                       <span className="monopoly-property-name">{space.name}</span>
@@ -452,6 +578,21 @@ function ownSeatBlock(
                         {`Precio ${formatMoney(purchasePrice(space.index))}`}
                       </span>
                       <span className="monopoly-property-rents">{rentSummary(space)}</span>
+                      {actions.length > 0 && (
+                        <div className="monopoly-property-actions">
+                          {actions.map((action) => (
+                            <button
+                              className="monopoly-property-action"
+                              disabled={busy}
+                              key={`${action.name}:${action.option}`}
+                              onClick={() => onAction(action.name, action.option)}
+                              type="button"
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </li>
                   )
                 })}
@@ -822,6 +963,23 @@ export function MonopolyPanelLayout({
   const genericActions = view.actions.filter((action) => !TRADE_RESPONSES.has(action.name))
   const openOffers = (view.offers ?? []).length
   const debt = view.phase === 'raising_cash' ? view.debt : null
+  /**
+   * The indexes the wallet draws a card for, and the actions those cards take
+   * (S14).
+   *
+   * ``cardIndexes`` is built from the very groups the wallet renders, so
+   * "claimed" can never mean "no card exists", and the strip below is left with
+   * exactly the options no card could place.
+   */
+  const cardIndexes = new Set(ownGroups.flatMap((group) => group.spaces.map((space) => space.index)))
+  const cardActions = propertyActionsByIndex(view.actions, cardIndexes, view.buildings)
+  const cardActionCount = [...cardActions.values()].reduce(
+    (total, actions) => total + actions.length,
+    0,
+  )
+  const stripButtons = genericActions.flatMap((action) =>
+    actionButtons(action, busy, onAction, view.buildings, claimedOptions(action, cardIndexes)),
+  )
 
   /**
    * One view's panel.
@@ -863,28 +1021,33 @@ export function MonopolyPanelLayout({
         }}
         role="tablist"
       >
-        {PANES.map(({ key, label }) => (
-          <button
-            aria-controls={panePanelId(key)}
-            aria-label={paneTabLabel(key, label, openOffers)}
-            aria-selected={key === activeView}
-            className="monopoly-tab"
-            data-pane={key}
-            id={paneTabId(key)}
-            key={key}
-            onClick={() => onViewChange(key)}
-            role="tab"
-            tabIndex={key === activeView ? 0 : -1}
-            type="button"
-          >
-            <span className="monopoly-tab-label">{label}</span>
-            {key === 'mesa' && openOffers > 0 && (
-              <span aria-hidden="true" className="monopoly-tab-badge">
-                {openOffers}
-              </span>
-            )}
-          </button>
-        ))}
+        {PANES.map(({ key, label }) => {
+          const waiting = paneWaiting(key, openOffers, cardActionCount)
+          return (
+            <button
+              aria-controls={panePanelId(key)}
+              aria-label={
+                waiting === null ? undefined : `${label} (${waiting.count} ${waiting.noun})`
+              }
+              aria-selected={key === activeView}
+              className="monopoly-tab"
+              data-pane={key}
+              id={paneTabId(key)}
+              key={key}
+              onClick={() => onViewChange(key)}
+              role="tab"
+              tabIndex={key === activeView ? 0 : -1}
+              type="button"
+            >
+              <span className="monopoly-tab-label">{label}</span>
+              {waiting !== null && (
+                <span aria-hidden="true" className="monopoly-tab-badge">
+                  {waiting.count}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
 
       {/*
@@ -892,7 +1055,7 @@ export function MonopolyPanelLayout({
         whichever view is open they are on screen: changing view can never hide
         an obligation the seat still has to answer.
       */}
-      {(debt !== null || genericActions.length > 0) && (
+      {(debt !== null || stripButtons.length > 0) && (
         <div className="monopoly-persistent">
           {debt !== null && (
             <div className="monopoly-players-block monopoly-debt">
@@ -905,13 +1068,11 @@ export function MonopolyPanelLayout({
             </div>
           )}
 
-          {genericActions.length > 0 && (
+          {stripButtons.length > 0 && (
             <div className="monopoly-actions-block">
               <h3 className="monopoly-block-title">Acciones</h3>
               <div className="monopoly-actions" role="group" aria-label="Acciones disponibles">
-                {genericActions.map((action) =>
-                  actionButtons(action, busy, onAction, view.buildings),
-                )}
+                {stripButtons}
               </div>
             </div>
           )}
@@ -927,7 +1088,15 @@ export function MonopolyPanelLayout({
           {own === null ? (
             <p className="monopoly-spectator">Estás como espectador.</p>
           ) : (
-            ownSeatBlock(own, ownGroups, view.buildings, view.mortgaged)
+            ownSeatBlock(
+              own,
+              ownGroups,
+              cardActions,
+              view.buildings,
+              view.mortgaged,
+              busy,
+              onAction,
+            )
           )}
         </div>,
       )}
