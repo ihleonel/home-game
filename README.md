@@ -143,19 +143,24 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   spectator, who still gets no button. The offered actions and the open debt deliberately stay
   **outside** the views, between the strip and the open one, so they are on screen whichever view
   the player is in and a view change can never hide an obligation the seat still has to answer; the
-  `Mesa` tab carries the count of the offers waiting in it, so an offer nobody has answered cannot
-  go silently out of sight either. The panel is dressed in the game's own bright palette: a sunny
+  `Mesa` tab carries the count of the offers waiting in it and the `Cartera` tab the count of the
+  actions waiting on the seat's own properties, so neither an offer nobody has answered nor an
+  action waiting on a property can go silently out of sight. The panel is dressed in the game's own bright palette: a sunny
   chrome, the brand red on the open tab, on the offers badge and on every button the player acts
   with, the dollar green on money, and the eight canonical colour groups of the printed board --
   brighter than the muted values this screen used to carry and, at the same time, closer to the
   print -- on the board's bands and on the left edge of each property card, painted from the colour
-  key the board itself publishes instead of from a second copy of that table. Building is offered in
-  that strip as well: the server offers
-  `build` and `sell` with the streets it will accept, and the panel resolves each offered index to
-  its space name and its price, so it still never decides which options are legal nor whether the
-  level being raised is a house or a hotel. Mortgages read the same way: the server offers
-  `mortgage` and `unmortgage` with the spaces it will accept, and the panel labels each with the
-  cash it moves. A mortgaged space wears a diagonal grey stripe over its colour band -- or over
+  key the board itself publishes instead of from a second copy of that table. The four actions that
+  act on one property live on that property's card: the server offers `build` and `sell` with the
+  streets it will accept and `mortgage` and `unmortgage` with the spaces it will accept, and the
+  wallet draws one button per offered option on the card of the space it names, labelled with the
+  server's own verb and the money the option moves, because the card already says the property. The
+  strip keeps whatever no card claimed -- an option that is not a board index, an index this seat
+  does not own, or a `build`/`sell` option that does not name a street -- under the label it always
+  had, so an option the client cannot place never leaves the screen. The panel still never decides
+  which options are legal nor whether the level being raised is a house or a hotel, and it still
+  prices nothing the server did not offer. A mortgaged space wears a diagonal grey stripe over its
+  colour band -- or over
   the band strip the cell already reserves when it is a railroad or a utility, which this skin
   leaves band-less -- with its printed price struck through, `Hipotecada` in its accessible name
   and its value and its lift cost in the centre detail; its own property row carries a mortgaged
