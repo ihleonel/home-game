@@ -134,11 +134,17 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   colour band sits on the inner edge of every space instead of the outer one, the two side columns
   carry their names rotated the way the printed board reads them, every purchasable space prints
   its price, and the corners and the centre draw their own character from borders, gradients and
-  type. Next
-  to it, the panel shows the own seat's capital, position, jail state, the jail cards it holds
-  and its properties grouped by colour with the level of each built one, how many cards are left in
-  each deck, how many houses and hotels are left in the bank's box, the actions the
-  server offered, and the roster of every seat. Building lives there as well: the server offers
+  type. The board is one of the three views the player switches between, and only one of them is on
+  screen at a time: `Tablero` carries the board, `Cartera` the own seat's capital, position, jail
+  state, the jail cards it holds and its properties grouped by colour with the level of each built
+  one, and `Mesa` everything the table shares -- the roster of every seat, how many cards are left
+  in each deck and how many houses and hotels are left in the bank's box. The switch is a
+  client-side choice: local state that no action carries anywhere, and the same three views for a
+  spectator, who still gets no button. The offered actions and the open debt deliberately stay
+  **outside** the views, between the strip and the open one, so they are on screen whichever view
+  the player is in and a view change can never hide an obligation the seat still has to answer; the
+  `Mesa` tab carries the count of the offers waiting in it, so an offer nobody has answered cannot
+  go silently out of sight either. Building is offered in that strip as well: the server offers
   `build` and `sell` with the streets it will accept, and the panel resolves each offered index to
   its space name and its price, so it still never decides which options are legal nor whether the
   level being raised is a house or a hotel. Mortgages read the same way: the server offers
@@ -148,21 +154,23 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   leaves band-less -- with its printed price struck through, `Hipotecada` in its accessible name
   and its value and its lift cost in the centre detail; its own property row carries a mortgaged
   badge, and the raise-cash window shows the open debt above the actions, with the amount and the
-  creditor by display name. Trading is composed there too: the panel offers the block when the
+  creditor by display name. Trading is composed in `Mesa` too: the panel offers the block when the
   server offers `propose`, the seat picks the receiver among the other seats still in the match,
   marks its own properties to give and that receiver's to ask for, sets the two cash amounts within
   the cash the view shows, and one button composes the value the server grades; the open offers are
   listed with their terms, which side each piece belongs to and the validity the server published,
   and accept and reject are offered to the receiver while withdraw is offered to the proposer,
   never a button the server did not offer. The board is read-only on purpose -- buying, building,
-  mortgaging and trading belong to the panel -- and the panel submits the actions it was handed and
+  mortgaging and trading belong to the offered actions and to `Mesa` -- and the panel submits the
+  actions it was handed and
   never
   decides which ones are legal, so a spectator sees the same board and no buttons at all. The
   board's static data (the 40 spaces and the 22 deeds) is duplicated in TypeScript with a
   fidelity test on each side, so it does not travel in every match frame. What the tests do not
-  reach is the CSS itself: the 900px breakpoint, the token wrapping, the colour bands and the
-  little houses and hotel block, and the mortgaged stripe and its struck price over them, are
-  verified in the markup they hang on, not in a browser.
+  reach is the CSS itself: the view strip's look, the `hidden` rule that takes the two closed views
+  off the screen -- the tests reach the attribute, never the `display` it has to resolve to -- the
+  token wrapping, the colour bands and the little houses and hotel block, and the mortgaged stripe
+  and its struck price over them, are verified in the markup they hang on, not in a browser.
 
 A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
 its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`; `monopoly` reports
