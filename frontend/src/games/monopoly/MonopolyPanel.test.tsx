@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
+import { BOARD } from './board'
 import { MonopolyPanel, MonopolyPanelLayout } from './MonopolyPanel'
 import type { MonopolyPane, MonopolyTradeDraft } from './MonopolyPanel'
 import type { MonopolyAction, MonopolyOffer, MonopolyPlayer, MonopolyView } from './view'
@@ -560,6 +561,74 @@ describe('the monopoly player panel', () => {
     expect(page).toContain('Avenida Mediterráneo')
     expect(page).toContain('Avenida Báltica')
     expect(page).toContain('Rentas impresas')
+  })
+
+  it('marks every property group with the hook the wallet paints from', () => {
+    const seated = view({
+      players: [
+        player({ seat: 'seat-0', properties: [1, 5, 12, 39] }),
+        player({ seat: 'seat-1' }),
+      ],
+    })
+    const groups = elementsWithClass(seated, 'monopoly-property-group')
+    const hookOf = (element: ReactElement) => {
+      const props = element.props as { 'data-group'?: string; 'data-kind'?: string }
+      return props['data-group'] ?? props['data-kind']
+    }
+
+    // In board order: one brown street, a railroad, a utility and a dark blue
+    // street, so the four shapes a wallet card can take are all pinned.
+    expect(groups.map(hookOf)).toEqual(['brown', 'railroad', 'utility', 'dark_blue'])
+  })
+
+  it('gives a street group the colour the board gives its spaces', () => {
+    const colours = [
+      'brown',
+      'light_blue',
+      'pink',
+      'orange',
+      'red',
+      'yellow',
+      'green',
+      'dark_blue',
+    ] as const
+
+    for (const colour of colours) {
+      const street = BOARD.find((space) => space.group === colour)
+      expect(street).toBeDefined()
+      const seated = view({
+        players: [
+          player({ seat: 'seat-0', properties: [street!.index] }),
+          player({ seat: 'seat-1' }),
+        ],
+      })
+
+      expect(
+        elementsWithClass(seated, 'monopoly-property-group').map(
+          (element) => (element.props as { 'data-group'?: string })['data-group'],
+        ),
+      ).toEqual([colour])
+    }
+  })
+
+  it('gives a group with no colour its kind and no colour hook', () => {
+    const seated = view({
+      players: [player({ seat: 'seat-0', properties: [5, 12] }), player({ seat: 'seat-1' })],
+    })
+    const groups = elementsWithClass(seated, 'monopoly-property-group')
+    const page = panelMarkup(seated)
+
+    expect(
+      groups.map((element) => (element.props as { 'data-kind'?: string })['data-kind']),
+    ).toEqual(['railroad', 'utility'])
+    // Exactly one of the two hooks is set, so one rule in the stylesheet can
+    // never match a group twice and a group can never wear two colours.
+    for (const group of groups) {
+      expect((group.props as { 'data-group'?: string })['data-group']).toBeUndefined()
+    }
+    expect(page).toContain('data-kind="railroad"')
+    expect(page).toContain('data-kind="utility"')
+    expect(page).not.toContain('data-group="railroad"')
   })
 
   it('lists every seat with its roster name and the own-seat suffix', () => {

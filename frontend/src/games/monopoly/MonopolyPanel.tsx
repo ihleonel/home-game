@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import type { MatchRendererProps, MatchState } from '../registry'
 import { BOARD_SIZE, isPurchasable, spaceAt } from './board'
-import type { Space } from './board'
+import type { ColorGroup, Space } from './board'
 import {
   HOTEL_LEVEL,
   MAX_HOUSE_LEVEL,
@@ -191,7 +191,24 @@ function winnerLine(view: MonopolyView, match: MatchState<MonopolyView>): string
   return `Ha ganado ${seatName(match, view.winner)}.`
 }
 
-type OwnGroup = { key: string; label: string; spaces: Space[] }
+type OwnGroup = {
+  key: string
+  label: string
+  spaces: Space[]
+  /**
+   * The colour key of a street group, or ``null`` for a railroad or a utility
+   * (S12 of ``monopoly-view-switcher.md``).
+   */
+  group: ColorGroup | null
+  /**
+   * The kind of a group that has no colour, or ``null`` for a street (S12).
+   *
+   * Exactly one of ``group`` and ``kind`` is set. That is what lets the
+   * wallet's stylesheet paint a group from a single rule and stops a group
+   * from ever matching two of them at once.
+   */
+  kind: 'railroad' | 'utility' | null
+}
 
 function groupKey(space: Space): string {
   if (space.kind === 'street' && space.group) return `group:${space.group}`
@@ -203,6 +220,11 @@ function groupLabel(space: Space): string {
   if (space.kind === 'street' && space.group) return GROUP_LABELS[space.group]
   if (space.kind === 'railroad') return 'Ferrocarriles'
   return 'Servicios'
+}
+
+/** The kind of a purchasable space that has no colour (S12). */
+function colourlessKind(space: Space): 'railroad' | 'utility' {
+  return space.kind === 'railroad' ? 'railroad' : 'utility'
 }
 
 /**
@@ -220,9 +242,17 @@ function ownPropertyGroups(player: MonopolyPlayer): OwnGroup[] {
     const space = spaceAt(index)
     if (!isPurchasable(space)) continue
     const key = groupKey(space)
+    const isStreet = space.kind === 'street'
     const existing = groups.get(key)
     if (existing) existing.spaces.push(space)
-    else groups.set(key, { key, label: groupLabel(space), spaces: [space] })
+    else
+      groups.set(key, {
+        key,
+        label: groupLabel(space),
+        spaces: [space],
+        group: isStreet ? space.group : null,
+        kind: isStreet ? null : colourlessKind(space),
+      })
   }
   return [...groups.values()]
 }
@@ -398,7 +428,12 @@ function ownSeatBlock(
           <p className="monopoly-own-empty">Todavía no tenés propiedades.</p>
         ) : (
           ownGroups.map((group) => (
-            <div className="monopoly-property-group" key={group.key}>
+            <div
+              className="monopoly-property-group"
+              data-group={group.group ?? undefined}
+              data-kind={group.kind ?? undefined}
+              key={group.key}
+            >
               <p className="monopoly-property-group-title">{group.label}</p>
               <ul className="monopoly-property-list">
                 {group.spaces.map((space) => {
