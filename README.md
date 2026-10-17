@@ -144,7 +144,13 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   **outside** the views, between the strip and the open one, so they are on screen whichever view
   the player is in and a view change can never hide an obligation the seat still has to answer; the
   `Mesa` tab carries the count of the offers waiting in it, so an offer nobody has answered cannot
-  go silently out of sight either. Building is offered in that strip as well: the server offers
+  go silently out of sight either. The panel is dressed in the game's own bright palette: a sunny
+  chrome, the brand red on the open tab, on the offers badge and on every button the player acts
+  with, the dollar green on money, and the eight canonical colour groups of the printed board --
+  brighter than the muted values this screen used to carry and, at the same time, closer to the
+  print -- on the board's bands and on the left edge of each property card, painted from the colour
+  key the board itself publishes instead of from a second copy of that table. Building is offered in
+  that strip as well: the server offers
   `build` and `sell` with the streets it will accept, and the panel resolves each offered index to
   its space name and its price, so it still never decides which options are legal nor whether the
   level being raised is a house or a hotel. Mortgages read the same way: the server offers
@@ -167,10 +173,14 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   decides which ones are legal, so a spectator sees the same board and no buttons at all. The
   board's static data (the 40 spaces and the 22 deeds) is duplicated in TypeScript with a
   fidelity test on each side, so it does not travel in every match frame. What the tests do not
-  reach is the CSS itself: the view strip's look, the `hidden` rule that takes the two closed views
-  off the screen -- the tests reach the attribute, never the `display` it has to resolve to -- the
-  token wrapping, the colour bands and the little houses and hotel block, and the mortgaged stripe
-  and its struck price over them, are verified in the markup they hang on, not in a browser.
+  reach is the CSS itself: the view strip's look, the bright palette and the light tints the wallet
+  cards wear, the `hidden` rule that takes the two closed views off the screen -- the tests reach the
+  attribute, never the `display` it has to resolve to -- the token wrapping, the colour bands and the
+  little houses and hotel block, and the mortgaged stripe and its struck price over them, are
+  verified in the markup they hang on, not in a browser. The palette's contrast is the one part of
+  that CSS which is measured instead of looked at: every text/background pair it introduces is
+  checked against WCAG AA (35 pairs, worst 5.39:1), because a bright palette is exactly where
+  contrast breaks silently and the value is arithmetic rather than taste.
 
 A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
 its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`; `monopoly` reports
