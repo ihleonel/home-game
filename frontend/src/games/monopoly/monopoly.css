@@ -14,6 +14,23 @@
   --monopoly-surface: #fbf6ea;
   --monopoly-paper: #fdfbf4;
   --monopoly-band-empty: #efe7d6;
+  /* S10 of ``monopoly-view-switcher.md``: the fun palette. The chrome is a sunny
+     cream, everything the player acts on wears the brand red and money wears the
+     dollar green, so the match screen reads as the game's box instead of as a
+     plain form. ``--monopoly-chrome`` and ``--monopoly-card`` are deliberately
+     new tokens: reusing ``--monopoly-surface`` / ``--monopoly-paper`` would have
+     repainted the board's cells and its centre as well, and this increment does
+     not touch the board's own skin. Every text/background pair these tokens
+     create is measured against WCAG AA in the increment's evidence (S11): 35
+     pairs, and the worst is 5.39:1. */
+  --monopoly-chrome: #ffeec4;
+  --monopoly-card: #fffdf7;
+  --monopoly-card-line: #e8c886;
+  --monopoly-brand: #c8102e;
+  --monopoly-brand-ink: #fffdf6;
+  --monopoly-brand-soft: #fbdde2;
+  --monopoly-fun-yellow: #ffd21f;
+  --monopoly-money: #0f7038;
   --monopoly-band-size: 0.42rem;
   /* S10: the size of the little houses and the hotel block. Kept as custom
      properties so the mobile breakpoint can shrink the marker without ever
@@ -21,25 +38,29 @@
   --monopoly-house-size: 0.24rem;
   --monopoly-hotel-width: 0.5rem;
   --monopoly-hotel-height: 0.26rem;
-  --monopoly-you: var(--accent-dark);
-  --monopoly-you-border: var(--accent);
-  --monopoly-brown: #7a4a1f;
-  --monopoly-light-blue: #64b6da;
-  --monopoly-pink: #d23f88;
-  --monopoly-orange: #dd7a1f;
-  --monopoly-red: #cb3a3a;
-  --monopoly-yellow: #e0b81c;
-  --monopoly-green: #2c8a55;
-  --monopoly-dark-blue: #29378f;
+  --monopoly-you: var(--monopoly-brand);
+  --monopoly-you-border: var(--monopoly-brand);
+  /* S10: the canonical bright hexes of the printed board. They are the brand's
+     own palette and, at the same time, more faithful to the print than the
+     muted values this file used to carry. The wallet reads them through
+     ``--monopoly-group-colour`` below. */
+  --monopoly-brown: #955436;
+  --monopoly-light-blue: #aae0fa;
+  --monopoly-pink: #d93a96;
+  --monopoly-orange: #f7941d;
+  --monopoly-red: #ed1b24;
+  --monopoly-yellow: #fef200;
+  --monopoly-green: #1fb25a;
+  --monopoly-dark-blue: #0072bb;
 
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
   margin: 0.5rem 0 1.25rem;
   padding: 1rem;
-  border: 1px solid var(--line-strong);
+  border: 2px solid var(--monopoly-brand);
   border-radius: 0.9rem;
-  background: var(--surface-raised);
+  background: var(--monopoly-chrome);
 }
 
 /* S1: the view strip. It replaces the two-column grid that used to put the
@@ -49,23 +70,28 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  border-bottom: 1px solid var(--monopoly-line);
+  border-bottom: 2px solid var(--monopoly-brand);
 }
 
+/* S10: a closed tab is a soft butter, the open one is the brand, so which view
+   is on screen is told by the fill, the label colour and the weight at once and
+   never by the hue alone (S13). */
 .monopoly-tab {
-  border: 1px solid var(--monopoly-line);
+  border: 1px solid var(--monopoly-card-line);
   border-bottom: none;
   border-radius: 0.5rem 0.5rem 0 0;
   padding: 0.45rem 0.9rem;
-  background: var(--monopoly-band-empty);
-  color: var(--monopoly-ink-soft);
+  background: color-mix(in srgb, var(--monopoly-fun-yellow) 45%, var(--monopoly-card));
+  color: var(--monopoly-ink);
   font-size: 0.85rem;
   font-weight: 750;
 }
 
 .monopoly-tab[aria-selected='true'] {
-  background: var(--monopoly-paper);
-  color: var(--monopoly-ink);
+  border-color: var(--monopoly-brand);
+  background: var(--monopoly-brand);
+  color: var(--monopoly-brand-ink);
+  font-weight: 800;
 }
 
 /* S6: the offers waiting in the table view, so a view change never leaves an
@@ -75,10 +101,18 @@
   margin-left: 0.4rem;
   padding: 0 0.3rem;
   border-radius: 999px;
-  background: var(--monopoly-you-border);
-  color: var(--monopoly-paper);
+  background: var(--monopoly-brand);
+  color: var(--monopoly-brand-ink);
   font-size: 0.7rem;
   font-weight: 800;
+}
+
+/* The badge lives on its own tab, so it has to invert when that tab is the open
+   one: brand on ink rather than ink on brand, which is the same 5.78:1 pair the
+   other way round. */
+.monopoly-tab[aria-selected='true'] .monopoly-tab-badge {
+  background: var(--monopoly-brand-ink);
+  color: var(--monopoly-brand);
 }
 
 /* S5: the debt and the offered actions stay outside every view, so whichever
@@ -148,7 +182,7 @@
 
 .monopoly-space[aria-pressed='true'] {
   border-color: var(--monopoly-you-border);
-  box-shadow: inset 0 0 0 2px var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--monopoly-brand-soft);
 }
 
 /* S2: the band faces the centre. It is absolutely positioned against the cell
@@ -407,7 +441,7 @@
 .monopoly-token-you .monopoly-token-initial {
   border-color: var(--monopoly-you-border);
   color: var(--monopoly-you);
-  box-shadow: inset 0 0 0 2px var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--monopoly-brand-soft);
 }
 
 /* A jailed seat is marked with an outline, not with words: the words would be
@@ -743,9 +777,16 @@
 .monopoly-actions-block,
 .monopoly-players-block {
   padding: 0.75rem;
-  border: 1px solid var(--monopoly-line);
+  border: 1px solid var(--monopoly-card-line);
   border-radius: 0.75rem;
-  background: var(--monopoly-surface);
+  background: var(--monopoly-card);
+}
+
+/* S10: the strip that stays on screen in every view is the one the player acts
+   on, so it wears the brand frame and a sunny fill. */
+.monopoly-actions-block {
+  border-color: var(--monopoly-brand);
+  background: color-mix(in srgb, var(--monopoly-fun-yellow) 18%, var(--monopoly-card));
 }
 
 /* The auction is transient and blocks the turn, so its block is outlined in the
@@ -882,7 +923,7 @@
 
 .monopoly-block-title {
   margin: 0 0 0.5rem;
-  color: var(--monopoly-ink);
+  color: var(--monopoly-brand);
   font-size: 0.95rem;
 }
 
@@ -925,6 +966,12 @@
   font-weight: 700;
 }
 
+/* S10: money wears the dollar green, in the wallet and in the table's roster. */
+.monopoly-own-cash {
+  color: var(--monopoly-money);
+  font-weight: 800;
+}
+
 .monopoly-own-properties-title {
   margin: 0 0 0.25rem;
   color: var(--monopoly-ink);
@@ -935,9 +982,65 @@
   margin-top: 0.6rem;
 }
 
+/* S12: each group of the wallet wears the colour the board already gives its
+   spaces. The hook sets one local custom property, so every card of a group is
+   painted from a single rule and a group can never match two of them. A
+   railroad and a utility carry no colour group -- their spaces have none in
+   ``board.ts`` -- so they take the ink the printed board gives them and their
+   written labels stay the only thing that tells them apart (S13). */
+.monopoly-property-group {
+  --monopoly-group-colour: var(--monopoly-ink-soft);
+}
+
+.monopoly-property-group[data-group='brown'] {
+  --monopoly-group-colour: var(--monopoly-brown);
+}
+
+.monopoly-property-group[data-group='light_blue'] {
+  --monopoly-group-colour: var(--monopoly-light-blue);
+}
+
+.monopoly-property-group[data-group='pink'] {
+  --monopoly-group-colour: var(--monopoly-pink);
+}
+
+.monopoly-property-group[data-group='orange'] {
+  --monopoly-group-colour: var(--monopoly-orange);
+}
+
+.monopoly-property-group[data-group='red'] {
+  --monopoly-group-colour: var(--monopoly-red);
+}
+
+.monopoly-property-group[data-group='yellow'] {
+  --monopoly-group-colour: var(--monopoly-yellow);
+}
+
+.monopoly-property-group[data-group='green'] {
+  --monopoly-group-colour: var(--monopoly-green);
+}
+
+.monopoly-property-group[data-group='dark_blue'] {
+  --monopoly-group-colour: var(--monopoly-dark-blue);
+}
+
+.monopoly-property-group[data-kind='railroad'] {
+  --monopoly-group-colour: var(--monopoly-ink);
+}
+
+.monopoly-property-group[data-kind='utility'] {
+  --monopoly-group-colour: var(--monopoly-ink-soft);
+}
+
+/* The group's name is a pill in the group's own colour, tinted so lightly that
+   the dark ink on it keeps its measured contrast (S11 and S13). */
 .monopoly-property-group-title {
-  margin: 0 0 0.25rem;
-  color: var(--monopoly-you);
+  display: inline-block;
+  margin: 0 0 0.35rem;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monopoly-group-colour) 22%, var(--monopoly-card));
+  color: var(--monopoly-ink);
   font-size: 0.8rem;
   font-weight: 800;
 }
@@ -948,12 +1051,19 @@
   list-style: none;
 }
 
+/* S12: one card per property, with the group's colour on its left edge and an
+   8% tint of the same colour behind it. The name, the level and the mortgaged
+   badge are still text, so the colour is decoration and never the datum. */
 .monopoly-property {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-  padding: 0.4rem 0;
-  border-top: 1px solid var(--line);
+  margin-top: 0.35rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-left: 0.45rem solid var(--monopoly-group-colour);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--monopoly-group-colour) 8%, var(--monopoly-card));
 }
 
 .monopoly-property-name {
@@ -1003,11 +1113,19 @@
   flex: 1 1 auto;
   min-height: 2.5rem;
   padding: 0.45rem 0.7rem;
-  border: 1px solid var(--accent-border);
+  border: 1px solid var(--monopoly-brand);
   border-radius: 0.6rem;
-  background: var(--accent-soft);
-  color: var(--accent-dark);
-  font-weight: 700;
+  background: var(--monopoly-brand);
+  color: var(--monopoly-brand-ink);
+  font-weight: 750;
+}
+
+/* The three answers to a trade offer stay quieter than an offered action: they
+   answer somebody else's proposal, so they are outlined inside their card
+   instead of filled. */
+.monopoly-offer-response {
+  background: var(--monopoly-card);
+  color: var(--monopoly-brand);
 }
 
 .monopoly-action:disabled,
@@ -1042,8 +1160,8 @@
 }
 
 .monopoly-player-cash {
-  color: var(--monopoly-ink);
-  font-weight: 700;
+  color: var(--monopoly-money);
+  font-weight: 800;
 }
 
 .monopoly-player-jail,
