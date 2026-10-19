@@ -135,9 +135,12 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   carry their names rotated the way the printed board reads them, every purchasable space prints
   its price, and the corners and the centre draw their own character from borders, gradients and
   type. The board is one of the three views the player switches between, and only one of them is on
-  screen at a time: `Tablero` carries the board, `Cartera` the own seat's capital, position, jail
-  state, the jail cards it holds and its properties grouped by colour with the level of each built
-  one, and `Mesa` everything the table shares -- the roster of every seat, how many cards are left
+  screen at a time: `Tablero` carries the board, `Cartera` the own seat's economy -- its capital as
+  a bare money value, with the label clipped out of sight instead of printed, and the jail
+  restriction and the jail cards it holds only while the seat has one of them to report, because a
+  fact reading "no restriction" says nothing -- then its properties grouped by colour with the level
+  of each built one, told by the colour band on the cards and by the block they share, with the group
+  name kept for a screen reader alone so colour is never the only channel, and `Mesa` everything the table shares -- the roster of every seat, how many cards are left
   in each deck and how many houses and hotels are left in the bank's box. The switch is a
   client-side choice: local state that no action carries anywhere, and the same three views for a
   spectator, who still gets no button. The offered actions and the open debt deliberately stay
