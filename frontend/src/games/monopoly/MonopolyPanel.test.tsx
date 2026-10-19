@@ -293,11 +293,11 @@ describe('the monopoly player panel', () => {
     ).toBe(true)
   })
 
-  it('shows the own seat capital and position', () => {
+  it('shows the own seat capital with its label clipped out of sight', () => {
     const page = panelMarkup(view())
 
     expect(page).toContain('monopoly-own-cash">$1.500<')
-    expect(page).toContain('monopoly-own-position">GO<')
+    expect(page).toContain('<dt class="monopoly-visually-hidden">Capital</dt>')
   })
 
   it('shows how many jail cards the own seat holds', () => {
@@ -739,6 +739,86 @@ describe('the monopoly player panel', () => {
     expect(page).toContain('data-kind="railroad"')
     expect(page).toContain('data-kind="utility"')
     expect(page).not.toContain('data-group="railroad"')
+  })
+
+  it('shows the own capital as the money alone, with its label kept for screen readers', () => {
+    const seated = view()
+    const page = panelMarkup(seated, { activeView: 'cartera' })
+    const clipped = elementsWithClass(seated, 'monopoly-visually-hidden', {
+      activeView: 'cartera',
+    })
+
+    expect(clipped.map(textOf)).toEqual(['Capital'])
+    expect(page).toContain('monopoly-own-cash')
+  })
+
+  it('does not repeat the own position in the wallet', () => {
+    const page = panelMarkup(view(), { activeView: 'cartera' })
+
+    // The space name cannot be asserted against: the board pane prints every
+    // name too. The hook and the label are what say the fact was dropped.
+    expect(page).not.toContain('monopoly-own-position')
+    expect(page).not.toContain('>Posición<')
+  })
+
+  it('stays silent about jail while the seat is free, and reports it when it is not', () => {
+    const jailed = view({
+      players: [
+        player({ seat: 'seat-0', in_jail: true, jail_turns: 2 }),
+        player({ seat: 'seat-1' }),
+      ],
+    })
+
+    expect(elementsWithClass(view(), 'monopoly-own-jail', { activeView: 'cartera' })).toHaveLength(
+      0,
+    )
+    expect(panelMarkup(view(), { activeView: 'cartera' })).not.toContain('Sin restricciones')
+    expect(
+      elementsWithClass(jailed, 'monopoly-own-jail', { activeView: 'cartera' }).map(textOf),
+    ).toEqual(['En la cárcel (2 turnos)'])
+  })
+
+  it('lists the jail cards only while the seat holds one', () => {
+    const holding = view({
+      players: [player({ seat: 'seat-0', jail_cards: 1 }), player({ seat: 'seat-1' })],
+    })
+
+    expect(
+      elementsWithClass(view(), 'monopoly-own-jail-cards', { activeView: 'cartera' }),
+    ).toHaveLength(0)
+    expect(panelMarkup(holding, { activeView: 'cartera' })).toContain(
+      'monopoly-own-jail-cards">1<',
+    )
+  })
+
+  it('drops the printed-data disclaimer and keeps every rent line qualified', () => {
+    const seated = view({
+      players: [
+        player({ seat: 'seat-0', properties: [1, 3] }),
+        player({ seat: 'seat-1' }),
+      ],
+    })
+    const page = panelMarkup(seated, { activeView: 'cartera' })
+
+    expect(page).not.toContain('Datos impresos de la escritura')
+    expect(page).not.toContain('monopoly-reference-note')
+    expect(page).toContain('Rentas impresas')
+  })
+
+  it('keeps the colour group name for screen readers alone', () => {
+    const seated = view({
+      players: [
+        player({ seat: 'seat-0', properties: [1, 3] }),
+        player({ seat: 'seat-1' }),
+      ],
+    })
+    const titles = elementsWithClass(seated, 'monopoly-property-group-title', {
+      activeView: 'cartera',
+    })
+
+    expect(titles).toHaveLength(1)
+    expect(classesOf(titles[0])).toContain('monopoly-visually-hidden')
+    expect(textOf(titles[0])).toBe('Marrón')
   })
 
   it('lists every seat with its roster name and the own-seat suffix', () => {

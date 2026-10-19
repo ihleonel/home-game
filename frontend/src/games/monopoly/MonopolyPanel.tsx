@@ -522,33 +522,40 @@ function ownSeatBlock(
   return (
     <>
       <dl className="monopoly-own-facts">
+        {/* The wallet shows the money alone: a printed label over every number
+            is what made the panel read as a data sheet. The ``dt`` stays in the
+            markup, clipped out of sight, because it is what keeps the ``dl``
+            meaningful and what a screen reader announces before the amount. */}
         <div className="monopoly-own-fact">
-          <dt>Capital</dt>
+          <dt className="monopoly-visually-hidden">Capital</dt>
           <dd className="monopoly-own-cash">{formatMoney(own.cash)}</dd>
         </div>
-        <div className="monopoly-own-fact">
-          <dt>Posición</dt>
-          <dd className="monopoly-own-position">{spaceAt(own.position).name}</dd>
-        </div>
-        <div className="monopoly-own-fact">
-          <dt>Cárcel</dt>
-          <dd className="monopoly-own-jail">
-            {own.in_jail
-              ? `En la cárcel (${own.jail_turns} ${own.jail_turns === 1 ? 'turno' : 'turnos'})`
-              : 'Sin restricciones'}
-          </dd>
-        </div>
-        <div className="monopoly-own-fact">
-          <dt>Cartas de «Salí de la cárcel gratis»</dt>
-          <dd className="monopoly-own-jail-cards">{own.jail_cards}</dd>
-        </div>
+        {/* The own position is not repeated here: the seat reads it where it
+            lives, on its piece standing on the board. */}
+        {/* A fact is printed only while it says something, so a free seat has no
+            jail restriction to report and a hand with no jail card is not an
+            inventory worth a row. */}
+        {own.in_jail && (
+          <div className="monopoly-own-fact">
+            <dt>Cárcel</dt>
+            <dd className="monopoly-own-jail">
+              {`En la cárcel (${own.jail_turns} ${own.jail_turns === 1 ? 'turno' : 'turnos'})`}
+            </dd>
+          </div>
+        )}
+        {own.jail_cards > 0 && (
+          <div className="monopoly-own-fact">
+            <dt>Cartas de «Salí de la cárcel gratis»</dt>
+            <dd className="monopoly-own-jail-cards">{own.jail_cards}</dd>
+          </div>
+        )}
       </dl>
 
       <div className="monopoly-own-properties">
         <p className="monopoly-own-properties-title">Tus propiedades</p>
-        <p className="monopoly-reference-note">
-          Datos impresos de la escritura: referencia, no la renta vigente.
-        </p>
+        {/* No disclaimer sentence here: every rent line below is prefixed
+            "Rentas impresas" on its own, which is what says the printed table
+            is a reference and not the rent in force. */}
         {ownGroups.length === 0 ? (
           <p className="monopoly-own-empty">Todavía no tenés propiedades.</p>
         ) : (
@@ -559,7 +566,13 @@ function ownSeatBlock(
               data-kind={group.kind ?? undefined}
               key={group.key}
             >
-              <p className="monopoly-property-group-title">{group.label}</p>
+              {/* The group is told on screen by the colour band of its own
+                  cards and by the block they share; the name stays in the
+                  markup, clipped out of sight, so colour is never the only
+                  channel (WCAG 1.4.1). */}
+              <p className="monopoly-property-group-title monopoly-visually-hidden">
+                {group.label}
+              </p>
               <ul className="monopoly-property-list">
                 {group.spaces.map((space) => {
                   const level: number | undefined = buildings[String(space.index)]

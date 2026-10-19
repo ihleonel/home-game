@@ -928,16 +928,10 @@
 }
 
 .monopoly-spectator,
-.monopoly-own-empty,
-.monopoly-reference-note {
+.monopoly-own-empty {
   margin: 0;
   color: var(--monopoly-ink-soft);
   font-size: 0.82rem;
-}
-
-.monopoly-reference-note {
-  margin-bottom: 0.5rem;
-  font-style: italic;
 }
 
 .monopoly-own-facts {
@@ -966,10 +960,14 @@
   font-weight: 700;
 }
 
-/* S10: money wears the dollar green, in the wallet and in the table's roster. */
+/* S10: money wears the dollar green, in the wallet and in the table's roster.
+   In the wallet the label is clipped out of sight, so the size is what says the
+   amount is the seat's own capital and not one more fact in the row. */
 .monopoly-own-cash {
   color: var(--monopoly-money);
+  font-size: 1.6rem;
   font-weight: 800;
+  line-height: 1.1;
 }
 
 .monopoly-own-properties-title {
@@ -1219,4 +1217,22 @@
   .monopoly-space-name {
     display: none;
   }
+}
+
+/* A label the screen does without, kept in the markup for the accessibility
+   tree: the own capital's ``dt`` and the name of a colour group in the wallet.
+   Clipping it to a pixel takes it out of the player's sight without taking it
+   away from a screen reader, so colour never becomes the only channel
+   (WCAG 1.4.1). It is declared last so that it wins over the rules its own
+   elements already carry -- the group title's pill, for one. */
+.monopoly-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+  border: 0;
 }
