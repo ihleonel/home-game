@@ -160,8 +160,10 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   so no name and no token is ever sideways and the colour band keeps facing the centre. Because a
   seven-cell window can never hold the nine-cell middle, the content that used to live there -- the
   game's name, the deck piles, the turn, the last throw, the last card, the open auction and the
-  tapped space's detail -- is drawn in a strip under the window, outside the crop, from the very
-  component a spectator still sees inside the ring. A spectator keeps the whole board, with no
+  tapped space's detail -- is pinned in the hollow of the ring, inside the window and inset by one
+  cell so it never covers a space, from the very component a spectator still sees inside the ring:
+  it is the middle of what the seat sees, and panning moves the board underneath it instead of
+  carrying the table's facts away. A spectator keeps the whole board, with no
   window and no controls: the seat's view is a reading aid, not a rule, and it travels nowhere. The panel is dressed in the game's own bright palette: a sunny
   chrome, the brand red on the open tab, on the offers badge and on every button the player acts
   with, the dollar green on money, and the eight canonical colour groups of the printed board --
@@ -200,8 +202,8 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   attribute, never the `display` it has to resolve to -- the token wrapping, the colour bands and the
   little houses and hotel block, and the mortgaged stripe and its struck price over them, are
   verified in the markup they hang on, not in a browser -- and so are the window's crop, its pan and
-  the strip under it, whose clipping and translation rest on the two grid coordinates the component
-  publishes. The palette's contrast is the one part of
+  the pinned middle, whose clipping, translation and inset rest on the two grid coordinates the
+  component publishes. The palette's contrast is the one part of
   that CSS which is measured instead of looked at: every text/background pair it introduces is
   checked against WCAG AA (37 pairs, worst 5.39:1), because a bright palette is exactly where
   contrast breaks silently and the value is arithmetic rather than taste.
