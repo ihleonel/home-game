@@ -21,7 +21,9 @@ import { ContactShadows, PerspectiveCamera } from '@react-three/drei'
 import { useMemo } from 'react'
 import { CanvasTexture, SRGBColorSpace } from 'three'
 import { BOARD } from '../board'
-import { GRID_SIZE } from '../grid'
+import { GRID_SIZE, spaceSide } from '../grid'
+import type { MatchState } from '../../registry'
+import type { MonopolyView } from '../view'
 import { BOARD_CENTER, DEFAULT_ZOOM, cameraFor, cellCenter } from './camera'
 import { spaceTexture, tableTexture } from './textures'
 
@@ -36,6 +38,27 @@ const CELL_PLANE = 0.97
 
 /** How many table widths the wooden table covers. */
 const TABLE_SIZE = GRID_SIZE * 5
+
+/**
+ * The colour of each seat's piece, by seat index.
+ *
+ * Deliberately not the eight colour groups of the board: a piece must never be
+ * confused with the band of the property it is standing on.
+ */
+const SEAT_COLOURS: readonly string[] = [
+  '#c8102e',
+  '#1868b3',
+  '#1f9d55',
+  '#f2a20c',
+  '#7b4bc4',
+  '#0a8f8f',
+  '#c2185b',
+  '#4a4a4a',
+]
+
+/** The height of a house and of a hotel, in cells, so they read from a seat. */
+const HOUSE_SIZE = { width: 0.17, height: 0.13, depth: 0.17 } as const
+const HOTEL_SIZE = { width: 0.3, height: 0.17, depth: 0.22 } as const
 
 /** Canvas pixels into a texture the renderer can sample. */
 function toTexture(canvas: HTMLCanvasElement, anisotropy: number): CanvasTexture {
@@ -180,6 +203,105 @@ function SelectedFrame({ index }: { index: number }) {
   )
 }
 
+/**
+ * One player's piece, standing on the cell it occupies.
+ *
+ * A piece is what the reference photograph shows: a small metal figure with a
+ * shadow of its own. It is built from three primitives -- a round base, a tapered
+ * body and a head -- because the project carries no `.glb` (S12c), and it casts a
+ * shadow, which is what tells the eye it is standing rather than printed.
+ */
+function Token({ colour, at, offsetX, offsetZ }: {
+  colour: string
+  at: { x: number; z: number }
+  offsetX: number
+  offsetZ: number
+}) {
+  return (
+    <group position={[at.x + offsetX, BOARD_TOP, at.z + offsetZ]}>
+      <mesh castShadow position={[0, 0.012, 0]} receiveShadow>
+        <cylinderGeometry args={[0.13, 0.15, 0.024, 20]} />
+        <meshStandardMaterial color={colour} metalness={0.55} roughness={0.35} />
+      </mesh>
+      <mesh castShadow position={[0, 0.135, 0]}>
+        <cylinderGeometry args={[0.055, 0.1, 0.22, 18]} />
+        <meshStandardMaterial color={colour} metalness={0.55} roughness={0.35} />
+      </mesh>
+      <mesh castShadow position={[0, 0.29, 0]}>
+        <sphereGeometry args={[0.078, 18, 14]} />
+        <meshStandardMaterial color={colour} metalness={0.6} roughness={0.3} />
+      </mesh>
+    </group>
+  )
+}
+
+/** Every piece still in the match, spread over its cell when it is shared. */
+function Tokens({ match }: { match: MatchState<MonopolyView> }) {
+  const seated = match.view.players.filter((player) => !player.eliminated)
+  const perCell = new Map<number, number>()
+  return (
+    <group>
+      {seated.map((player, order) => {
+        const share = perCell.get(player.position) ?? 0
+        perCell.set(player.position, share + 1)
+        const centre = cellCenter(player.position)
+        // Two pieces on one cell stand side by side instead of inside each other.
+        const column = share % 3
+        const row = Math.floor(share / 3)
+        return (
+          <Token
+            at={centre}
+            colour={SEAT_COLOURS[(match.roster.find((entry) => entry.seat_id === player.seat)?.index ?? order) % SEAT_COLOURS.length]}
+            key={player.seat}
+            offsetX={(column - 1) * 0.28}
+            offsetZ={row * 0.26}
+          />
+        )
+      })}
+    </group>
+  )
+}
+
+/**
+ * Houses and hotels, as blocks with volume.
+ *
+ * The level comes only from ``view.buildings`` -- the server's fact -- and the
+ * cell's own side decides which edge of the cell holds them, so a hotel never
+ * floats over the board's centre.
+ */
+function Buildings({ view }: { view: MonopolyView }) {
+  return (
+    <group>
+      {Object.entries(view.buildings).map(([key, level]) => {
+        const index = Number(key)
+        const centre = cellCenter(index)
+        const side = spaceSide(index)
+        const along = side === 'top' || side === 'bottom' ? 'x' : 'z'
+        const inward = side === 'top' ? 0.34 : side === 'bottom' ? -0.34 : 0
+        const inwardZ = side === 'left' ? 0.34 : side === 'right' ? -0.34 : 0
+        const isHotel = level >= 5
+        const count = isHotel ? 1 : level
+        return Array.from({ length: count }, (_, position) => {
+          const spread = count === 1 ? 0 : (position - (count - 1) / 2) * 0.2
+          const x = centre.x + (along === 'x' ? spread : inward)
+          const z = centre.z + (along === 'x' ? inwardZ : inward + spread)
+          const size = isHotel ? HOTEL_SIZE : HOUSE_SIZE
+          return (
+            <mesh castShadow key={`${key}:${position}`} position={[x, BOARD_TOP + size.height / 2, z]}>
+              <boxGeometry args={[size.width, size.height, size.depth]} />
+              <meshStandardMaterial
+                color={isHotel ? '#c8102e' : '#1f9d55'}
+                roughness={0.55}
+                metalness={0.05}
+              />
+            </mesh>
+          )
+        })
+      })}
+    </group>
+  )
+}
+
 /** One pile of cards: a stack with a visible edge, as on the reference table. */
 function DeckPile({
   offsetX,
@@ -210,11 +332,13 @@ function DeckPile({
  * focusing one in the accessible mirror (S6) are one act.
  */
 export function MonopolyTable3D({
+  match,
   seat,
   selected,
   onSelect,
   zoom = DEFAULT_ZOOM,
 }: {
+  match: MatchState<MonopolyView>
   seat: number
   selected: number | null
   onSelect: (index: number) => void
@@ -248,6 +372,8 @@ export function MonopolyTable3D({
         <Table />
         <BoardSlab />
         <Cells onSelect={onSelect} selected={selected} />
+        <Buildings view={match.view} />
+        <Tokens match={match} />
         {selected !== null && <SelectedFrame index={selected} />}
         <DeckPile colour="#e39a2a" offsetX={-0.75} />
         <DeckPile colour="#3d7fb5" offsetX={0.75} />
