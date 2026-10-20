@@ -13,6 +13,7 @@ import {
   paintSpace,
   paintTable,
   spaceTextureSpec,
+  textRotationFor,
   tableTextureSpec,
 } from './textures'
 
@@ -247,5 +248,44 @@ describe('the painters the scene calls', () => {
     expect(typeof paintTable).toBe('function')
     expect(paintSpace.length).toBe(3)
     expect(paintTable.length).toBe(3)
+  })
+})
+
+describe('the way a cell is turned', () => {
+  /** Where the top of the letters points, in the texture's own plane. */
+  function textUp(side: 'bottom' | 'left' | 'top' | 'right'): { x: number; y: number } {
+    const angle = textRotationFor(side)
+    // The unrotated text points at the top of the image, which is (0, -1) here.
+    return { x: Math.sin(angle), y: -Math.cos(angle) }
+  }
+
+  /** The middle of the board, seen from each side's own cell. */
+  const inward = {
+    bottom: { x: 0, y: -1 },
+    top: { x: 0, y: 1 },
+    left: { x: 1, y: 0 },
+    right: { x: -1, y: 0 },
+  } as const
+
+  it('points the text at the middle of the board on all four sides', () => {
+    // The rule the printed board follows, and the one the first capture got
+    // wrong on three sides: the bands faced the centre while the text did not.
+    for (const side of ['bottom', 'left', 'top', 'right'] as const) {
+      const up = textUp(side)
+      // A tolerance rather than a rounded pair: the trig residue is ~1e-17 and
+      // rounding it can land on a signed zero, which is not a direction.
+      expect([
+        side,
+        Math.abs(up.x - inward[side].x) < 1e-9,
+        Math.abs(up.y - inward[side].y) < 1e-9,
+      ]).toEqual([side, true, true])
+    }
+  })
+
+  it('leaves the near row alone and turns the other three', () => {
+    expect(textRotationFor('bottom')).toBe(0)
+    expect(textRotationFor('top')).toBe(Math.PI)
+    expect(textRotationFor('left')).toBe(Math.PI / 2)
+    expect(textRotationFor('right')).toBe(-Math.PI / 2)
   })
 })

@@ -484,6 +484,26 @@ function paintCellFace(
 }
 
 /**
+ * How far to turn a cell's text so it reads the way the printed board reads
+ * (S5).
+ *
+ * The rule is one sentence: **the top of the letters points at the middle of the
+ * board**, which is also the edge the colour band sits on. A player sits outside
+ * their side, so text that points inward is text whose feet are towards them, and
+ * that is why the bottom row needs no turn at all, the far row needs half a turn,
+ * and the two columns need a quarter each in opposite directions.
+ *
+ * It is exported and tested because it is the only part of this painter a test
+ * can reach: the harness has no canvas, but it can rotate a vector.
+ */
+export function textRotationFor(side: BoardSide): number {
+  if (side === 'top') return Math.PI
+  if (side === 'left') return Math.PI / 2
+  if (side === 'right') return -Math.PI / 2
+  return 0
+}
+
+/**
  * Paint one cell of the board (S5).
  *
  * The specification is everything it reads: the painter never asks ``board.ts``
@@ -513,8 +533,7 @@ export function paintSpace(
   const quarterTurn = spec.side === 'left' || spec.side === 'right'
 
   ctx.translate(content.x + content.width / 2, content.y + content.height / 2)
-  if (spec.side === 'right') ctx.rotate(Math.PI / 2)
-  if (spec.side === 'left') ctx.rotate(-Math.PI / 2)
+  ctx.rotate(textRotationFor(spec.side))
   const box = quarterTurn
     ? { width: content.height, height: content.width }
     : { width: content.width, height: content.height }
