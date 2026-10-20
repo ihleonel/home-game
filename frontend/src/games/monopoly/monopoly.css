@@ -1236,3 +1236,24 @@
   clip-path: inset(50%);
   border: 0;
 }
+
+/* ==========================================================================
+   The 3D table (S5/S11 of ``monopoly-3d-table.md``).
+   The scene takes the height the flat board used to take and keeps the panel's
+   chrome around it, so it reads as the table inside the game's box instead of
+   taking over the screen.
+   ========================================================================== */
+
+.monopoly-table3d {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: min(78vh, 100%);
+  overflow: hidden;
+  border: 2px solid var(--monopoly-board-line);
+  border-radius: 0.45rem;
+  background: #171419;
+}
+
+.monopoly-table3d canvas {
+  display: block;
+}

@@ -24,8 +24,22 @@ export const CELL_SIZE = 1
 /** A point in the scene, in world units. */
 export type Point3 = { x: number; y: number; z: number }
 
+/**
+ * Where the camera looks, as the two Euler angles a camera needs.
+ *
+ * ``order`` is ``YXZ``, which is what makes a yaw followed by a pitch enough to
+ * aim a camera whose forward axis is ``-Z``; the roll stays zero because a table
+ * seen from a seat is never tilted.
+ */
+export type CameraRotation = { x: number; y: number; order: 'YXZ' }
+
 /** What a seat's camera is: where it stands, what it looks at and how wide. */
-export type SeatCamera = { position: Point3; target: Point3; fov: number }
+export type SeatCamera = {
+  position: Point3
+  target: Point3
+  rotation: CameraRotation
+  fov: number
+}
 
 /** The middle of the board, which is what every seat looks at. */
 export const BOARD_CENTER: Point3 = {
@@ -116,9 +130,32 @@ export function cameraFor(seatIndex: number, zoom: number = DEFAULT_ZOOM): SeatC
   }
   const horizontal = Math.hypot(standing.x - BOARD_CENTER.x, standing.z - BOARD_CENTER.z)
   const height = horizontal * Math.tan((ELEVATION_DEGREES * Math.PI) / 180)
+  const position = { x: standing.x, y: height, z: standing.z }
   return {
-    position: { x: standing.x, y: height, z: standing.z },
+    position,
     target: BOARD_CENTER,
+    rotation: rotationLookingAt(position, BOARD_CENTER),
     fov: FOV_STEPS[clampZoom(zoom)],
   }
+}
+
+/**
+ * The angles that aim a ``-Z`` forward camera from ``position`` at ``target``.
+ *
+ * The alternative -- moving the camera imperatively inside the scene -- is the
+ * one thing the project's React rules forbid, mutating what a hook returned, and
+ * rightly: an aim that lives in an effect cannot be asserted. So the aim is
+ * arithmetic here: with ``YXZ`` the pitch is ``asin`` of the vertical component
+ * and the yaw comes from the horizontal pair, and ``camera.test.ts`` proves the
+ * result by rotating the forward axis and comparing it with the direction the
+ * camera is supposed to look in.
+ */
+export function rotationLookingAt(position: Point3, target: Point3): CameraRotation {
+  const dx = target.x - position.x
+  const dy = target.y - position.y
+  const dz = target.z - position.z
+  const length = Math.hypot(dx, dy, dz)
+  const pitch = Math.asin(dy / length)
+  const yaw = Math.atan2(-dx, -dz)
+  return { x: pitch, y: yaw, order: 'YXZ' }
 }

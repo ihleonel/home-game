@@ -149,3 +149,49 @@ describe('where a space sits in the scene', () => {
     expect(places.size).toBe(BOARD_SIZE)
   })
 })
+
+describe('aiming the camera', () => {
+  /** Apply a YXZ Euler to the camera's forward axis, in plain arithmetic. */
+  function forwardOf(rotation: { x: number; y: number }): Point3 {
+    // The camera looks down -Z. A pitch about X, then a yaw about Y, in the
+    // order the component declares.
+    const afterPitch = { x: 0, y: Math.sin(rotation.x), z: -Math.cos(rotation.x) }
+    return {
+      x: afterPitch.x * Math.cos(rotation.y) + afterPitch.z * Math.sin(rotation.y),
+      y: afterPitch.y,
+      z: -afterPitch.x * Math.sin(rotation.y) + afterPitch.z * Math.cos(rotation.y),
+    }
+  }
+
+  it('aims every seat exactly at the middle of the board', () => {
+    // The proof the scene cannot get wrong: the declared rotation, applied to
+    // the camera's own forward axis, is the direction to the target.
+    for (let seat = 0; seat < 8; seat += 1) {
+      const { position, target, rotation } = cameraFor(seat)
+      const forward = forwardOf(rotation)
+      const length = Math.hypot(target.x - position.x, target.y - position.y, target.z - position.z)
+      const expected = {
+        x: (target.x - position.x) / length,
+        y: (target.y - position.y) / length,
+        z: (target.z - position.z) / length,
+      }
+      expect([seat, rotation.order]).toEqual([seat, 'YXZ'])
+      for (const axis of ['x', 'y', 'z'] as const) {
+        // A tolerance rather than a rounded equality: the residue of the trig is
+        // around 1e-16 and rounding it can land on a signed zero.
+        expect([seat, axis, Math.abs(forward[axis] - expected[axis]) < 1e-9]).toEqual([
+          seat,
+          axis,
+          true,
+        ])
+      }
+    }
+  })
+
+  it('looks down at the table, never up', () => {
+    for (let seat = 0; seat < 8; seat += 1) {
+      // A camera above the table aims below the horizon: its pitch is negative.
+      expect([seat, cameraFor(seat).rotation.x < 0]).toEqual([seat, true])
+    }
+  })
+})
