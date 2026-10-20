@@ -1236,3 +1236,125 @@
   clip-path: inset(50%);
   border: 0;
 }
+
+/* ==========================================================================
+   The seat's window (S7-S12 of ``monopoly-seat-viewport.md``).
+   The frame clips the board and seven of its eleven cells fill it; the two
+   control rows sit above and below the window, the strip with the table's own
+   content sits under them.
+   ========================================================================== */
+
+.monopoly-viewport {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+/* The window itself: square like the board and clipped, so seven cells fill it
+   and the rest is not on screen at all. It takes the board's own frame colour
+   and radius, so the board inside looks framed rather than cropped. */
+.monopoly-viewport-frame {
+  position: relative;
+  aspect-ratio: 1;
+  width: 100%;
+  max-width: min(92vh, 100%);
+  overflow: hidden;
+  border: 2px solid var(--monopoly-board-line);
+  border-radius: 0.45rem;
+  background: var(--monopoly-board-line);
+}
+
+/* S7: the board inside the frame is 11/7 of it, and the window origin moves it
+   one cell at a time. One cell is a seventh of the frame, so the arithmetic is a
+   percentage of the frame and never of the board -- which is what lets the two
+   custom properties the component publishes stay plain grid coordinates.
+
+   The board's own border, padding and ten gaps are not cells, so this fit is
+   exact only to within their width (S14b): the crop is looked at, not counted.
+
+   The pan is animated because a jump would not say which way the board moved.
+   The ``prefers-reduced-motion`` block in ``index.css`` already cuts every
+   transition, so nothing here has to special-case it. */
+.monopoly-viewport-frame > .monopoly-board {
+  position: absolute;
+  top: calc(-1 * (var(--monopoly-viewport-row, 1) - 1) * 100% / 7);
+  left: calc(-1 * (var(--monopoly-viewport-column, 1) - 1) * 100% / 7);
+  width: calc(100% * 11 / 7);
+  max-width: none;
+  transition: top 160ms ease-out, left 160ms ease-out;
+}
+
+/* S10: the empty middle is the board's own paper, not the gradient and the
+   padding of the centre block. That block is now a strip, and its styling would
+   read as a hole punched through the board. */
+.monopoly-centre-empty {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 0.4rem;
+  background: var(--monopoly-surface);
+}
+
+/* S10: the table's own content under the window. It is not a grid item there,
+   so the placement the block carries for the board is simply ignored, and it
+   keeps its own order. The label colours it already had are unchanged: they were
+   picked against the cream the board paints and this card is lighter, so every
+   pair it already passed it still passes -- the block's text is ``--monopoly-ink``
+   on ``--monopoly-card``, 15.75:1. */
+.monopoly-seat-table .monopoly-centre {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-radius: 0.6rem;
+  background: var(--monopoly-card);
+}
+
+/* S6/S9: the controls act on the view, not on the match, so they are outlined
+   and quiet instead of filled with the brand the way the offered actions are.
+   The glyphs are the arrows and the wording is in the accessible name. */
+.monopoly-viewport-turns,
+.monopoly-viewport-pan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.monopoly-viewport-button {
+  min-height: 2.2rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-radius: 0.55rem;
+  background: var(--monopoly-card);
+  color: var(--monopoly-ink);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.monopoly-viewport-button:hover {
+  border-color: var(--monopoly-brand);
+}
+
+/* S9: a pan at the border is disabled, and it has to look it -- but it stays
+   readable, which is why it fades instead of turning into grey text nobody can
+   measure. */
+.monopoly-viewport-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* The two written controls sit at the far end of their rows, so the four arrows
+   keep a compact block and the escape hatches are apart from them. */
+.monopoly-viewport-printed,
+.monopoly-viewport-centre {
+  margin-left: auto;
+}
+
+/* S12: the orientation and the arc, quiet enough not to compete with the board
+   and still readable on the panel's chrome: ``--monopoly-ink-soft`` on
+   ``--monopoly-chrome`` is 6.57:1. */
+.monopoly-viewport-status {
+  margin: 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
