@@ -134,7 +134,27 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   colour band sits on the inner edge of every space instead of the outer one, the two side columns
   carry their names rotated the way the printed board reads them, every purchasable space prints
   its price, and the corners and the centre draw their own character from borders, gradients and
-  type. The board is one of the three views the player switches between, and only one of them is on
+  type. A **seat** no longer reads that flat board: its `Tablero` is a rendered table -- the board as
+  an object with an edge, on a wooden table, seen from the player's own corner at twenty degrees, the
+  way the printed game looks from a chair. `three` with `react-three-fiber` draws it, and everything
+  it shows is generated at mount from the project's own data: the forty cell faces and the wood are
+  painted into canvases from `board.ts`, `deeds.ts` and `display.ts`, so the scene cannot disagree
+  with the flat board and nothing is downloaded. The camera, its aim and the three zoom steps are
+  arithmetic in `camera.ts` -- a camera moved from an effect cannot be tested, an aim that is a
+  number can -- and the seat's corner comes from its seat order, because every seat starts on GO. The
+  pieces stand on their cells with their own shadows, a built street carries green houses or a red
+  hotel on the edge that faces the centre, and the turn, the last throw, the card and the tapped
+  space ride on a card over the table. That card is how the far edge is read: at this angle it is
+  compressed, so a tap is what makes a space legible. **The flat board is still there**, for two
+  reasons: a spectator gets it as the whole board, and for a seat it is the accessible mirror --
+  clipped out of sight, never `display: none`, because a canvas is invisible to a screen reader and
+  unreachable by the keyboard, so the forty buttons keep the tab order and the announcements, and
+  focusing one selects it in the rendered table too. The loop pauses when the board tab is not the
+  one open, and the scene costs about 249 kB gzip in the initial chunk -- the price of a renderer,
+  measured rather than estimated, and the reason to code-split it behind the tab if the weight ever
+  matters. What it does not do, yet: the pieces are primitives rather than the printed figures, there
+  is no metallic reflection and no depth of field, and the framing shows the whole board instead of
+  cropping it the way the reference photograph does. The board is one of the three views the player switches between, and only one of them is on
   screen at a time: `Tablero` carries the board, `Cartera` the own seat's economy -- its capital as
   a bare money value, with the label clipped out of sight instead of printed, and the jail
   restriction and the jail cards it holds only while the seat has one of them to report, because a
