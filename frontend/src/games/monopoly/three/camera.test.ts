@@ -3,12 +3,9 @@ import { BOARD_SIZE } from '../board'
 import { GRID_SIZE } from '../grid'
 import {
   BOARD_CENTER,
-  DEFAULT_ZOOM,
-  FOV_STEPS,
-  WIDEST_ZOOM,
+  SEAT_FOV,
   cameraFor,
   cellCenter,
-  clampZoom,
   sceneRotationFor,
   seatCorner,
 } from './camera'
@@ -49,9 +46,21 @@ describe('where each seat sits', () => {
 })
 
 describe('the camera of a seat', () => {
-  it('looks at the centre of the board from every seat', () => {
+  it('aims between the middle of the board and the seat own corner', () => {
+    // Not the centre: the near corner is where the readable cells are, so the aim
+    // moves towards it and the far edge runs off the top, as in the reference.
     for (let seat = 0; seat < 8; seat += 1) {
-      expect([seat, cameraFor(seat).target]).toEqual([seat, BOARD_CENTER])
+      const { target } = cameraFor(seat)
+      const corner = seatCorner(seat)
+      const onTheLine =
+        Math.abs(
+          (target.x - BOARD_CENTER.x) * (corner.z - BOARD_CENTER.z) -
+            (target.z - BOARD_CENTER.z) * (corner.x - BOARD_CENTER.x),
+        ) < 1e-9
+      const between = Math.hypot(target.x - BOARD_CENTER.x, target.z - BOARD_CENTER.z)
+      expect([seat, onTheLine, between > 0, between < Math.hypot(corner.x - BOARD_CENTER.x, corner.z - BOARD_CENTER.z)]).toEqual(
+        [seat, true, true, true],
+      )
     }
   })
 
@@ -70,8 +79,10 @@ describe('the camera of a seat', () => {
     // About twenty degrees above the table: the near corner is close and huge,
     // the far edge is compressed. A high camera would flatten the board again.
     for (let seat = 0; seat < 8; seat += 1) {
-      const { position, target } = cameraFor(seat)
-      const elevation = (Math.atan2(position.y, horizontalDistance(position, target)) * 180) / Math.PI
+      const { position } = cameraFor(seat)
+      // Measured to the middle of the board: the aim sits closer to the corner,
+      // and that is a framing decision, not the elevation of the camera.
+      const elevation = (Math.atan2(position.y, horizontalDistance(position, BOARD_CENTER)) * 180) / Math.PI
       expect([seat, Math.round(elevation * 10) / 10]).toEqual([seat, 20])
     }
   })
@@ -93,43 +104,6 @@ describe('the camera of a seat', () => {
     expect(new Set(places).size).toBe(4)
   })
 
-  it('keeps the board in frame at every corner, at the widest step', () => {
-    // Every corner and the centre must fall inside the field of view, or a seat
-    // would open on a board it cannot see whole.
-    for (let seat = 0; seat < 8; seat += 1) {
-      const { position, target, fov } = cameraFor(seat, WIDEST_ZOOM)
-      const halfAngle = (fov * Math.PI) / 360
-      for (const { point } of [...CORNERS.map((corner) => ({ point: corner.point })), { point: BOARD_CENTER }]) {
-        const toPoint = { x: point.x - position.x, y: point.y - position.y, z: point.z - position.z }
-        const toTarget = { x: target.x - position.x, y: target.y - position.y, z: target.z - position.z }
-        const dot = toPoint.x * toTarget.x + toPoint.y * toTarget.y + toPoint.z * toTarget.z
-        const cosine = dot / (Math.hypot(toPoint.x, toPoint.y, toPoint.z) * Math.hypot(toTarget.x, toTarget.y, toTarget.z))
-        const angle = Math.acos(Math.min(1, Math.max(-1, cosine)))
-        expect([seat, angle <= halfAngle]).toEqual([seat, true])
-      }
-    }
-  })
-})
-
-describe('zooming in', () => {
-  it('narrows the field of view one step at a time', () => {
-    expect(FOV_STEPS).toEqual([50, 42, 34])
-    expect(FOV_STEPS.every((fov, step) => step === 0 || fov < FOV_STEPS[step - 1])).toBe(true)
-  })
-
-  it('clamps a step outside the ladder instead of inventing a camera', () => {
-    expect([clampZoom(-3), clampZoom(0), clampZoom(2), clampZoom(9)]).toEqual([0, 0, 2, 2])
-  })
-
-  it('zooms the same for every seat and never moves the target', () => {
-    for (let seat = 0; seat < 8; seat += 1) {
-      for (let step = 0; step < FOV_STEPS.length; step += 1) {
-        const camera = cameraFor(seat, step)
-        expect([seat, step, camera.fov]).toEqual([seat, step, FOV_STEPS[step]])
-        expect(camera.target).toEqual(BOARD_CENTER)
-      }
-    }
-  })
 })
 
 describe('where a space sits in the scene', () => {
@@ -200,27 +174,67 @@ describe('aiming the camera', () => {
 })
 
 describe('the table can be turned', () => {
-  it('turns a quarter at a time and comes back after four', () => {
+  it('turns a quarter at a time, and keeps counting past a full turn', () => {
     expect([0, 1, 2, 3].map(sceneRotationFor)).toEqual([
       0,
       Math.PI / 2,
       Math.PI,
       (3 * Math.PI) / 2,
     ])
-    expect(sceneRotationFor(4)).toBe(0)
-    expect(sceneRotationFor(-1)).toBe((3 * Math.PI) / 2)
+    // Four quarters and none are the same angle, but not the same number: an
+    // animation must slide a quarter forward rather than three quarters back.
+    expect(sceneRotationFor(4)).toBe(Math.PI * 2)
+    expect(sceneRotationFor(4) - sceneRotationFor(3)).toBeCloseTo(Math.PI / 2)
+    expect(sceneRotationFor(-1)).toBeCloseTo(-Math.PI / 2)
   })
 
-  it('never turns by more than a quarter, so a stray count cannot spin the board', () => {
+  it('is linear in the count, which is what makes a slide possible', () => {
     for (const turns of [-9, -1, 0, 1, 7, 13]) {
-      expect([turns, Math.abs(sceneRotationFor(turns)) < Math.PI * 2]).toEqual([turns, true])
+      expect([turns, sceneRotationFor(turns)]).toEqual([turns, (turns * Math.PI) / 2])
     }
   })
 })
 
-describe('the framing a seat opens on', () => {
-  it('opens on the closest step, which is the one a seat reads', () => {
-    expect(DEFAULT_ZOOM).toBe(FOV_STEPS.length - 1)
-    expect(cameraFor(0).fov).toBe(FOV_STEPS[FOV_STEPS.length - 1])
+describe('the framing a seat reads with', () => {
+  it('has one field of view, and it is close', () => {
+    // No ladder: the framing is a decision. Thirty degrees at six cells out fills
+    // the frame with the near half of the board, like the reference photograph.
+    expect(SEAT_FOV).toBe(32)
+    for (let seat = 0; seat < 8; seat += 1) {
+      expect([seat, cameraFor(seat).fov]).toEqual([seat, SEAT_FOV])
+    }
   })
+
+  it('no longer promises to show the whole board', () => {
+    // At thirty degrees and six cells out, at least one corner falls outside the
+    // view: the crop is the point, and the card over the table reads the edge it
+    // cuts. Asserting "some corner" is the honest form -- the far corner still
+    // fits, the near one is where the board runs off the frame.
+    const camera = cameraFor(0)
+    const half = (camera.fov * Math.PI) / 360
+    const offAxis = [
+      { x: 0.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+      { x: 0.5, z: 10.5 },
+      { x: 10.5, z: 10.5 },
+    ].map((corner) => {
+      const toCorner = {
+        x: corner.x - camera.position.x,
+        y: -camera.position.y,
+        z: corner.z - camera.position.z,
+      }
+      const toTarget = {
+        x: camera.target.x - camera.position.x,
+        y: camera.target.y - camera.position.y,
+        z: camera.target.z - camera.position.z,
+      }
+      const dot = toCorner.x * toTarget.x + toCorner.y * toTarget.y + toCorner.z * toTarget.z
+      const cosine =
+        dot /
+        (Math.hypot(toCorner.x, toCorner.y, toCorner.z) *
+          Math.hypot(toTarget.x, toTarget.y, toTarget.z))
+      return Math.acos(cosine) > half
+    })
+    expect(offAxis.some(Boolean)).toBe(true)
+})
 })

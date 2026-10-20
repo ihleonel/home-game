@@ -51,26 +51,39 @@ export const BOARD_CENTER: Point3 = {
 /**
  * How far outside its own corner a seat's camera stands, in cells.
  *
- * Eight is where the whole board fits inside the **vertical** field of view at
- * the lowest zoom, which is the number that matters: the two corners at ninety
- * degrees are the widest thing in the picture, and fitting them to the vertical
- * axis is what keeps a board whole on a narrow screen instead of only on a wide
- * one. Nearer than this and a player opens on a board with two corners cut off;
- * further away and the foreshortening the reference image lives on fades.
+ * Six, and the board is *not* meant to fit: the reference photograph fills its
+ * frame with the near half of the board and lets the far corners run off the top,
+ * which is exactly what makes the near cells big enough to read. The far edge is
+ * not lost -- tapping a space puts it on the card over the table.
  */
-export const OUTWARD_DISTANCE = 8
+export const OUTWARD_DISTANCE = 5
+
+/**
+ * How much of the way from the middle towards the seat's own corner the camera
+ * aims at (W3).
+ *
+ * Aiming at the middle is what made a close view show the hollow: the near
+ * corner fell below the frame and the empty centre filled it. The reference
+ * photograph is framed on the *near corner* -- that is where the readable cells
+ * are -- so the aim moves a third of the way towards it and the far edge runs off
+ * the top, which is exactly the picture the owner of the look asked for.
+ */
+export const FRAME_TOWARDS_CORNER = 0.34
 
 /** Degrees above the table. A high camera would flatten the board again. */
 export const ELEVATION_DEGREES = 20
 
-/** The zoom ladder, widest first (S10). Index 0 shows the whole board. */
-export const FOV_STEPS: readonly number[] = [50, 42, 34]
-
-/** The step a match opens on: the closest one, which is what a seat reads. */
-export const DEFAULT_ZOOM = FOV_STEPS.length - 1
-
-/** The step that must hold the whole board, whatever the aspect ratio. */
-export const WIDEST_ZOOM = 0
+/**
+ * The single field of view a seat reads with (W3).
+ *
+ * There used to be a ladder of three steps and two buttons to walk it. The owner
+ * of the look asked for one view like the reference photograph and the buttons
+ * gone, and it is the right call: a close framing is a *decision*, not a control,
+ * and the far edge it crops is read in the card over the table. What a seat can
+ * still do is turn the board, which is the one interaction that changes what they
+ * are looking at.
+ */
+export const SEAT_FOV = 32
 
 /** Corners are ten spaces apart, like the ring's own shift. */
 const CORNER_INDEX_STEP = BOARD_SIZE / 4
@@ -115,14 +128,10 @@ export function seatCorner(seatIndex: number): Point3 {
  * direction the circuit runs.
  */
 export function sceneRotationFor(turns: number): number {
-  const quarters = ((Math.round(turns) % 4) + 4) % 4
-  return (quarters * Math.PI) / 2
-}
-
-/** A zoom step kept inside the ladder instead of inventing a camera. */
-export function clampZoom(step: number): number {
-  if (!Number.isFinite(step)) return DEFAULT_ZOOM
-  return Math.min(Math.max(Math.round(step), 0), FOV_STEPS.length - 1)
+  // Not wrapped: a count of 3 to 4 must turn a quarter, not three quarters back
+  // through zero, and an animation has to be able to slide between them. Angles
+  // four quarters apart are the same angle anyway.
+  return (Math.round(turns) * Math.PI) / 2
 }
 
 /**
@@ -133,7 +142,7 @@ export function clampZoom(step: number): number {
  * height is derived from the horizontal distance rather than fixed, so the
  * elevation is the same twenty degrees for every corner of the square.
  */
-export function cameraFor(seatIndex: number, zoom: number = DEFAULT_ZOOM): SeatCamera {
+export function cameraFor(seatIndex: number): SeatCamera {
   const corner = seatCorner(seatIndex)
   const awayX = corner.x - BOARD_CENTER.x
   const awayZ = corner.z - BOARD_CENTER.z
@@ -144,14 +153,22 @@ export function cameraFor(seatIndex: number, zoom: number = DEFAULT_ZOOM): SeatC
     x: corner.x + outwardX * OUTWARD_DISTANCE,
     z: corner.z + outwardZ * OUTWARD_DISTANCE,
   }
+  const target = {
+    x: BOARD_CENTER.x + awayX * FRAME_TOWARDS_CORNER,
+    y: BOARD_CENTER.y,
+    z: BOARD_CENTER.z + awayZ * FRAME_TOWARDS_CORNER,
+  }
+  // The height is set by the camera's distance to the *middle* of the board, so
+  // twenty degrees means twenty degrees over the table for every seat; where it
+  // aims is a separate decision (``FRAME_TOWARDS_CORNER``) and must not change it.
   const horizontal = Math.hypot(standing.x - BOARD_CENTER.x, standing.z - BOARD_CENTER.z)
   const height = horizontal * Math.tan((ELEVATION_DEGREES * Math.PI) / 180)
   const position = { x: standing.x, y: height, z: standing.z }
   return {
     position,
-    target: BOARD_CENTER,
-    rotation: rotationLookingAt(position, BOARD_CENTER),
-    fov: FOV_STEPS[clampZoom(zoom)],
+    target,
+    rotation: rotationLookingAt(position, target),
+    fov: SEAT_FOV,
   }
 }
 

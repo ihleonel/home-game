@@ -1335,3 +1335,59 @@
   border-radius: 0.6rem;
   background: color-mix(in srgb, var(--monopoly-card) 92%, transparent);
 }
+
+/* ==========================================================================
+   The rendered table on a phone (W1).
+   At 1400px the card over the board is right: it sits in the empty middle. At
+   400px that same card covers most of a small board and the two control rows
+   collide with it, so below this width the children leave the canvas: the scene
+   becomes a grid with the board across the top, the controls in one row and the
+   card underneath, in flow. Nothing is hidden -- every fact the card carried is
+   still on screen, just not on top of the board.
+   ========================================================================== */
+
+@media (max-width: 640px) {
+  /* A square frame, so the board fills the phone's width instead of losing
+     height to a letterbox. */
+  .monopoly-table3d {
+    aspect-ratio: 1;
+    max-height: none;
+  }
+
+  .monopoly-scene {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .monopoly-scene > .monopoly-table3d {
+    grid-row: 1;
+    grid-column: 1 / -1;
+  }
+
+  .monopoly-scene-turns {
+    position: static;
+    grid-row: 2;
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .monopoly-scene-zoom {
+    position: static;
+    grid-row: 2;
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .monopoly-scene-centre {
+    position: static;
+    grid-row: 3;
+    grid-column: 1 / -1;
+    width: auto;
+    max-height: none;
+    transform: none;
+    box-shadow: none;
+    background: var(--monopoly-card);
+  }
+}

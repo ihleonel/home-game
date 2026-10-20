@@ -22,7 +22,6 @@ import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
-import { DEFAULT_ZOOM, FOV_STEPS, clampZoom } from './three/camera'
 import './monopoly.css'
 import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
 
@@ -934,8 +933,6 @@ type MonopolyPanelLayoutProps = {
    * what every existing test renders.
    */
   boardScene?: ReactNode
-  /** The zoom step the scene is at, and the request to move it (S10). */
-  sceneZoom?: { step: number; onZoom: (direction: 1 | -1) => void }
   /** How many quarters the table is turned, and the request to turn it (V3). */
   sceneTurns?: { turns: number; onRotate: (direction: 1 | -1) => void }
 }
@@ -959,7 +956,6 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
   const [selected, setSelected] = useState<number | null>(null)
   const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
   const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
-  const [zoom, setZoom] = useState(DEFAULT_ZOOM)
   const [turns, setTurns] = useState(0)
   return (
     <MonopolyPanelLayout
@@ -980,11 +976,9 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
           seat={match.seatIndex ?? 0}
           selected={selected}
           turns={turns}
-          zoom={zoom}
         />
       }
       sceneTurns={{ turns, onRotate: (direction) => setTurns((count) => count + direction) }}
-      sceneZoom={{ step: zoom, onZoom: (direction) => setZoom((step) => clampZoom(step + direction)) }}
     />
   )
 }
@@ -1000,7 +994,6 @@ export function MonopolyPanelLayout({
   activeView,
   onViewChange,
   boardScene,
-  sceneZoom,
   sceneTurns,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
@@ -1159,31 +1152,6 @@ export function MonopolyPanelLayout({
                 >
                   ↻
                 </button>
-              </div>
-            )}
-            {sceneZoom !== undefined && (
-              <div className="monopoly-scene-zoom" role="group" aria-label="Zoom del tablero">
-                <button
-                  aria-label="Acercar el tablero"
-                  className="monopoly-viewport-button"
-                  disabled={clampZoom(sceneZoom.step + 1) === sceneZoom.step}
-                  onClick={() => sceneZoom.onZoom(1)}
-                  type="button"
-                >
-                  Acercar
-                </button>
-                <button
-                  aria-label="Alejar el tablero"
-                  className="monopoly-viewport-button"
-                  disabled={clampZoom(sceneZoom.step - 1) === sceneZoom.step}
-                  onClick={() => sceneZoom.onZoom(-1)}
-                  type="button"
-                >
-                  Alejar
-                </button>
-                <span className="monopoly-scene-zoom-step">
-                  {`Zoom ${clampZoom(sceneZoom.step) + 1} de ${FOV_STEPS.length}`}
-                </span>
               </div>
             )}
             {/*

@@ -13,9 +13,9 @@
  *
  * 1. a **pure specification** per texture (``spaceTextureSpec``,
  *    ``tableTextureSpec``) returning plain data, which is what the tests pin;
- * 2. a **painter** per texture (``paintSpace``, ``paintTable``) that reads the
+ * 2. a **painter** (``paintSpace``) that reads the
  *    specification and a palette and nothing else;
- * 3. two thin conveniences (``spaceTexture``, ``tableTexture``) that make the
+ * 3. one thin convenience (``spaceTexture``) that makes the
  *    offscreen canvas and call the painter. They are the only lines in this
  *    module that touch ``document``, and they are deliberately untested: this
  *    harness is Node with no canvas. The scene is checked by the headless
@@ -59,115 +59,7 @@ export const GROUP_COLOURS: Record<ColorGroup, string> = {
   dark_blue: '#0072bb',
 }
 
-/** The four tonal steps a plank can take, darkest first. */
-export const WOOD_TONES: readonly string[] = ['#5d3a22', '#6f482a', '#815533', '#94633d']
 
-/** One line of grain crossing a plank, as fractions of the plank's own box. */
-export type TableGrainLine = {
-  /** Where the line sits across the plank: 0 is its left edge, 1 its right. */
-  offset: number
-  /** Where the line starts along the plank, 0 at its near edge. */
-  start: number
-  /** How far the line runs along the plank, as a fraction of its length. */
-  length: number
-  /** How dark the line paints over its plank, 0 to 1. */
-  weight: number
-  /** The line's own thickness, as a fraction of the texture size. */
-  thickness: number
-}
-
-/** One plank of the table, as fractions of the texture width. */
-export type TablePlank = {
-  /** The plank's left edge, 0 at the texture's left and 1 at its right. */
-  start: number
-  /** The plank's width, as a fraction of the texture width. */
-  width: number
-  /** The index of the plank's tone in ``WOOD_TONES``. */
-  tone: number
-  /** The grain painted on top of the plank, in paint order. */
-  grain: readonly TableGrainLine[]
-}
-
-/** What the wooden table looks like, as data the painter can follow. */
-export type TableTextureSpec = {
-  /** The seed the table was generated from, so a capture can be reproduced. */
-  seed: number
-  /** The planks, left to right; together they tile the whole texture. */
-  planks: readonly TablePlank[]
-}
-
-/** The seed the table is built from when the caller does not choose one. */
-export const TABLE_SEED = 1861
-
-/** How many planks the table is built from. Seven reads as a table, not a floor. */
-const PLANK_COUNT = 7
-
-/** How much a plank's width may stray from the even share of the texture. */
-const PLANK_WIDTH_JITTER = 0.5
-
-/** The fewest and the most grain lines a plank receives. */
-const MIN_GRAIN_LINES = 5
-const MAX_GRAIN_LINES = 9
-
-/**
- * A small deterministic pseudo-random generator (a linear congruential one).
- *
- * It is written here instead of borrowed so the table has no dependency and no
- * ``Math.random``: the same seed yields the same sequence in every browser,
- * every Node version and every run, which is what lets two captures be compared.
- */
-function seededRandom(seed: number): () => number {
-  let state = Math.trunc(seed) >>> 0
-  if (state === 0) state = 1
-  return () => {
-    state = (state * 1664525 + 1013904223) >>> 0
-    return state / 4294967296
-  }
-}
-
-/** Four decimals, so a specification stays readable and comparable. */
-function round4(value: number): number {
-  return Math.round(value * 10000) / 10000
-}
-
-/**
- * The wooden table of the 3D scene (S5), as pure data.
- *
- * Planks are built from jittered widths that are then normalised, so they always
- * tile the texture exactly; each gets a tonal step and a handful of grain lines
- * that stay inside its own box. Two calls with the same seed return the same
- * object, and a different seed returns a different table.
- */
-export function tableTextureSpec(seed: number = TABLE_SEED): TableTextureSpec {
-  const random = seededRandom(seed)
-  const weights = Array.from(
-    { length: PLANK_COUNT },
-    () => 1 + (random() - 0.5) * PLANK_WIDTH_JITTER,
-  )
-  const total = weights.reduce((sum, weight) => sum + weight, 0)
-  let start = 0
-  const planks = weights.map((weight) => {
-    const width = weight / total
-    const tone = Math.min(WOOD_TONES.length - 1, Math.floor(random() * WOOD_TONES.length))
-    const grainCount =
-      MIN_GRAIN_LINES + Math.floor(random() * (MAX_GRAIN_LINES - MIN_GRAIN_LINES + 1))
-    const grain = Array.from({ length: grainCount }, () => {
-      const length = round4(0.25 + random() * 0.75)
-      return {
-        offset: round4(0.08 + random() * 0.84),
-        // Clamped after rounding, so a line can never overrun its plank.
-        start: Math.min(round4(random() * (1 - length)), round4(1 - length)),
-        length,
-        weight: round4(0.12 + random() * 0.5),
-        thickness: round4(0.0015 + random() * 0.0025),
-      }
-    })
-    const plank: TablePlank = { start, width, tone, grain }
-    start += width
-    return plank
-  })
-  return { seed, planks }
-}
 
 /** One line of a street's printed rent schedule. */
 export type SpaceRentLine = {
@@ -280,15 +172,6 @@ export function spaceTextureSpec(index: number): SpaceTextureSpec {
  */
 export const CELL_TEXTURE_SIZE = 256
 
-/**
- * The side of the table texture, in pixels.
- *
- * Seven planks across 1024 px are about 146 px each, so a two-pixel grain line
- * and the seam between planks survive mipmapping. The table is a plain surface
- * that sits out of focus behind the board, and 2048 would quadruple its GPU
- * memory for a detail the camera never reaches (S11).
- */
-export const TABLE_TEXTURE_SIZE = 1024
 
 /**
  * Ink and paper of one cell, mirroring ``--monopoly-ink``, ``--monopoly-ink-soft``,
@@ -296,14 +179,8 @@ export const TABLE_TEXTURE_SIZE = 1024
  */
 const SPACE_INK = '#241f2e'
 const SPACE_INK_SOFT = '#56516a'
-const SPACE_PAPER = '#fdfbf4'
+const SPACE_PAPER = '#e9efe6'
 const SPACE_LINE = '#2b2733'
-
-/** The dark the table is under the planks, which is what makes the seams read. */
-const WOOD_SEAM = '#3a2314'
-
-/** The grain is paint, not geometry: a dark line over the plank's own tone. */
-const WOOD_GRAIN = '#2b1a0e'
 
 /** No downloaded font (S3): the stack is whatever the system already has. */
 const FONT_STACK = 'system-ui, sans-serif'
@@ -551,46 +428,6 @@ export function paintSpace(
 }
 
 /**
- * Paint the wooden table (S5).
- *
- * Only the specification and the wood palette: the seams are the dark base
- * showing between planks, the grain is a translucent line over the plank's own
- * tone, and the tones step through ``WOOD_TONES`` by index, so the table is as
- * reproducible as the data that generated it.
- */
-export function paintTable(
-  ctx: CanvasRenderingContext2D,
-  spec: TableTextureSpec,
-  size: number,
-): void {
-  ctx.save()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.clearRect(0, 0, size, size)
-  ctx.fillStyle = WOOD_SEAM
-  ctx.fillRect(0, 0, size, size)
-
-  for (const plank of spec.planks) {
-    const left = plank.start * size
-    const width = plank.width * size
-    ctx.fillStyle = WOOD_TONES[plank.tone]
-    ctx.fillRect(left, 0, width, size)
-
-    ctx.fillStyle = WOOD_GRAIN
-    for (const line of plank.grain) {
-      ctx.globalAlpha = line.weight
-      ctx.fillRect(
-        left + line.offset * width,
-        line.start * size,
-        Math.max(1, Math.round(line.thickness * size)),
-        line.length * size,
-      )
-    }
-    ctx.globalAlpha = 1
-  }
-  ctx.restore()
-}
-
-/**
  * The finished cell texture of the space at ``index``.
  *
  * One of the two functions in this module that touch ``document``; untested on
@@ -608,20 +445,3 @@ export function spaceTexture(index: number, size: number = CELL_TEXTURE_SIZE): H
   return canvas
 }
 
-/**
- * The finished table texture, for the plane the board rests on.
- *
- * The second and last function that touches ``document``; the seed is the
- * module's fixed one, so the table of a capture can be compared with the table
- * of the next run.
- */
-export function tableTexture(size: number = TABLE_TEXTURE_SIZE): HTMLCanvasElement {
-  const spec = tableTextureSpec()
-  const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')
-  if (ctx === null) throw new Error('no 2d context for the table texture')
-  paintTable(ctx, spec, size)
-  return canvas
-}

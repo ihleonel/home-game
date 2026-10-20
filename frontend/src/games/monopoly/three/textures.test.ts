@@ -7,14 +7,9 @@ import { spaceSide } from '../grid'
 import {
   CELL_TEXTURE_SIZE,
   GROUP_COLOURS,
-  TABLE_SEED,
-  TABLE_TEXTURE_SIZE,
-  WOOD_TONES,
   paintSpace,
-  paintTable,
   spaceTextureSpec,
   textRotationFor,
-  tableTextureSpec,
 } from './textures'
 
 /** The eight colour groups of the printed board, in their printed order. */
@@ -163,62 +158,6 @@ describe('the specification of one space', () => {
   })
 })
 
-describe('the specification of the wooden table', () => {
-  it('returns exactly the same table on two different calls', () => {
-    // The visual check compares captures between runs, so the wood cannot
-    // wobble: same seed, same planks, same grain.
-    expect(tableTextureSpec()).toEqual(tableTextureSpec())
-    expect(tableTextureSpec()).toEqual(tableTextureSpec(TABLE_SEED))
-    expect(JSON.stringify(tableTextureSpec())).toBe(JSON.stringify(tableTextureSpec()))
-  })
-
-  it('builds a different table from a different seed', () => {
-    const first = JSON.stringify(tableTextureSpec(TABLE_SEED))
-    expect(first).not.toBe(JSON.stringify(tableTextureSpec(TABLE_SEED + 1)))
-    expect(first).not.toBe(JSON.stringify(tableTextureSpec(TABLE_SEED + 7)))
-  })
-
-  it('tiles the whole texture with planks that keep the tonal steps it declares', () => {
-    const spec = tableTextureSpec()
-    expect(spec.planks.length).toBeGreaterThan(3)
-    let edge = 0
-    for (const plank of spec.planks) {
-      expect(plank.width).toBeGreaterThan(0)
-      expect(Math.abs(plank.start - edge)).toBeLessThan(1e-9)
-      // A tone is an index into the palette, never an arbitrary value, so the
-      // painter can map it without arithmetic of its own.
-      expect(Number.isInteger(plank.tone)).toBe(true)
-      expect(plank.tone).toBeGreaterThanOrEqual(0)
-      expect(plank.tone).toBeLessThan(WOOD_TONES.length)
-      edge = plank.start + plank.width
-    }
-    expect(Math.abs(edge - 1)).toBeLessThan(1e-9)
-  })
-
-  it('gives every plank grain lines that lie inside it', () => {
-    const spec = tableTextureSpec()
-    for (const plank of spec.planks) {
-      expect(plank.grain.length).toBeGreaterThan(0)
-      for (const line of plank.grain) {
-        expect(line.offset).toBeGreaterThanOrEqual(0)
-        expect(line.offset).toBeLessThanOrEqual(1)
-        expect(line.start).toBeGreaterThanOrEqual(0)
-        expect(line.start + line.length).toBeLessThanOrEqual(1 + 1e-9)
-        expect(line.length).toBeGreaterThan(0)
-        expect(line.weight).toBeGreaterThan(0)
-        expect(line.weight).toBeLessThanOrEqual(1)
-      }
-    }
-  })
-
-  it('declares a warm palette the painter can step through', () => {
-    expect(WOOD_TONES.length).toBeGreaterThanOrEqual(3)
-    for (const tone of WOOD_TONES) {
-      expect(/^#[0-9a-f]{6}$/.test(tone)).toBe(true)
-    }
-  })
-})
-
 describe('the texture sizes', () => {
   it('is large enough to read a name on a cell', () => {
     // 256 px per cell: at a 26 px face that is about ten characters per line,
@@ -230,24 +169,15 @@ describe('the texture sizes', () => {
     expect(Number.isInteger(Math.log2(CELL_TEXTURE_SIZE))).toBe(true)
   })
 
-  it('is large enough to show a plank and its grain under the board', () => {
-    // 1024 px across the table: seven planks are ~146 px each, so a two-pixel
-    // grain line and the seam between planks survive mipmapping. 2048 would
-    // quadruple the memory of a surface that sits out of focus behind the board.
-    expect(TABLE_TEXTURE_SIZE).toBeGreaterThanOrEqual(1024)
-    expect(Number.isInteger(Math.log2(TABLE_TEXTURE_SIZE))).toBe(true)
-  })
 })
 
 describe('the painters the scene calls', () => {
-  it('exposes one painter per texture, taking the context and the spec', () => {
+  it('exposes the cell painter, taking the context, the spec and a size', () => {
     // Never invoked here: this harness is Node with no DOM and no canvas. The
     // painters are checked by the headless capture (S12) and by the person
     // looking at the board.
     expect(typeof paintSpace).toBe('function')
-    expect(typeof paintTable).toBe('function')
     expect(paintSpace.length).toBe(3)
-    expect(paintTable.length).toBe(3)
   })
 })
 

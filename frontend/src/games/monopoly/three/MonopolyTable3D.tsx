@@ -15,17 +15,19 @@
  * (``react-dom/server``, no DOM): the panel receives it as a prop (S7).
  */
 
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import type { ThreeEvent } from '@react-three/fiber'
-import { ContactShadows, PerspectiveCamera } from '@react-three/drei'
-import { useMemo } from 'react'
+import { PerspectiveCamera } from '@react-three/drei'
+import { useEffect, useMemo, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { CanvasTexture, SRGBColorSpace } from 'three'
+import type { Group } from 'three'
 import { BOARD } from '../board'
 import { GRID_SIZE, spaceSide } from '../grid'
 import type { MatchState } from '../../registry'
 import type { MonopolyView } from '../view'
-import { BOARD_CENTER, DEFAULT_ZOOM, cameraFor, cellCenter, sceneRotationFor } from './camera'
-import { spaceTexture, tableTexture } from './textures'
+import { BOARD_CENTER, cameraFor, cellCenter, sceneRotationFor } from './camera'
+import { spaceTexture } from './textures'
 
 /** The top face of the slab the printed board is glued to. */
 const BOARD_TOP = 0.06
@@ -37,7 +39,7 @@ const SLAB_THICKNESS = 0.12
 const CELL_PLANE = 0.97
 
 /** How many table widths the wooden table covers. */
-const TABLE_SIZE = GRID_SIZE * 5
+const TABLE_SIZE = GRID_SIZE * 40
 
 /**
  * The colour of each seat's piece, by seat index.
@@ -60,6 +62,54 @@ const SEAT_COLOURS: readonly string[] = [
 const HOUSE_SIZE = { width: 0.17, height: 0.13, depth: 0.17 } as const
 const HOTEL_SIZE = { width: 0.3, height: 0.17, depth: 0.22 } as const
 
+/**
+ * How fast the table settles into its new angle (W4).
+ *
+ * Ten is a little under half a second to visually settle: fast enough that the
+ * board feels like it was pushed and stopped, slow enough that the eye can follow
+ * *which way* it turned. It is an exponential approach, so it never overshoots and
+ * never needs a timeline.
+ */
+const TURN_DAMPING = 10
+
+/**
+ * The board, turning smoothly to the angle its count asks for (W4).
+ *
+ * The scene renders on demand, so an animation has to ask for its own frames:
+ * ``invalidate`` schedules one, and this requests the next until the angle has
+ * arrived. Mutating the group's rotation is what a ref is for -- it is the
+ * renderer's own mutable object, not React state.
+ */
+function TurningBoard({ turns, children }: { turns: number; children: ReactNode }) {
+  const group = useRef<Group>(null)
+  const invalidate = useThree((state) => state.invalidate)
+  const target = sceneRotationFor(turns)
+
+  // A frame for the first step, or a click would change the number and no frame
+  // would be drawn to move towards it.
+  useEffect(() => {
+    invalidate()
+  }, [invalidate, target])
+
+  useFrame((_, delta) => {
+    const node = group.current
+    if (node === null) return
+    const remaining = target - node.rotation.y
+    if (Math.abs(remaining) < 0.002) {
+      node.rotation.y = target
+      return
+    }
+    node.rotation.y += remaining * (1 - Math.exp(-TURN_DAMPING * delta))
+    invalidate()
+  })
+
+  return (
+    <group position={[BOARD_CENTER.x, 0, BOARD_CENTER.z]} ref={group}>
+      <group position={[-BOARD_CENTER.x, 0, -BOARD_CENTER.z]}>{children}</group>
+    </group>
+  )
+}
+
 /** Canvas pixels into a texture the renderer can sample. */
 function toTexture(canvas: HTMLCanvasElement, anisotropy: number): CanvasTexture {
   const texture = new CanvasTexture(canvas)
@@ -81,13 +131,13 @@ function toTexture(canvas: HTMLCanvasElement, anisotropy: number): CanvasTexture
  * and its projection matrix is right by construction instead of by remembering
  * to update it.
  */
-function SeatCamera({ seat, zoom }: { seat: number; zoom: number }) {
-  const placed = cameraFor(seat, zoom)
+function SeatCamera({ seat }: { seat: number }) {
+  const placed = cameraFor(seat)
   return (
     <PerspectiveCamera
       far={200}
       fov={placed.fov}
-      key={`${seat}:${zoom}`}
+      key={`seat:${seat}`}
       makeDefault
       near={0.1}
       position={[placed.position.x, placed.position.y, placed.position.z]}
@@ -96,9 +146,13 @@ function SeatCamera({ seat, zoom }: { seat: number; zoom: number }) {
   )
 }
 
-/** The wooden table the board rests on. */
+/**
+ * The surface the board rests on: plain white, because that is what the owner of
+ * the look asked for. It is a plane and not "no floor" on purpose -- the board's
+ * contact shadow needs something to fall on, and that shadow is what makes the
+ * board read as an object instead of a picture of one.
+ */
 function Table() {
-  const map = useMemo(() => toTexture(tableTexture(), 4), [])
   return (
     <mesh
       position={[BOARD_CENTER.x, -SLAB_THICKNESS, BOARD_CENTER.z]}
@@ -106,7 +160,10 @@ function Table() {
       rotation={[-Math.PI / 2, 0, 0]}
     >
       <planeGeometry args={[TABLE_SIZE, TABLE_SIZE]} />
-      <meshStandardMaterial map={map} metalness={0.05} roughness={0.82} />
+      {/* Unlit and white, the same white as the background: a lit plane at a
+          grazing angle turns grey towards its horizon, and that band is what the
+          first attempt at a white surface actually drew. */}
+      <meshBasicMaterial color="#ffffff" />
     </mesh>
   )
 }
@@ -123,7 +180,7 @@ function BoardSlab() {
   return (
     <mesh castShadow position={[BOARD_CENTER.x, 0, BOARD_CENTER.z]} receiveShadow>
       <boxGeometry args={[GRID_SIZE + 0.16, SLAB_THICKNESS, GRID_SIZE + 0.16]} />
-      <meshStandardMaterial color="#fdfbf4" roughness={0.86} />
+      <meshStandardMaterial color="#9cb49c" roughness={0.88} />
     </mesh>
   )
 }
@@ -336,7 +393,6 @@ export function MonopolyTable3D({
   seat,
   selected,
   onSelect,
-  zoom = DEFAULT_ZOOM,
   turns = 0,
   active = true,
 }: {
@@ -344,7 +400,6 @@ export function MonopolyTable3D({
   seat: number
   selected: number | null
   onSelect: (index: number) => void
-  zoom?: number
   /**
    * How many quarters the table has been turned, clockwise (V3).
    *
@@ -378,13 +433,15 @@ export function MonopolyTable3D({
         gl={{ antialias: true }}
         shadows
       >
-        <color args={['#171419']} attach="background" />
-        <SeatCamera seat={seat} zoom={zoom} />
+        {/* The reference photograph is a board on a pale surface: the wood is
+            gone, and the background is white so the board is the object. */}
+        <color args={['#ffffff']} attach="background" />
+        <SeatCamera seat={seat} />
 
-        <ambientLight intensity={0.55} />
+        <ambientLight intensity={0.5} />
         <directionalLight
           castShadow
-          intensity={1.55}
+          intensity={1.25}
           position={[BOARD_CENTER.x + 7, 13, BOARD_CENTER.z + 6]}
           shadow-bias={-0.0004}
           shadow-mapSize={[1024, 1024]}
@@ -392,7 +449,7 @@ export function MonopolyTable3D({
           <orthographicCamera args={[-9, 9, 9, -9, 0.5, 60]} attach="shadow-camera" />
         </directionalLight>
         {/* A cool fill from the far side, so the shadowed halves are not black. */}
-        <directionalLight intensity={0.38} position={[BOARD_CENTER.x - 8, 9, BOARD_CENTER.z - 7]} />
+        <directionalLight intensity={0.28} position={[BOARD_CENTER.x - 8, 9, BOARD_CENTER.z - 7]} />
 
         <Table />
         {/* V3: the printed surface and everything standing on it, turned by
@@ -400,26 +457,16 @@ export function MonopolyTable3D({
             groups: a rotation in three.js turns around the group's origin, so the
             outer one sits at the centre and the inner one puts the board back
             where it belongs. Without the pivot the board swings off the table. */}
-        <group position={[BOARD_CENTER.x, 0, BOARD_CENTER.z]} rotation-y={sceneRotationFor(turns)}>
-          <group position={[-BOARD_CENTER.x, 0, -BOARD_CENTER.z]}>
-            <BoardSlab />
+        <TurningBoard turns={turns}>
+          <BoardSlab />
             <Cells onSelect={onSelect} selected={selected} />
-            <Buildings view={match.view} />
-            <Tokens match={match} />
-            {selected !== null && <SelectedFrame index={selected} />}
-            <DeckPile colour="#e39a2a" offsetX={-0.75} />
-            <DeckPile colour="#3d7fb5" offsetX={0.75} />
-          </group>
-        </group>
+          <Buildings view={match.view} />
+          <Tokens match={match} />
+          {selected !== null && <SelectedFrame index={selected} />}
+          <DeckPile colour="#e39a2a" offsetX={-0.75} />
+          <DeckPile colour="#3d7fb5" offsetX={0.75} />
+        </TurningBoard>
 
-        {/* The board's own shadow on the table, which is what glues it down. */}
-        <ContactShadows
-          blur={2.6}
-          far={6}
-          opacity={0.5}
-          position={[BOARD_CENTER.x, -SLAB_THICKNESS + 0.002, BOARD_CENTER.z]}
-          scale={GRID_SIZE * 2.4}
-        />
       </Canvas>
     </div>
   )
