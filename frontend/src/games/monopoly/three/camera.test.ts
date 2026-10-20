@@ -3,10 +3,13 @@ import { BOARD_SIZE } from '../board'
 import { GRID_SIZE } from '../grid'
 import {
   BOARD_CENTER,
+  DEFAULT_ZOOM,
   FOV_STEPS,
+  WIDEST_ZOOM,
   cameraFor,
   cellCenter,
   clampZoom,
+  sceneRotationFor,
   seatCorner,
 } from './camera'
 import type { Point3 } from './camera'
@@ -90,11 +93,11 @@ describe('the camera of a seat', () => {
     expect(new Set(places).size).toBe(4)
   })
 
-  it('keeps the board in frame at every corner', () => {
+  it('keeps the board in frame at every corner, at the widest step', () => {
     // Every corner and the centre must fall inside the field of view, or a seat
     // would open on a board it cannot see whole.
     for (let seat = 0; seat < 8; seat += 1) {
-      const { position, target, fov } = cameraFor(seat)
+      const { position, target, fov } = cameraFor(seat, WIDEST_ZOOM)
       const halfAngle = (fov * Math.PI) / 360
       for (const { point } of [...CORNERS.map((corner) => ({ point: corner.point })), { point: BOARD_CENTER }]) {
         const toPoint = { x: point.x - position.x, y: point.y - position.y, z: point.z - position.z }
@@ -193,5 +196,31 @@ describe('aiming the camera', () => {
       // A camera above the table aims below the horizon: its pitch is negative.
       expect([seat, cameraFor(seat).rotation.x < 0]).toEqual([seat, true])
     }
+  })
+})
+
+describe('the table can be turned', () => {
+  it('turns a quarter at a time and comes back after four', () => {
+    expect([0, 1, 2, 3].map(sceneRotationFor)).toEqual([
+      0,
+      Math.PI / 2,
+      Math.PI,
+      (3 * Math.PI) / 2,
+    ])
+    expect(sceneRotationFor(4)).toBe(0)
+    expect(sceneRotationFor(-1)).toBe((3 * Math.PI) / 2)
+  })
+
+  it('never turns by more than a quarter, so a stray count cannot spin the board', () => {
+    for (const turns of [-9, -1, 0, 1, 7, 13]) {
+      expect([turns, Math.abs(sceneRotationFor(turns)) < Math.PI * 2]).toEqual([turns, true])
+    }
+  })
+})
+
+describe('the framing a seat opens on', () => {
+  it('opens on the closest step, which is the one a seat reads', () => {
+    expect(DEFAULT_ZOOM).toBe(FOV_STEPS.length - 1)
+    expect(cameraFor(0).fov).toBe(FOV_STEPS[FOV_STEPS.length - 1])
   })
 })

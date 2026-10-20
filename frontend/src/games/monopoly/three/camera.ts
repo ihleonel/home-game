@@ -66,8 +66,11 @@ export const ELEVATION_DEGREES = 20
 /** The zoom ladder, widest first (S10). Index 0 shows the whole board. */
 export const FOV_STEPS: readonly number[] = [50, 42, 34]
 
-/** The step a match opens on: the whole board, so nothing is cut off. */
-export const DEFAULT_ZOOM = 0
+/** The step a match opens on: the closest one, which is what a seat reads. */
+export const DEFAULT_ZOOM = FOV_STEPS.length - 1
+
+/** The step that must hold the whole board, whatever the aspect ratio. */
+export const WIDEST_ZOOM = 0
 
 /** Corners are ten spaces apart, like the ring's own shift. */
 const CORNER_INDEX_STEP = BOARD_SIZE / 4
@@ -101,6 +104,19 @@ export function cellCenter(index: number): Point3 {
  */
 export function seatCorner(seatIndex: number): Point3 {
   return cellCenter(cornerIndex(seatIndex) * CORNER_INDEX_STEP)
+}
+
+/**
+ * How far the table itself is turned, in radians, for ``turns`` quarters (V3).
+ *
+ * The camera stands at the seat's corner and does not move; what turns is the
+ * board on the table, which is what a player sitting at a real table does with
+ * their hands. Clockwise from the printed orientation, because that is the
+ * direction the circuit runs.
+ */
+export function sceneRotationFor(turns: number): number {
+  const quarters = ((Math.round(turns) % 4) + 4) % 4
+  return (quarters * Math.PI) / 2
 }
 
 /** A zoom step kept inside the ladder instead of inventing a camera. */
