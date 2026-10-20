@@ -7,6 +7,8 @@ import {
   cellFor,
   moveWindow,
   nextTurns,
+  recentreForFocus,
+  seatWindow,
   sideFor,
   startTurns,
   visibleSpaces,
@@ -213,5 +215,44 @@ describe('the seat window', () => {
         }
       }
     }
+  })
+})
+
+describe("the seat's window follows", () => {
+  it('centres on the own cell when the player has not panned', () => {
+    expect(seatWindow({ row: 6, column: 6 }, null)).toEqual({ row: 3, column: 3 })
+    expect(seatWindow({ row: 11, column: 2 }, null)).toEqual({ row: 5, column: 1 })
+  })
+
+  it('keeps a manual pan while the own token has not moved', () => {
+    // Looking somewhere else is legitimate: the window must not snap back on
+    // the next render, only when the token itself moves (S8).
+    const looking = { window: { row: 1, column: 1 }, at: { row: 6, column: 6 } }
+    expect(seatWindow({ row: 6, column: 6 }, looking)).toEqual({ row: 1, column: 1 })
+  })
+
+  it('drops the manual pan when the own token moves', () => {
+    const looking = { window: { row: 1, column: 1 }, at: { row: 6, column: 6 } }
+    expect(seatWindow({ row: 9, column: 6 }, looking)).toEqual({ row: 5, column: 3 })
+  })
+
+  it('recentres on a focused space only when the window cut it off', () => {
+    const window = { row: 1, column: 1 }
+    expect(recentreForFocus(window, { row: 1, column: 1 })).toBeNull()
+    expect(recentreForFocus(window, { row: 7, column: 7 })).toBeNull()
+    // Every space the crop hides is one the keyboard can reach, so each of the
+    // four sides has to move the window and none may leave the board.
+    expect(recentreForFocus(window, { row: 11, column: 11 })).toEqual({ row: 5, column: 5 })
+    expect(recentreForFocus(window, { row: 11, column: 1 })).toEqual({ row: 5, column: 1 })
+    expect(recentreForFocus(window, { row: 1, column: 11 })).toEqual({ row: 1, column: 5 })
+    expect(recentreForFocus(window, { row: 8, column: 2 })).toEqual({ row: 5, column: 1 })
+    // A window over the empty middle shows no ring space at all, so a focused
+    // space of the ring has to bring it back; a space of the middle itself is
+    // inside the crop and must not move anything.
+    expect(recentreForFocus({ row: 3, column: 3 }, { row: 6, column: 6 })).toBeNull()
+    expect(recentreForFocus({ row: 3, column: 3 }, { row: 11, column: 4 })).toEqual({
+      row: 5,
+      column: 1,
+    })
   })
 })

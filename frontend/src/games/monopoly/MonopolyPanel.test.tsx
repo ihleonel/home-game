@@ -6,8 +6,9 @@ import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
 import { BOARD } from './board'
 import { MonopolyPanel, MonopolyPanelLayout } from './MonopolyPanel'
-import type { MonopolyPane, MonopolyTradeDraft } from './MonopolyPanel'
+import type { MonopolyPane, MonopolySeatView, MonopolyTradeDraft } from './MonopolyPanel'
 import type { MonopolyAction, MonopolyOffer, MonopolyPlayer, MonopolyView } from './view'
+import { cellFor, windowAround } from './viewport'
 
 const roster: MatchSeatRosterEntry[] = [
   {
@@ -81,6 +82,23 @@ type LayoutOptions = {
   onTradeChange?: (next: MonopolyTradeDraft) => void
   activeView?: MonopolyPane
   onViewChange?: (next: MonopolyPane) => void
+  seatView?: MonopolySeatView | null
+  onRotate?: (step: number) => void
+  onPan?: (direction: 'up' | 'down' | 'left' | 'right') => void
+  onCentre?: () => void
+  onSpaceFocus?: (index: number) => void
+}
+
+/**
+ * The seat view the panel derives for a fixture (S2/S8): ``null`` without an
+ * own seat, and otherwise the opening orientation with the window centred on
+ * the own token, which is what the panel computes on its first render.
+ */
+function seatViewFor(rawView: MonopolyView): MonopolySeatView | null {
+  if (rawView.you === undefined) return null
+  const own = rawView.players.find((entry) => entry.seat === rawView.you) ?? null
+  if (own === null) return null
+  return { turns: 0, window: windowAround(cellFor(own.position, 0)) }
 }
 
 function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
@@ -94,6 +112,11 @@ function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): Layout
     onTradeChange: options.onTradeChange ?? (() => {}),
     activeView: options.activeView ?? 'tablero',
     onViewChange: options.onViewChange ?? (() => {}),
+    seatView: options.seatView === undefined ? seatViewFor(rawView) : options.seatView,
+    onRotate: options.onRotate ?? (() => {}),
+    onPan: options.onPan ?? (() => {}),
+    onCentre: options.onCentre ?? (() => {}),
+    onSpaceFocus: options.onSpaceFocus ?? (() => {}),
   }
 }
 
@@ -1334,5 +1357,118 @@ describe('the monopoly view switcher', () => {
       classesOf(element).includes('monopoly-tab-badge'),
     )
     expect(String((badge!.props as { children?: ReactNode }).children)).toBe('2')
+  })
+})
+
+/**
+ * The board seen from a seat (S1, S2, S8, S11 of ``monopoly-seat-viewport.md``).
+ *
+ * The state that turns the table and moves the window lives in the hook
+ * wrapper, which this harness cannot invoke, so the *rules* that decide the
+ * window are pinned in ``viewport.test.ts`` and what is pinned here is the
+ * wiring: who gets the framed board, who gets the whole one, which controls the
+ * layout reports and where the middle of the table ends up.
+ */
+describe('the monopoly seat view', () => {
+  it('frames the board for a seat and puts the centre of the table outside the window', () => {
+    const rawView = view()
+    const frame = elementsWithClass(rawView, 'monopoly-viewport-frame')
+    const seatTable = elementsWithClass(rawView, 'monopoly-seat-table')
+
+    expect(frame).toHaveLength(1)
+    // The window of the opening seat: centred on its own token, which is on GO.
+    expect((frame[0].props as { style: Record<string, string> }).style).toEqual({
+      '--monopoly-viewport-row': '5',
+      '--monopoly-viewport-column': '5',
+    })
+    // The middle of the board is empty, and the table's content is in one strip.
+    expect(elementsWithClass(rawView, 'monopoly-centre-empty')).toHaveLength(1)
+    expect(seatTable).toHaveLength(1)
+    const centres = hostElements(seatTable[0]).filter((element) =>
+      classesOf(element).includes('monopoly-centre'),
+    )
+    // One real centre, and it is the strip's: the hole in the board is the
+    // element that also carries the empty-surface class.
+    expect(centres).toHaveLength(1)
+    expect(classesOf(centres[0])).not.toContain('monopoly-centre-empty')
+    // Nothing about the match state leaves the screen with the pan: the strip
+    // carries the turn it always did.
+    expect(renderToStaticMarkup(<>{seatTable[0]}</>)).toContain('Turno de Ana')
+  })
+
+  it('leaves the whole board to a spectator, with no window and no controls', () => {
+    // ``view.you`` is absent for a spectator, which is how the server projects a
+    // public view: no seat, no own token and therefore no window (S2).
+    const rawView = view({ you: undefined })
+    const markup = panelMarkup(rawView)
+
+    expect(elementsWithClass(rawView, 'monopoly-viewport-frame')).toHaveLength(0)
+    expect(elementsWithClass(rawView, 'monopoly-seat-table')).toHaveLength(0)
+    expect(elementsWithClass(rawView, 'monopoly-centre-empty')).toHaveLength(0)
+    // The centre the spectator reads is the one inside the ring.
+    expect(elementsWithClass(rawView, 'monopoly-centre')).toHaveLength(1)
+    expect(markup).not.toContain('Girar a la derecha')
+    expect(markup).not.toContain('Centrar en mi ficha')
+    expect(markup).toContain('Turno de Ana')
+  })
+
+  it('passes the turn count to the frame and to the cells the frame holds', () => {
+    const rawView = view()
+    const frame = elementsWithClass(rawView, 'monopoly-viewport-frame', {
+      seatView: { turns: 1, window: { row: 1, column: 1 } },
+    })
+
+    expect((frame[0].props as { 'data-turns'?: number })['data-turns']).toBe(1)
+    // A quarter turn re-indexes the ring: GO is bottom-left and its band faces
+    // the centre from the left side.
+    const go = elementsWithClass(rawView, 'monopoly-space', {
+      seatView: { turns: 1, window: { row: 1, column: 1 } },
+    }).find((element) => (element.props as { 'aria-label'?: string })['aria-label']?.startsWith('GO'))
+    expect((go?.props as { style: { gridRow: number; gridColumn: number } }).style).toEqual({
+      gridRow: 11,
+      gridColumn: 1,
+    })
+    expect((go?.props as Record<string, string>)['data-side']).toBe('left')
+  })
+
+  it('reports the turn, the pan and the centring the player asks for', () => {
+    const onRotate = vi.fn()
+    const onPan = vi.fn()
+    const onCentre = vi.fn()
+    const rawView = view()
+    const options = { onRotate, onPan, onCentre }
+    /** One control of a layout carrying the spies, found by its accessible name. */
+    const controlWith = (label: string): ReactElement => {
+      const button = elementsWithClass(rawView, 'monopoly-viewport-button', options).find(
+        (element) => (element.props as { 'aria-label'?: string })['aria-label'] === label,
+      )
+      if (!button) throw new Error(`no viewport control named ${label}`)
+      return button
+    }
+    const press = (label: string): void =>
+      (controlWith(label).props as { onClick: () => void }).onClick()
+
+    press('Girar a la izquierda')
+    press('Girar a la derecha')
+    press('Orientación impresa')
+    press('Mover la ventana derecha')
+    press('Centrar en mi ficha')
+
+    // "Printed orientation" is a step back from the current turn count, so at
+    // zero turns it asks for no step at all.
+    expect(onRotate.mock.calls).toEqual([[-1], [1], [-0]])
+    expect(onPan.mock.calls).toEqual([['right']])
+    expect(onCentre).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports the space that takes keyboard focus, so the window can follow it', () => {
+    const onSpaceFocus = vi.fn()
+    const rawView = view()
+    const go = elementsWithClass(rawView, 'monopoly-space', { onSpaceFocus }).find((element) =>
+      ((element.props as { 'aria-label'?: string })['aria-label'] ?? '').startsWith('GO'),
+    )
+    expect(go).toBeDefined()
+    ;(go?.props as { onFocus: () => void }).onFocus()
+    expect(onSpaceFocus.mock.calls).toEqual([[0]])
   })
 })

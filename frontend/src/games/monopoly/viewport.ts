@@ -133,6 +133,47 @@ function covers(window: ViewWindow, area: GridArea): boolean {
   )
 }
 
+/** The same cell of the board? Used to notice that the own token moved. */
+function sameCell(left: GridArea, right: GridArea): boolean {
+  return left.row === right.row && left.column === right.column
+}
+
+/**
+ * A window the player moved by hand, and the own cell at the time (S8).
+ *
+ * Carrying the cell is what makes the follow rule stateless: the pan holds
+ * while the token has not moved, and stops holding -- without anybody clearing
+ * it -- the moment it has.
+ */
+export type ManualWindow = { window: ViewWindow; at: GridArea }
+
+/**
+ * The window the seat should be looking at (S8).
+ *
+ * With no manual pan it centres on the own token. With one, it keeps the pan
+ * only while the token has not moved, and recentres otherwise: looking
+ * somewhere else is legitimate, but a player's own movement is the event that
+ * matters, and it must not leave the seat staring at the part of the board it
+ * happened to be reading.
+ */
+export function seatWindow(ownCell: GridArea, manual: ManualWindow | null): ViewWindow {
+  if (manual !== null && sameCell(manual.at, ownCell)) return manual.window
+  return windowAround(ownCell)
+}
+
+/**
+ * The window a focused space asks for, or ``null`` when it is already shown
+ * (S11).
+ *
+ * Every space stays in the DOM inside the crop, so the keyboard can reach the
+ * whole ring; this is what brings a focused space that the crop hid back into
+ * view, and it does so explicitly instead of relying on the browser scrolling a
+ * clipped container.
+ */
+export function recentreForFocus(window: ViewWindow, area: GridArea): ViewWindow | null {
+  return covers(window, area) ? null : windowAround(area)
+}
+
 /**
  * The spaces the window shows, in circuit order (S12).
  *
