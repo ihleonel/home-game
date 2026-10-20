@@ -1370,10 +1370,9 @@ describe('the monopoly view switcher', () => {
  * layout reports and where the middle of the table ends up.
  */
 describe('the monopoly seat view', () => {
-  it('frames the board for a seat and puts the centre of the table outside the window', () => {
+  it('frames the board for a seat and pins the centre of the table inside the window', () => {
     const rawView = view()
     const frame = elementsWithClass(rawView, 'monopoly-viewport-frame')
-    const seatTable = elementsWithClass(rawView, 'monopoly-seat-table')
 
     expect(frame).toHaveLength(1)
     // The window of the opening seat: centred on its own token, which is on GO.
@@ -1381,19 +1380,27 @@ describe('the monopoly seat view', () => {
       '--monopoly-viewport-row': '5',
       '--monopoly-viewport-column': '5',
     })
-    // The middle of the board is empty, and the table's content is in one strip.
+    // The middle of the board is empty, and the table's content is pinned in the
+    // hollow of the window -- there is no strip below it any more.
     expect(elementsWithClass(rawView, 'monopoly-centre-empty')).toHaveLength(1)
-    expect(seatTable).toHaveLength(1)
-    const centres = hostElements(seatTable[0]).filter((element) =>
+    expect(elementsWithClass(rawView, 'monopoly-seat-table')).toHaveLength(0)
+    const overlay = elementsWithClass(rawView, 'monopoly-viewport-overlay')
+    expect(overlay).toHaveLength(1)
+    // The overlay rides inside the frame, which is what keeps it pinned to the
+    // window while the board itself pans underneath it.
+    expect(
+      hostElements(frame[0]).some((element) =>
+        classesOf(element).includes('monopoly-viewport-overlay'),
+      ),
+    ).toBe(true)
+    const centres = hostElements(overlay[0]).filter((element) =>
       classesOf(element).includes('monopoly-centre'),
     )
-    // One real centre, and it is the strip's: the hole in the board is the
-    // element that also carries the empty-surface class.
     expect(centres).toHaveLength(1)
     expect(classesOf(centres[0])).not.toContain('monopoly-centre-empty')
-    // Nothing about the match state leaves the screen with the pan: the strip
+    // Nothing about the match state leaves the screen with the pan: the block
     // carries the turn it always did.
-    expect(renderToStaticMarkup(<>{seatTable[0]}</>)).toContain('Turno de Ana')
+    expect(renderToStaticMarkup(<>{overlay[0]}</>)).toContain('Turno de Ana')
   })
 
   it('leaves the whole board to a spectator, with no window and no controls', () => {
@@ -1403,7 +1410,7 @@ describe('the monopoly seat view', () => {
     const markup = panelMarkup(rawView)
 
     expect(elementsWithClass(rawView, 'monopoly-viewport-frame')).toHaveLength(0)
-    expect(elementsWithClass(rawView, 'monopoly-seat-table')).toHaveLength(0)
+    expect(elementsWithClass(rawView, 'monopoly-viewport-overlay')).toHaveLength(0)
     expect(elementsWithClass(rawView, 'monopoly-centre-empty')).toHaveLength(0)
     // The centre the spectator reads is the one inside the ring.
     expect(elementsWithClass(rawView, 'monopoly-centre')).toHaveLength(1)

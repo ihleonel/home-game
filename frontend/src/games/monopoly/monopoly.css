@@ -1295,17 +1295,30 @@
   background: var(--monopoly-surface);
 }
 
-/* S10: the table's own content under the window. It is not a grid item there,
-   so the placement the block carries for the board is simply ignored, and it
-   keeps its own order. The label colours it already had are unchanged: they were
-   picked against the cream the board paints and this card is lighter, so every
-   pair it already passed it still passes -- the block's text is ``--monopoly-ink``
-   on ``--monopoly-card``, 15.75:1. */
-.monopoly-seat-table .monopoly-centre {
-  padding: 0.7rem 0.8rem;
+/* S10: the middle of the table, pinned in the hollow of the ring. It is inset by
+   one cell -- a seventh of the frame -- so it never covers a space of the ring,
+   and it stays the centre of what the player sees whatever the window shows and
+   however far the pan has moved the board. */
+.monopoly-viewport-overlay {
+  position: absolute;
+  inset: calc(100% / 7);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: auto;
+  padding: 0.5rem 0.6rem;
   border: 1px solid var(--monopoly-card-line);
   border-radius: 0.6rem;
   background: var(--monopoly-card);
+}
+
+/* The block brings the gradient and the padding it wears inside the board; on a
+   card they would paint a card inside a card. The overlay is what scrolls, so
+   the block does not. */
+.monopoly-viewport-overlay .monopoly-centre {
+  padding: 0;
+  overflow: visible;
+  background: none;
 }
 
 /* S6/S9: the controls act on the view, not on the match, so they are outlined

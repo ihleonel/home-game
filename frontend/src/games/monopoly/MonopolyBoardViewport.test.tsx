@@ -48,6 +48,7 @@ type Props = {
   onRotate?: (step: number) => void
   onCentre?: () => void
   onPan?: (direction: ViewDirection) => void
+  overlay?: ReactNode
   children?: ReactNode
 }
 
@@ -270,5 +271,29 @@ describe('the status line', () => {
     expect(text).toContain('Media vuelta')
     expect(text).not.toContain('GO')
     expect(text).not.toContain('Avenida')
+  })
+})
+
+describe('the middle of the table inside the window', () => {
+  function overlayOf(tree: ReactElement): ReactElement | undefined {
+    return hostElements(tree).find((element) =>
+      ((element.props as { className?: string }).className ?? '')
+        .split(/\s+/)
+        .includes('monopoly-viewport-overlay'),
+    )
+  }
+
+  it('pins the overlay inside the clipped frame', () => {
+    const tree = viewport({ overlay: <span>Mesa de prueba</span> })
+    const overlay = overlayOf(tree)
+    expect(overlay).toBeDefined()
+    // Inside the frame is what makes it stay put while the board pans: the frame
+    // is the only thing that moves the board, and this is a child of it.
+    expect(overlayOf(frameOf(tree))).toBeDefined()
+    expect(renderToStaticMarkup(<>{overlay}</>)).toContain('Mesa de prueba')
+  })
+
+  it('clips only its children when no overlay is given', () => {
+    expect(overlayOf(viewport({}))).toBeUndefined()
   })
 })

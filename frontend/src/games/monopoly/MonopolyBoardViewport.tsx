@@ -87,6 +87,7 @@ export function MonopolyBoardViewport({
   onRotate,
   onCentre,
   onPan,
+  overlay,
   children,
 }: {
   turns: QuarterTurns
@@ -94,6 +95,7 @@ export function MonopolyBoardViewport({
   onRotate: (step: number) => void
   onCentre: () => void
   onPan: (direction: ViewDirection) => void
+  overlay?: ReactNode
   children: ReactNode
 }) {
   return (
@@ -133,6 +135,14 @@ export function MonopolyBoardViewport({
         style={frameStyle(window)}
       >
         {children}
+        {/*
+          S10: the middle of the table, pinned in the hollow of the ring. A
+          seven-cell window can never show the nine-cell centre of the board, and
+          the hollow it does show would otherwise be a field of empty paper; the
+          block that belongs there stays the centre of what the player sees and
+          never scrolls away with the pan.
+        */}
+        {overlay !== undefined && <div className="monopoly-viewport-overlay">{overlay}</div>}
       </div>
 
       <div className="monopoly-viewport-pan">

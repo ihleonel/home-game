@@ -1187,10 +1187,20 @@ export function MonopolyPanelLayout({
           <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
         ) : (
           <>
+            {/*
+              S10: the middle of the table rides inside the window, pinned in
+              the hollow of the ring. A seven-cell window can never hold the
+              nine-cell centre of the board, so the block that belongs there is
+              drawn by the frame itself: it stays the centre of what the player
+              sees, it never scrolls away with a pan, and the hollow it covers is
+              the empty paper of the board rather than wasted space. The
+              spectator reads the very same component inside the whole board.
+            */}
             <MonopolyBoardViewport
               onCentre={onCentre}
               onPan={onPan}
               onRotate={onRotate}
+              overlay={<MonopolyTableCentre match={match} selected={selected} />}
               turns={seatView.turns}
               window={seatView.window}
             >
@@ -1203,16 +1213,6 @@ export function MonopolyPanelLayout({
                 turns={seatView.turns}
               />
             </MonopolyBoardViewport>
-            {/*
-              S10: a seven-cell window can never hold the nine-cell middle, so
-              the table's own content sits in a strip under the crop -- the same
-              component the spectator sees inside the ring, never a copy of it.
-              It lives outside the window, so a pan can never hide the turn, the
-              last throw or the space the player tapped.
-            */}
-            <div className="monopoly-seat-table">
-              <MonopolyTableCentre match={match} selected={selected} />
-            </div>
           </>
         ),
       )}
