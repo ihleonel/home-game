@@ -70,8 +70,15 @@ export const OUTWARD_DISTANCE = 5
  */
 export const FRAME_TOWARDS_CORNER = 0.34
 
-/** Degrees above the table. A high camera would flatten the board again. */
-export const ELEVATION_DEGREES = 20
+/**
+ * Degrees above the table (X1).
+ *
+ * Twenty was too low: the near corner sat almost under the camera, so a square
+ * phone frame lost it and the hollow of the ring filled the middle. Twenty-eight
+ * tilts the view enough that the corner reads inside the frame at any aspect while
+ * the board stays a board seen from a seat and not a plan view.
+ */
+export const ELEVATION_DEGREES = 28
 
 /**
  * The single field of view a seat reads with (W3).
@@ -132,6 +139,22 @@ export function cellCenter(index: number): Point3 {
  */
 export function seatCorner(seatIndex: number): Point3 {
   return cellCenter(cornerIndex(seatIndex) * CORNER_INDEX_STEP)
+}
+
+/**
+ * How many quarters a horizontal drag asks for (X2).
+ *
+ * Pure and exported so the gesture's arithmetic can be tested: the board follows
+ * the hand, so a drag to the right (positive pixels) turns it the other way in
+ * ``turns`` terms, and only whole quarters are reported -- a drag of 79 pixels
+ * moves nothing, 160 moves two steps.
+ */
+export function quartersForDrag(pixels: number, stepPx: number): number {
+  if (stepPx <= 0) return 0
+  const steps = Math.trunc(pixels / stepPx)
+  // A canonical zero: ``-Math.trunc(0.9)`` is ``-0``, which is the same number
+  // but a trap in an equality assertion and noise in a returned value.
+  return steps === 0 ? 0 : -steps
 }
 
 /**

@@ -26,7 +26,7 @@ import { BOARD } from '../board'
 import { GRID_SIZE, spaceSide } from '../grid'
 import type { MatchState } from '../../registry'
 import type { MonopolyView } from '../view'
-import { BOARD_CENTER, cameraFor, cellCenter, sceneRotationFor } from './camera'
+import { BOARD_CENTER, cameraFor, cellCenter, quartersForDrag, sceneRotationFor } from './camera'
 import { spaceTexture } from './textures'
 
 /** The top face of the slab the printed board is glued to. */
@@ -73,6 +73,19 @@ const HOTEL_SIZE = { width: 0.3, height: 0.17, depth: 0.22 } as const
 const TURN_DAMPING = 10
 
 /**
+ * How far a drag has to travel to ask for one quarter of a turn (X2).
+ *
+ * Horizontal pixels, and it reports whole quarters as the finger crosses each
+ * threshold instead of a free angle: the board then always comes to rest on a
+ * quarter, which is what keeps the cells readable, and the damping does the
+ * sliding. Eighty pixels is about a third of a phone's width.
+ */
+export const DRAG_STEP_PX = 80
+
+/** A drag shorter than this is a tap on a space, not a turn. */
+const DRAG_SLOP_PX = 6
+
+/**
  * The board, turning smoothly to the angle its count asks for (W4).
  *
  * The scene renders on demand, so an animation has to ask for its own frames:
@@ -108,6 +121,55 @@ function TurningBoard({ turns, children }: { turns: number; children: ReactNode 
       <group position={[-BOARD_CENTER.x, 0, -BOARD_CENTER.z]}>{children}</group>
     </group>
   )
+}
+
+/**
+ * Turn the table by dragging it (X2).
+ *
+ * Pointer events, so a mouse and a finger are the same gesture. The board follows
+ * the hand: dragging right turns it right. Two details make it usable next to a
+ * board made of buttons -- a drag past a few pixels marks the gesture so the
+ * release does not also select a space, and the step is a quarter at a time so
+ * what the player is left looking at is always aligned.
+ */
+function useDragToTurn(onTurn: (step: number) => void) {
+  const drag = useRef<{ x: number; quarters: number } | null>(null)
+  const dragged = useRef(false)
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    drag.current = { x: event.clientX, quarters: 0 }
+    dragged.current = false
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const state = drag.current
+    if (state === null) return
+    const travelled = event.clientX - state.x
+    if (Math.abs(travelled) > DRAG_SLOP_PX) dragged.current = true
+    const quarters = quartersForDrag(travelled, DRAG_STEP_PX)
+    if (quarters === 0) return
+    // Consume the pixels of the step that was reported, so the next one needs a
+    // full step again instead of re-reporting the same distance.
+    state.x -= quarters * DRAG_STEP_PX
+    state.quarters += quarters
+    onTurn(quarters)
+  }
+
+  const end = (): void => {
+    drag.current = null
+  }
+
+  return {
+    dragged,
+    handlers: {
+      onPointerCancel: end,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: end,
+    },
+  }
 }
 
 /** Canvas pixels into a texture the renderer can sample. */
@@ -398,6 +460,7 @@ export function MonopolyTable3D({
   selected,
   onSelect,
   turns = 0,
+  onTurn,
   active = true,
 }: {
   match: MatchState<MonopolyView>
@@ -413,6 +476,8 @@ export function MonopolyTable3D({
    * only the printed surface and what stands on it move.
    */
   turns?: number
+  /** Asks for a quarter turn, in whole quarters, from a drag (X2). */
+  onTurn?: (step: number) => void
   /**
    * Whether the board tab is the one on screen (S11).
    *
@@ -423,8 +488,15 @@ export function MonopolyTable3D({
    */
   active?: boolean
 }) {
+  const turning = useDragToTurn((step) => onTurn?.(step))
+  // A drag that turned the board must not also open the space it ended on.
+  const select = (index: number): void => {
+    if (turning.dragged.current) return
+    onSelect(index)
+  }
+
   return (
-    <div className="monopoly-table3d">
+    <div className="monopoly-table3d" {...turning.handlers}>
       {/*
         S11: the board does not animate, so the scene renders on demand instead of
         sixty times a second -- a click or a texture arriving invalidates a frame
@@ -463,7 +535,7 @@ export function MonopolyTable3D({
             where it belongs. Without the pivot the board swings off the table. */}
         <TurningBoard turns={turns}>
           <BoardSlab />
-            <Cells onSelect={onSelect} selected={selected} />
+            <Cells onSelect={select} selected={selected} />
           <Buildings view={match.view} />
           <Tokens match={match} />
           {selected !== null && <SelectedFrame index={selected} />}

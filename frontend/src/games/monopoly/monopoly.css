@@ -1324,6 +1324,10 @@
 }
 
 /* V3: the turn controls sit beside the zoom, in the same corner of the table. */
+/* X2: the table is turned by dragging it, so these two controls are the keyboard
+   path and stay clipped until one of them takes focus. Not ``display: none``:
+   that would remove them from the tab order and leave a keyboard user unable to
+   turn the board at all. */
 .monopoly-scene-turns {
   position: absolute;
   left: 0.6rem;
@@ -1331,9 +1335,26 @@
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.monopoly-scene-turns:focus-within {
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
   padding: 0.25rem;
   border-radius: 0.6rem;
   background: color-mix(in srgb, var(--monopoly-card) 92%, transparent);
+}
+
+/* A drag must not also scroll the page under the board. */
+.monopoly-table3d {
+  touch-action: none;
+  cursor: grab;
 }
 
 /* ==========================================================================

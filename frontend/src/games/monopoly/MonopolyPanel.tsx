@@ -976,6 +976,7 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
           seat={match.seatIndex ?? 0}
           selected={selected}
           turns={turns}
+          onTurn={(step) => setTurns((count) => count + step)}
         />
       }
       sceneTurns={{ turns, onRotate: (direction) => setTurns((count) => count + direction) }}
@@ -1135,6 +1136,11 @@ export function MonopolyPanelLayout({
               <MonopolyTableCentre match={match} selected={selected} />
             </div>
             {sceneTurns !== undefined && (
+              /*
+                X2: the board is turned by dragging it. These two stay in the DOM
+                as the keyboard path -- a drag has none -- and the stylesheet keeps
+                them clipped until one of them takes focus.
+              */
               <div className="monopoly-scene-turns" role="group" aria-label="Giro del tablero">
                 <button
                   aria-label="Girar el tablero a la izquierda"

@@ -5,6 +5,7 @@ import {
   BOARD_CENTER,
   MAX_FOV,
   MIN_FOV,
+  quartersForDrag,
   fovForAspect,
   SEAT_FOV,
   cameraFor,
@@ -79,14 +80,14 @@ describe('the camera of a seat', () => {
   })
 
   it('is low, which is what gives the reference image its foreshortening', () => {
-    // About twenty degrees above the table: the near corner is close and huge,
-    // the far edge is compressed. A high camera would flatten the board again.
+    // Twenty-eight degrees: low enough that the near corner is close and the far
+    // edge compressed, high enough that the corner stays inside a square frame.
     for (let seat = 0; seat < 8; seat += 1) {
       const { position } = cameraFor(seat)
       // Measured to the middle of the board: the aim sits closer to the corner,
       // and that is a framing decision, not the elevation of the camera.
       const elevation = (Math.atan2(position.y, horizontalDistance(position, BOARD_CENTER)) * 180) / Math.PI
-      expect([seat, Math.round(elevation * 10) / 10]).toEqual([seat, 20])
+      expect([seat, Math.round(elevation * 10) / 10]).toEqual([seat, 28])
     }
   })
 
@@ -274,5 +275,20 @@ describe('the shape of the frame decides the view', () => {
     // shot. The derived field of view has to stay in that neighbourhood.
     expect(cameraFor(0, 4 / 3).fov).toBeGreaterThan(SEAT_FOV - 6)
     expect(cameraFor(0, 4 / 3).fov).toBeLessThan(SEAT_FOV + 14)
+  })
+})
+
+describe('turning the table with a drag', () => {
+  it('reports whole quarters and follows the hand', () => {
+    expect(quartersForDrag(0, 80)).toBe(0)
+    expect(quartersForDrag(79, 80)).toBe(0)
+    expect(quartersForDrag(-79, 80)).toBe(0)
+    expect(quartersForDrag(80, 80)).toBe(-1)
+    expect(quartersForDrag(-80, 80)).toBe(1)
+    expect(quartersForDrag(240, 80)).toBe(-3)
+  })
+
+  it('refuses a step that would divide by zero instead of returning infinity', () => {
+    expect([quartersForDrag(100, 0), quartersForDrag(100, -5)]).toEqual([0, 0])
   })
 })
