@@ -24,7 +24,7 @@ import { BOARD } from '../board'
 import { GRID_SIZE, spaceSide } from '../grid'
 import type { MatchState } from '../../registry'
 import type { MonopolyView } from '../view'
-import { BOARD_CENTER, DEFAULT_ZOOM, cameraFor, cellCenter } from './camera'
+import { BOARD_CENTER, DEFAULT_ZOOM, cameraFor, cellCenter, sceneRotationFor } from './camera'
 import { spaceTexture, tableTexture } from './textures'
 
 /** The top face of the slab the printed board is glued to. */
@@ -337,6 +337,7 @@ export function MonopolyTable3D({
   selected,
   onSelect,
   zoom = DEFAULT_ZOOM,
+  turns = 0,
   active = true,
 }: {
   match: MatchState<MonopolyView>
@@ -344,6 +345,15 @@ export function MonopolyTable3D({
   selected: number | null
   onSelect: (index: number) => void
   zoom?: number
+  /**
+   * How many quarters the table has been turned, clockwise (V3).
+   *
+   * The camera stands at the seat's corner and does not move: what turns is the
+   * board on the table, the way a player turns a real board with their hands. The
+   * table, the overlays and the accessible mirror are outside the turned group, so
+   * only the printed surface and what stands on it move.
+   */
+  turns?: number
   /**
    * Whether the board tab is the one on screen (S11).
    *
@@ -385,13 +395,22 @@ export function MonopolyTable3D({
         <directionalLight intensity={0.38} position={[BOARD_CENTER.x - 8, 9, BOARD_CENTER.z - 7]} />
 
         <Table />
-        <BoardSlab />
-        <Cells onSelect={onSelect} selected={selected} />
-        <Buildings view={match.view} />
-        <Tokens match={match} />
-        {selected !== null && <SelectedFrame index={selected} />}
-        <DeckPile colour="#e39a2a" offsetX={-0.75} />
-        <DeckPile colour="#3d7fb5" offsetX={0.75} />
+        {/* V3: the printed surface and everything standing on it, turned by
+            quarters around the board's own centre. The pivot is the two nested
+            groups: a rotation in three.js turns around the group's origin, so the
+            outer one sits at the centre and the inner one puts the board back
+            where it belongs. Without the pivot the board swings off the table. */}
+        <group position={[BOARD_CENTER.x, 0, BOARD_CENTER.z]} rotation-y={sceneRotationFor(turns)}>
+          <group position={[-BOARD_CENTER.x, 0, -BOARD_CENTER.z]}>
+            <BoardSlab />
+            <Cells onSelect={onSelect} selected={selected} />
+            <Buildings view={match.view} />
+            <Tokens match={match} />
+            {selected !== null && <SelectedFrame index={selected} />}
+            <DeckPile colour="#e39a2a" offsetX={-0.75} />
+            <DeckPile colour="#3d7fb5" offsetX={0.75} />
+          </group>
+        </group>
 
         {/* The board's own shadow on the table, which is what glues it down. */}
         <ContactShadows

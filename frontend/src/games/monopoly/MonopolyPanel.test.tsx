@@ -84,6 +84,7 @@ type LayoutOptions = {
   onViewChange?: (next: MonopolyPane) => void
   boardScene?: ReactNode
   sceneZoom?: { step: number; onZoom: (direction: 1 | -1) => void }
+  sceneTurns?: { turns: number; onRotate: (direction: 1 | -1) => void }
 }
 
 function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
@@ -99,6 +100,7 @@ function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): Layout
     onViewChange: options.onViewChange ?? (() => {}),
     boardScene: options.boardScene,
     sceneZoom: options.sceneZoom,
+    sceneTurns: options.sceneTurns,
   }
 }
 
@@ -1433,5 +1435,27 @@ describe('zooming the rendered table', () => {
   it('shows no zoom controls when there is no rendered table', () => {
     const rawView = view()
     expect(elementsWithClass(rawView, 'monopoly-scene-zoom')).toHaveLength(0)
+  })
+})
+
+describe('turning the rendered table', () => {
+  it('asks for a quarter turn in each direction', () => {
+    const onRotate = vi.fn()
+    const rawView = view()
+    const options = { boardScene: <span>escena</span>, sceneTurns: { turns: 1, onRotate } }
+    const button = (name: string) => {
+      const found = elementsWithClass(rawView, 'monopoly-viewport-button', options).find(
+        (element) => (element.props as { 'aria-label'?: string })['aria-label'] === name,
+      )
+      if (!found) throw new Error(`no turn control named ${name}`)
+      return found
+    }
+    ;(button('Girar el tablero a la izquierda').props as { onClick: () => void }).onClick()
+    ;(button('Girar el tablero a la derecha').props as { onClick: () => void }).onClick()
+    expect(onRotate.mock.calls).toEqual([[-1], [1]])
+  })
+
+  it('shows no turn controls without a rendered table', () => {
+    expect(elementsWithClass(view(), 'monopoly-scene-turns')).toHaveLength(0)
   })
 })

@@ -1322,3 +1322,16 @@
   color: var(--monopoly-ink-soft);
   font-size: 0.72rem;
 }
+
+/* V3: the turn controls sit beside the zoom, in the same corner of the table. */
+.monopoly-scene-turns {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--monopoly-card) 92%, transparent);
+}

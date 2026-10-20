@@ -936,6 +936,8 @@ type MonopolyPanelLayoutProps = {
   boardScene?: ReactNode
   /** The zoom step the scene is at, and the request to move it (S10). */
   sceneZoom?: { step: number; onZoom: (direction: 1 | -1) => void }
+  /** How many quarters the table is turned, and the request to turn it (V3). */
+  sceneTurns?: { turns: number; onRotate: (direction: 1 | -1) => void }
 }
 
 /**
@@ -958,6 +960,7 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
   const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
   const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
   const [zoom, setZoom] = useState(DEFAULT_ZOOM)
+  const [turns, setTurns] = useState(0)
   return (
     <MonopolyPanelLayout
       match={match}
@@ -976,9 +979,11 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
           onSelect={setSelected}
           seat={match.seatIndex ?? 0}
           selected={selected}
+          turns={turns}
           zoom={zoom}
         />
       }
+      sceneTurns={{ turns, onRotate: (direction) => setTurns((count) => count + direction) }}
       sceneZoom={{ step: zoom, onZoom: (direction) => setZoom((step) => clampZoom(step + direction)) }}
     />
   )
@@ -996,6 +1001,7 @@ export function MonopolyPanelLayout({
   onViewChange,
   boardScene,
   sceneZoom,
+  sceneTurns,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
@@ -1135,6 +1141,26 @@ export function MonopolyPanelLayout({
             <div className="monopoly-scene-centre">
               <MonopolyTableCentre match={match} selected={selected} />
             </div>
+            {sceneTurns !== undefined && (
+              <div className="monopoly-scene-turns" role="group" aria-label="Giro del tablero">
+                <button
+                  aria-label="Girar el tablero a la izquierda"
+                  className="monopoly-viewport-button"
+                  onClick={() => sceneTurns.onRotate(-1)}
+                  type="button"
+                >
+                  ↺
+                </button>
+                <button
+                  aria-label="Girar el tablero a la derecha"
+                  className="monopoly-viewport-button"
+                  onClick={() => sceneTurns.onRotate(1)}
+                  type="button"
+                >
+                  ↻
+                </button>
+              </div>
+            )}
             {sceneZoom !== undefined && (
               <div className="monopoly-scene-zoom" role="group" aria-label="Zoom del tablero">
                 <button
