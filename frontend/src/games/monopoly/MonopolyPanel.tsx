@@ -20,17 +20,6 @@ import {
 import type { Deed } from './deeds'
 import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
-import { MonopolyBoardViewport } from './MonopolyBoardViewport'
-import { MonopolyTableCentre } from './MonopolyTableCentre'
-import {
-  cellFor,
-  moveWindow,
-  nextTurns,
-  recentreForFocus,
-  seatWindow,
-  startTurns,
-} from './viewport'
-import type { ManualWindow, QuarterTurns, ViewDirection, ViewWindow } from './viewport'
 import './monopoly.css'
 import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
 
@@ -57,14 +46,6 @@ const PANES: readonly { key: MonopolyPane; label: string }[] = [
  * so the board is what the player comes back to.
  */
 const OPENING_PANE: MonopolyPane = 'tablero'
-
-/**
- * What the seat's board view needs from the panel's local state (S1, S8).
- *
- * ``null`` means nobody is looking from a seat -- a spectator -- and the match
- * screen then draws the whole board with no window and no controls (S2).
- */
-export type MonopolySeatView = { turns: QuarterTurns; window: ViewWindow }
 
 /** The id of a view's tab, and the one its panel points back to (S1). */
 function paneTabId(pane: MonopolyPane): string {
@@ -941,11 +922,6 @@ type MonopolyPanelLayoutProps = {
   onTradeChange: (next: MonopolyTradeDraft) => void
   activeView: MonopolyPane
   onViewChange: (next: MonopolyPane) => void
-  seatView: MonopolySeatView | null
-  onRotate: (step: number) => void
-  onPan: (direction: ViewDirection) => void
-  onCentre: () => void
-  onSpaceFocus: (index: number) => void
 }
 
 /**
@@ -964,59 +940,9 @@ type MonopolyPanelLayoutProps = {
  * testable in the existing harness.
  */
 export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<MonopolyView>) {
-  const { view } = match
   const [selected, setSelected] = useState<number | null>(null)
   const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
   const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
-  const [turns, setTurns] = useState<QuarterTurns>(() => startTurns(match.seatIndex ?? 0))
-  const [manual, setManual] = useState<ManualWindow | null>(null)
-
-  /**
-   * The seat's view, derived on every render instead of stored (S8).
-   *
-   * The turn count is state, and so is a manual pan, but the window itself is a
-   * function of the own token's cell: ``seatWindow`` keeps the pan while the
-   * token has not moved and recentres the moment it has, so no effect and no
-   * cleanup pass has to remember when that happened.
-   *
-   * A spectator has no own token, so there is no window at all and the layout
-   * draws the whole board (S2).
-   */
-  const ownPlayer =
-    view.you === undefined
-      ? null
-      : view.players.find((player) => player.seat === view.you) ?? null
-  const ownCell = ownPlayer === null ? null : cellFor(ownPlayer.position, turns)
-  const seatView: MonopolySeatView | null =
-    ownCell === null ? null : { turns, window: seatWindow(ownCell, manual) }
-
-  /** Turning the table brings the window back to the seat's own token (S6). */
-  const rotate = (step: number): void => {
-    setTurns((current) => nextTurns(current, step))
-    setManual(null)
-  }
-
-  const pan = (direction: ViewDirection): void => {
-    if (ownCell === null || seatView === null) return
-    setManual({ window: moveWindow(seatView.window, direction), at: ownCell })
-  }
-
-  /** Dropping the pan is what returns the window to S8's centring. */
-  const centre = (): void => setManual(null)
-
-  /**
-   * A focused space the crop hid brings the window back to it (S11).
-   *
-   * Every space stays in the DOM inside the crop, so the keyboard reaches the
-   * whole ring; this is what makes sure the space it reaches is actually on
-   * screen, without relying on a clipped container scrolling itself.
-   */
-  const focus = (index: number): void => {
-    if (ownCell === null || seatView === null) return
-    const next = recentreForFocus(seatView.window, cellFor(index, turns))
-    if (next !== null) setManual({ window: next, at: ownCell })
-  }
-
   return (
     <MonopolyPanelLayout
       match={match}
@@ -1028,11 +954,6 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
       onTradeChange={setTrade}
       activeView={pane}
       onViewChange={setPane}
-      seatView={seatView}
-      onRotate={rotate}
-      onPan={pan}
-      onCentre={centre}
-      onSpaceFocus={focus}
     />
   )
 }
@@ -1047,11 +968,6 @@ export function MonopolyPanelLayout({
   onTradeChange,
   activeView,
   onViewChange,
-  seatView,
-  onRotate,
-  onPan,
-  onCentre,
-  onSpaceFocus,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
@@ -1176,46 +1092,7 @@ export function MonopolyPanelLayout({
         </div>
       )}
 
-      {pane(
-        'tablero',
-        seatView === null ? (
-          /*
-            S2: a spectator sees the whole board, exactly as it has always been:
-            no window, no turn and no pan controls, and the table's centre inside
-            the ring where it belongs.
-          */
-          <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
-        ) : (
-          <>
-            {/*
-              S10: the middle of the table rides inside the window, pinned in
-              the hollow of the ring. A seven-cell window can never hold the
-              nine-cell centre of the board, so the block that belongs there is
-              drawn by the frame itself: it stays the centre of what the player
-              sees, it never scrolls away with a pan, and the hollow it covers is
-              the empty paper of the board rather than wasted space. The
-              spectator reads the very same component inside the whole board.
-            */}
-            <MonopolyBoardViewport
-              onCentre={onCentre}
-              onPan={onPan}
-              onRotate={onRotate}
-              overlay={<MonopolyTableCentre match={match} selected={selected} />}
-              turns={seatView.turns}
-              window={seatView.window}
-            >
-              <MonopolyBoard
-                centre="none"
-                match={match}
-                onFocus={onSpaceFocus}
-                onSelect={onSelect}
-                selected={selected}
-                turns={seatView.turns}
-              />
-            </MonopolyBoardViewport>
-          </>
-        ),
-      )}
+      {pane('tablero', <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />)}
 
       {pane(
         'cartera',

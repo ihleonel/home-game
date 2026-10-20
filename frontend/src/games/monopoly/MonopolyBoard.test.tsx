@@ -4,10 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
-import { spaceArea, spaceSide } from './grid'
 import { MonopolyBoard } from './MonopolyBoard'
-import { MonopolyTableCentre } from './MonopolyTableCentre'
-import type { QuarterTurns } from './viewport'
 import type { MonopolyPlayer, MonopolyView } from './view'
 
 const roster: MatchSeatRosterEntry[] = [
@@ -95,41 +92,19 @@ function hostElements(node: ReactNode, found: ReactElement[] = []): ReactElement
   return found
 }
 
-/**
- * The seat-view props of the board (S13): all optional, so a test that passes
- * none of them renders the printed board of today.
- */
-type SeatViewProps = {
-  turns?: QuarterTurns
-  centre?: 'board' | 'none'
-  onFocus?: (index: number) => void
-}
-
-function boardElement(
-  rawView: MonopolyView,
-  selected: number | null,
-  onSelect: (index: number) => void,
-  extra: SeatViewProps,
-): ReactElement {
-  return MonopolyBoard({ match: matchFor(rawView), selected, onSelect, ...extra })
-}
-
 function buttonElements(
   rawView: MonopolyView,
   selected: number | null = null,
   onSelect: (index: number) => void = () => {},
-  extra: SeatViewProps = {},
 ): ReactElement[] {
-  const tree = boardElement(rawView, selected, onSelect, extra)
+  const tree = MonopolyBoard({ match: matchFor(rawView), selected, onSelect })
   return hostElements(tree).filter((element) => element.type === 'button')
 }
 
-function markup(
-  rawView: MonopolyView,
-  selected: number | null = null,
-  extra: SeatViewProps = {},
-): string {
-  return renderToStaticMarkup(boardElement(rawView, selected, () => {}, extra))
+function markup(rawView: MonopolyView, selected: number | null = null): string {
+  return renderToStaticMarkup(
+    <MonopolyBoard match={matchFor(rawView)} selected={selected} onSelect={() => {}} />,
+  )
 }
 
 /** The static markup of one rendered host element, so a test can pin its contents. */
@@ -139,17 +114,6 @@ function elementMarkup(element: ReactElement): string {
 
 function labelOf(button: ReactElement): string {
   return (button.props as { 'aria-label'?: string })['aria-label'] ?? ''
-}
-
-/** The grid cell a space button was placed in. */
-function placementOf(button: ReactElement): { row: number; column: number } {
-  const style = (button.props as { style: { gridRow: number; gridColumn: number } }).style
-  return { row: style.gridRow, column: style.gridColumn }
-}
-
-/** The side of the ring a space button reports to the stylesheet. */
-function sideOf(button: ReactElement): string {
-  return (button.props as Record<string, string>)['data-side']
 }
 
 /** The space button whose accessible name starts with ``name``. */
@@ -493,126 +457,5 @@ describe('the monopoly board', () => {
 
     expect(buttonElements(spectator)).toHaveLength(40)
     expect(page.match(/monopoly-token-initial/g)).toHaveLength(2)
-  })
-})
-
-describe('the board seen from a seat', () => {
-  it('renders the printed board, centre included, when no seat view is passed', () => {
-    const printed = view()
-    const buttons = buttonElements(printed)
-    const page = markup(printed)
-
-    expect(buttons).toHaveLength(40)
-    expect(placementOf(spaceButton(buttons, 'GO'))).toEqual({ row: 11, column: 11 })
-    expect(placementOf(spaceButton(buttons, 'Avenida Mediterráneo'))).toEqual({
-      row: 11,
-      column: 10,
-    })
-    expect(sideOf(spaceButton(buttons, 'GO'))).toBe('bottom')
-    // S13: with no props every one of the forty cells keeps the printed
-    // geometry -- the buttons are emitted in circuit order, like BOARD.
-    buttons.forEach((button, index) => {
-      expect([index, placementOf(button)]).toEqual([index, spaceArea(index)])
-      expect([index, sideOf(button)]).toEqual([index, spaceSide(index)])
-    })
-    expect(page).toContain('class="monopoly-centre"')
-    expect(page).toContain('monopoly-brand-name')
-    expect(page).not.toContain('monopoly-centre-empty')
-  })
-
-  it('moves GO to the bottom-left on a quarter turn and turns its band side with it', () => {
-    // S4: the turn is a shift of the circuit, so the cell and the side of the
-    // ring travel together and the band keeps facing the centre.
-    const buttons = buttonElements(view(), null, () => {}, { turns: 1 })
-    const page = markup(view(), null, { turns: 1 })
-
-    expect(placementOf(spaceButton(buttons, 'GO'))).toEqual({ row: 11, column: 1 })
-    expect(sideOf(spaceButton(buttons, 'GO'))).toBe('left')
-    expect(sideOf(spaceButton(buttons, 'Avenida Mediterráneo'))).toBe('left')
-    expect(page.match(/data-side="left"/g)).toHaveLength(10)
-    // A re-indexing rotates nothing: no label ever ends up sideways.
-    expect(page.toLowerCase()).not.toContain('transform')
-    expect(page.toLowerCase()).not.toContain('rotate')
-  })
-
-  it('keeps all forty spaces on the perimeter in distinct cells at every turn', () => {
-    let previous: string[] = []
-    for (const turns of [0, 1, 2, 3] as const) {
-      const buttons = buttonElements(view(), null, () => {}, { turns })
-      expect(buttons).toHaveLength(40)
-      const cells = buttons.map((button) => {
-        const { row, column } = placementOf(button)
-        const onPerimeter = row === 1 || row === 11 || column === 1 || column === 11
-        // The 9x9 middle is the centre of the table, never a space (S10).
-        expect([turns, row, column, onPerimeter]).toEqual([turns, row, column, true])
-        return `${row}:${column}`
-      })
-      expect([turns, new Set(cells).size]).toEqual([turns, 40])
-      expect(cells).not.toEqual(previous)
-      previous = cells
-    }
-  })
-
-  it('empties the middle of the board when the seat view asks for no centre', () => {
-    const drawn = view({
-      decks: { chance: 14, community_chest: 9 },
-      last_roll: [3, 5],
-      last_card: { deck: 'chance', id: 'chance-01', title: 'Avanzá hasta Boardwalk.' },
-      auction: { space: 3, high_bid: 70, high_bidder: 'seat-1', waiting_for: ['seat-0'] },
-    })
-    const page = markup(drawn, 1, { centre: 'none' })
-
-    expect(buttonElements(drawn, 1, () => {}, { centre: 'none' })).toHaveLength(40)
-    for (const element of [
-      'monopoly-brand-name',
-      'monopoly-piles',
-      'monopoly-turn',
-      'monopoly-roll',
-      'monopoly-card',
-      'monopoly-auction-line',
-      'monopoly-detail',
-    ]) {
-      expect([element, page.includes(element)]).toEqual([element, false])
-    }
-    expect(page).not.toContain('Turno de Ana')
-    expect(page).toContain('class="monopoly-centre monopoly-centre-empty"')
-  })
-
-  it('reports the index of every space that takes focus and never calls it on a tap', () => {
-    const onFocus = vi.fn()
-    const onSelect = vi.fn()
-    const buttons = buttonElements(view(), null, onSelect, { onFocus })
-
-    for (const button of buttons) {
-      expect(typeof (button.props as { onFocus?: unknown }).onFocus).toBe('function')
-    }
-
-    const baltica = spaceButton(buttons, 'Avenida Báltica')
-    ;(baltica.props as { onFocus: () => void }).onFocus()
-
-    expect(onFocus).toHaveBeenCalledTimes(1)
-    expect(onFocus).toHaveBeenCalledWith(3)
-
-    ;(baltica.props as { onClick: () => void }).onClick()
-
-    expect(onSelect).toHaveBeenCalledWith(3)
-    expect(onFocus).toHaveBeenCalledTimes(1)
-  })
-
-  it('renders the brand, the turn and the selected detail on its own', () => {
-    // S10: one source for the two placements, so the strip under the window can
-    // hold exactly the block the whole board holds in its 9x9.
-    const page = renderToStaticMarkup(
-      <MonopolyTableCentre
-        match={matchFor(view({ decks: { chance: 14, community_chest: 9 } }))}
-        selected={1}
-      />,
-    )
-
-    expect(page).toMatch(/monopoly-brand-name[^>]*>Monopoly</)
-    expect(page).toContain('monopoly-pile-count">14<')
-    expect(page).toContain('Turno de Ana')
-    expect(page).toContain('monopoly-detail')
-    expect(page).toContain('Avenida Mediterráneo')
   })
 })
