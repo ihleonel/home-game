@@ -1257,3 +1257,49 @@
 .monopoly-table3d canvas {
   display: block;
 }
+
+/* S9/S6 of ``monopoly-3d-table.md``: the scene, the card over it and the
+   accessible board behind it. */
+.monopoly-scene {
+  position: relative;
+  min-width: 0;
+}
+
+/* The middle of the table over the rendered board. The camera aims at the
+   board's centre, so the card belongs in the middle of the frame; it is
+   translucent because seeing the table through it is the point of the view. */
+.monopoly-scene-centre {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(26rem, 44%);
+  max-height: 52%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: auto;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--monopoly-card) 93%, transparent);
+  box-shadow: 0 0.5rem 1.4rem rgb(0 0 0 / 35%);
+}
+
+.monopoly-scene-centre .monopoly-centre {
+  padding: 0;
+  overflow: visible;
+  background: none;
+}
+
+/* The accessible board: clipped out of sight, never hidden. ``display: none``
+   and ``visibility: hidden`` both remove it from the tab order and from the
+   accessibility tree, which is the one thing this layer exists to prevent. */
+.monopoly-table-mirror {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

@@ -1,30 +1,18 @@
 import type { ReactElement } from 'react'
 import type { MatchState } from '../registry'
-import { BOARD, isPurchasable, spaceAt } from './board'
+import { BOARD, isPurchasable } from './board'
 import type { Space } from './board'
-import { HOTEL_LEVEL, deedFor, levelLabel, mortgageLiftCost, mortgageValue, purchasePrice, rentForLevel } from './deeds'
+import { HOTEL_LEVEL, levelLabel, purchasePrice } from './deeds'
 import {
-  DECK_LABELS,
-  GAME_NAME,
   GROUP_INITIALS,
   GROUP_LABELS,
   KIND_LABELS,
-  deckLabel,
   formatMoney,
   seatName,
 } from './display'
+import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { spaceArea, spaceSide } from './grid'
 import type { MonopolyPlayer, MonopolyView } from './view'
-
-const RENT_ROW_LABELS = [
-  'Renta base',
-  'Con grupo completo',
-  '1 casa',
-  '2 casas',
-  '3 casas',
-  '4 casas',
-  'Hotel',
-]
 
 function initialOf(name: string): string {
   const first = name.trim().charAt(0)
@@ -135,36 +123,6 @@ function renderToken(player: MonopolyPlayer, match: MatchState<MonopolyView>): R
 }
 
 /**
- * The printed rent schedule of a street deed.
- *
- * It is reference data: the rent actually owed is the server's decision and
- * never computed here. Every level goes through ``rentForLevel`` so the panel
- * and the deed table cannot drift apart.
- */
-function rentSchedule(index: number): ReactElement {
-  const deed = deedFor(index)
-  const values = [
-    rentForLevel(deed, 0),
-    deed.setRent,
-    rentForLevel(deed, 1),
-    rentForLevel(deed, 2),
-    rentForLevel(deed, 3),
-    rentForLevel(deed, 4),
-    rentForLevel(deed, 5),
-  ]
-  return (
-    <ul className="monopoly-rents">
-      {values.map((value, level) => (
-        <li className="monopoly-rent" key={RENT_ROW_LABELS[level]}>
-          <span className="monopoly-rent-label">{RENT_ROW_LABELS[level]}</span>
-          <span className="monopoly-rent-value">{formatMoney(value)}</span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-/**
  * Render the shared, read-only Monopoly board (S3/S4) for players and
  * spectators alike.
  *
@@ -180,16 +138,24 @@ export function MonopolyBoard({
   match,
   selected,
   onSelect,
+  centre = 'board',
+  onFocus,
 }: {
   match: MatchState<MonopolyView>
   selected: number | null
   onSelect: (index: number) => void
+  /**
+   * Whether the middle of the board holds the table's content (S9).
+   *
+   * The 3D scene draws that block itself, over the table, so the board it hides
+   * for the accessible mirror is asked for the ring alone; a full copy would
+   * announce the turn and the last throw twice.
+   */
+  centre?: 'board' | 'none'
+  /** Reports the space that takes keyboard focus, so a mirror can select it. */
+  onFocus?: (index: number) => void
 }) {
   const { view } = match
-  const chosen = selected === null ? null : spaceAt(selected)
-  const chosenLevel = chosen === null ? null : buildingLevel(view, chosen.index)
-  const chosenMortgaged =
-    chosen !== null && view.mortgaged[String(chosen.index)] === true
 
   return (
     <div className="monopoly-board" role="group" aria-label="Tablero de Monopoly">
@@ -220,6 +186,7 @@ export function MonopolyBoard({
             data-side={spaceSide(space.index)}
             key={space.index}
             onClick={() => onSelect(space.index)}
+            onFocus={onFocus === undefined ? undefined : () => onFocus(space.index)}
             style={{ gridRow: area.row, gridColumn: area.column }}
             type="button"
           >
@@ -246,73 +213,15 @@ export function MonopolyBoard({
         )
       })}
 
-      <div className="monopoly-centre" style={{ gridRow: '2 / 11', gridColumn: '2 / 11' }}>
-        <div className="monopoly-centre-band">
-          <p className="monopoly-brand-name">{GAME_NAME}</p>
-          {view.decks !== null && (
-            <div className="monopoly-piles">
-              <div className="monopoly-pile monopoly-pile-chance">
-                <span className="monopoly-pile-name">{DECK_LABELS.chance}</span>
-                <span className="monopoly-pile-count">{view.decks.chance}</span>
-              </div>
-              <div className="monopoly-pile monopoly-pile-community">
-                <span className="monopoly-pile-name">{DECK_LABELS.community_chest}</span>
-                <span className="monopoly-pile-count">{view.decks.community_chest}</span>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="monopoly-status">
-          <p className="monopoly-turn" role="status">
-            {view.turn === null ? 'Sin turno' : `Turno de ${seatName(match, view.turn)}`}
-          </p>
-          {view.last_roll !== null && (
-            <p className="monopoly-roll" role="status">
-              {`Última tirada: ${view.last_roll[0]} y ${view.last_roll[1]}`}
-            </p>
-          )}
-          {view.last_card !== null && (
-            <p className="monopoly-roll monopoly-card" role="status">
-              {`${deckLabel(view.last_card.deck)}: ${view.last_card.title}`}
-            </p>
-          )}
-          {view.auction !== null && (
-            <p className="monopoly-roll monopoly-auction-line" role="status">
-              {`Subasta de ${spaceAt(view.auction.space).name}`}
-            </p>
-          )}
-        </div>
-        {chosen !== null && (
-          <div className="monopoly-detail" role="status">
-            <p className="monopoly-detail-name">{chosen.name}</p>
-            <p className="monopoly-detail-kind">{KIND_LABELS[chosen.kind]}</p>
-            {chosen.group && (
-              <p className="monopoly-detail-group">{GROUP_LABELS[chosen.group]}</p>
-            )}
-            {isPurchasable(chosen) && (
-              <p className="monopoly-detail-price">
-                {`Precio: ${formatMoney(purchasePrice(chosen.index))}`}
-              </p>
-            )}
-            {chosen.kind === 'street' && rentSchedule(chosen.index)}
-            {chosenLevel !== null && (
-              <p className="monopoly-detail-buildings">
-                {`Edificios: ${levelLabel(chosenLevel)}`}
-              </p>
-            )}
-            {chosenMortgaged && isPurchasable(chosen) && (
-              <p className="monopoly-detail-mortgaged">
-                {`Hipotecada · Valor ${formatMoney(mortgageValue(chosen.index))} · Levantar ${formatMoney(mortgageLiftCost(chosen.index))}`}
-              </p>
-            )}
-            {isPurchasable(chosen) && (
-              <p className="monopoly-detail-owner">
-                {`Dueño: ${ownerName(match, chosen.index) ?? 'Sin dueño'}`}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
+      {centre === 'board' ? (
+        <MonopolyTableCentre match={match} selected={selected} />
+      ) : (
+        <div
+          aria-hidden="true"
+          className="monopoly-centre monopoly-centre-empty"
+          style={{ gridRow: '2 / 11', gridColumn: '2 / 11' }}
+        />
+      )}
     </div>
   )
 }

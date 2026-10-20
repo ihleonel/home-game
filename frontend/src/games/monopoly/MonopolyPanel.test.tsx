@@ -77,10 +77,12 @@ function tradeDraft(overrides: Partial<MonopolyTradeDraft> = {}): MonopolyTradeD
 type LayoutOptions = {
   busy?: boolean
   onAction?: (name: string, value: string | null) => void
+  onSelect?: (index: number) => void
   trade?: MonopolyTradeDraft
   onTradeChange?: (next: MonopolyTradeDraft) => void
   activeView?: MonopolyPane
   onViewChange?: (next: MonopolyPane) => void
+  boardScene?: ReactNode
 }
 
 function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
@@ -89,11 +91,12 @@ function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): Layout
     busy: options.busy ?? false,
     onAction: options.onAction ?? (() => {}),
     selected: null,
-    onSelect: () => {},
+    onSelect: options.onSelect ?? (() => {}),
     trade: options.trade ?? tradeDraft(),
     onTradeChange: options.onTradeChange ?? (() => {}),
     activeView: options.activeView ?? 'tablero',
     onViewChange: options.onViewChange ?? (() => {}),
+    boardScene: options.boardScene,
   }
 }
 
@@ -1334,5 +1337,62 @@ describe('the monopoly view switcher', () => {
       classesOf(element).includes('monopoly-tab-badge'),
     )
     expect(String((badge!.props as { children?: ReactNode }).children)).toBe('2')
+  })
+})
+
+/**
+ * The 3D table in the board tab (S6, S7, S9 of ``monopoly-3d-table.md``).
+ *
+ * The scene itself cannot be rendered here -- it mounts a canvas and this harness
+ * has no DOM -- so what is pinned is the contract around it: where the injected
+ * scene is placed, that the middle of the table rides over it, that the flat
+ * board survives as the accessible mirror, and that focusing a mirror space
+ * selects it.
+ */
+describe('the monopoly 3d table', () => {
+  it('places the injected scene with the table over it and the board behind it', () => {
+    const rawView = view()
+    const options = { boardScene: <span data-testid="scene">escena</span> }
+    const scene = elementsWithClass(rawView, 'monopoly-scene', options)
+
+    expect(scene).toHaveLength(1)
+    const inside = hostElements(scene[0])
+    expect(inside.some((element) => (element.props as { children?: ReactNode }).children === 'escena')).toBe(true)
+
+    // The middle of the table is over the rendered board, from the same block
+    // the spectator reads inside the flat one.
+    const centre = elementsWithClass(rawView, 'monopoly-scene-centre', options)
+    expect(centre).toHaveLength(1)
+    expect(hostElements(centre[0]).some((element) => classesOf(element).includes('monopoly-centre'))).toBe(true)
+
+    // And the flat board is still there, with its middle empty: it is the
+    // accessible mirror, so announcing the turn twice would be a defect.
+    const mirror = elementsWithClass(rawView, 'monopoly-table-mirror', options)
+    expect(mirror).toHaveLength(1)
+    const mirrored = hostElements(mirror[0])
+    expect(mirrored.some((element) => classesOf(element).includes('monopoly-board'))).toBe(true)
+    expect(mirrored.some((element) => classesOf(element).includes('monopoly-centre-empty'))).toBe(true)
+    // Exactly one board in the tab, and it is the mirror's.
+    expect(elementsWithClass(rawView, 'monopoly-board', options)).toHaveLength(1)
+  })
+
+  it('keeps the flat board in the tab when no scene is injected', () => {
+    const rawView = view()
+    expect(elementsWithClass(rawView, 'monopoly-scene')).toHaveLength(0)
+    expect(elementsWithClass(rawView, 'monopoly-table-mirror')).toHaveLength(0)
+    expect(elementsWithClass(rawView, 'monopoly-board')).toHaveLength(1)
+    expect(elementsWithClass(rawView, 'monopoly-centre-empty')).toHaveLength(0)
+  })
+
+  it('selects the space a mirror button takes focus on', () => {
+    const onSelect = vi.fn()
+    const rawView = view()
+    const options = { boardScene: <span>escena</span>, onSelect }
+    const go = elementsWithClass(rawView, 'monopoly-space', options).find((element) =>
+      ((element.props as { 'aria-label'?: string })['aria-label'] ?? '').startsWith('GO'),
+    )
+    expect(go).toBeDefined()
+    ;(go?.props as { onFocus: () => void }).onFocus()
+    expect(onSelect.mock.calls).toEqual([[0]])
   })
 })

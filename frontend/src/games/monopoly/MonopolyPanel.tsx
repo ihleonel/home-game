@@ -20,6 +20,8 @@ import {
 import type { Deed } from './deeds'
 import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
+import { MonopolyTableCentre } from './MonopolyTableCentre'
+import { MonopolyTable3D } from './three/MonopolyTable3D'
 import './monopoly.css'
 import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
 
@@ -922,6 +924,15 @@ type MonopolyPanelLayoutProps = {
   onTradeChange: (next: MonopolyTradeDraft) => void
   activeView: MonopolyPane
   onViewChange: (next: MonopolyPane) => void
+  /**
+   * The 3D table, when the match screen has one (S6, S7).
+   *
+   * The layout never imports the scene: a canvas cannot be mounted in the
+   * project's DOM-less harness, so the wrapper builds the element and this pure
+   * component only places it. Without it the tab shows the flat board, which is
+   * what every existing test renders.
+   */
+  boardScene?: ReactNode
 }
 
 /**
@@ -954,6 +965,7 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
       onTradeChange={setTrade}
       activeView={pane}
       onViewChange={setPane}
+      boardScene={<MonopolyTable3D match={match} onSelect={setSelected} seat={match.seatIndex ?? 0} selected={selected} />}
     />
   )
 }
@@ -968,6 +980,7 @@ export function MonopolyPanelLayout({
   onTradeChange,
   activeView,
   onViewChange,
+  boardScene,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
@@ -1092,7 +1105,39 @@ export function MonopolyPanelLayout({
         </div>
       )}
 
-      {pane('tablero', <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />)}
+      {pane(
+        'tablero',
+        boardScene === undefined ? (
+          <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
+        ) : (
+          <div className="monopoly-scene">
+            {boardScene}
+            {/*
+              S9: the middle of the table, over the rendered board. The camera
+              looks at the board's centre, so the card that carries the turn, the
+              last throw and the tapped space sits in the middle of the frame.
+            */}
+            <div className="monopoly-scene-centre">
+              <MonopolyTableCentre match={match} selected={selected} />
+            </div>
+            {/*
+              S6: the accessible board. A canvas is invisible to a screen reader
+              and unreachable by the keyboard, so the forty buttons are still
+              here -- clipped out of sight, never ``display: none``, because that
+              would take away both the tab order and the announcement.
+            */}
+            <div className="monopoly-table-mirror">
+              <MonopolyBoard
+                centre="none"
+                match={match}
+                onFocus={onSelect}
+                onSelect={onSelect}
+                selected={selected}
+              />
+            </div>
+          </div>
+        ),
+      )}
 
       {pane(
         'cartera',
