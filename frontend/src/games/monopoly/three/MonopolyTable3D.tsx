@@ -132,12 +132,16 @@ function toTexture(canvas: HTMLCanvasElement, anisotropy: number): CanvasTexture
  * to update it.
  */
 function SeatCamera({ seat }: { seat: number }) {
-  const placed = cameraFor(seat)
+  // The frame's own shape decides the field of view (W6): a square phone frame
+  // needs a wider one or the seat's corner falls off the bottom.
+  const size = useThree((state) => state.size)
+  const aspect = size.height === 0 ? 4 / 3 : size.width / size.height
+  const placed = cameraFor(seat, aspect)
   return (
     <PerspectiveCamera
       far={200}
       fov={placed.fov}
-      key={`seat:${seat}`}
+      key={`seat:${seat}:${Math.round(aspect * 100)}`}
       makeDefault
       near={0.1}
       position={[placed.position.x, placed.position.y, placed.position.z]}

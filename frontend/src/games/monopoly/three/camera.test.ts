@@ -3,6 +3,9 @@ import { BOARD_SIZE } from '../board'
 import { GRID_SIZE } from '../grid'
 import {
   BOARD_CENTER,
+  MAX_FOV,
+  MIN_FOV,
+  fovForAspect,
   SEAT_FOV,
   cameraFor,
   cellCenter,
@@ -195,46 +198,81 @@ describe('the table can be turned', () => {
   })
 })
 
-describe('the framing a seat reads with', () => {
-  it('has one field of view, and it is close', () => {
-    // No ladder: the framing is a decision. Thirty degrees at six cells out fills
-    // the frame with the near half of the board, like the reference photograph.
-    expect(SEAT_FOV).toBe(32)
-    for (let seat = 0; seat < 8; seat += 1) {
-      expect([seat, cameraFor(seat).fov]).toEqual([seat, SEAT_FOV])
+describe('the shape of the frame decides the view', () => {
+  /**
+   * Whether a point lands inside the frustum, computed from scratch.
+   *
+   * Deliberately not `fovForAspect`: this is the oracle, so it rebuilds the
+   * camera's basis and the two tangents by its own arithmetic.
+   */
+  function insideFrame(seat: number, aspect: number, point: Point3): boolean {
+    const { position, target, fov } = cameraFor(seat, aspect)
+    const forward = {
+      x: target.x - position.x,
+      y: target.y - position.y,
+      z: target.z - position.z,
+    }
+    const length = Math.hypot(forward.x, forward.y, forward.z)
+    const f = { x: forward.x / length, y: forward.y / length, z: forward.z / length }
+    const rightLength = Math.hypot(f.z, f.x) || 1
+    const r = { x: f.z / rightLength, y: 0, z: -f.x / rightLength }
+    const u = {
+      x: r.y * f.z - r.z * f.y,
+      y: r.z * f.x - r.x * f.z,
+      z: r.x * f.y - r.y * f.x,
+    }
+    const d = { x: point.x - position.x, y: point.y - position.y, z: point.z - position.z }
+    const depth = Math.abs(d.x * f.x + d.y * f.y + d.z * f.z)
+    const across = Math.abs(d.x * r.x + d.y * r.y + d.z * r.z)
+    const vertical = Math.abs(d.x * u.x + d.y * u.y + d.z * u.z)
+    const half = (fov * Math.PI) / 360
+    return vertical <= Math.tan(half) * depth && across <= Math.tan(half) * aspect * depth
+  }
+
+  it("keeps the seat's own corner inside the frame at every aspect", () => {
+    // The defect this fixes: a fixed 32 degrees framed a 4:3 screen and cut the
+    // near corner off a square phone. The corner is the thing the player must
+    // see, so it is what the field of view is solved for.
+    for (const aspect of [0.45, 0.62, 0.8, 1, 1.33, 1.78, 2.4]) {
+      for (let seat = 0; seat < 4; seat += 1) {
+        expect([aspect, seat, insideFrame(seat, aspect, seatCorner(seat))]).toEqual([
+          aspect,
+          seat,
+          true,
+        ])
+      }
     }
   })
 
-  it('no longer promises to show the whole board', () => {
-    // At thirty degrees and six cells out, at least one corner falls outside the
-    // view: the crop is the point, and the card over the table reads the edge it
-    // cuts. Asserting "some corner" is the honest form -- the far corner still
-    // fits, the near one is where the board runs off the frame.
-    const camera = cameraFor(0)
-    const half = (camera.fov * Math.PI) / 360
-    const offAxis = [
-      { x: 0.5, z: 0.5 },
-      { x: 10.5, z: 0.5 },
-      { x: 0.5, z: 10.5 },
-      { x: 10.5, z: 10.5 },
-    ].map((corner) => {
-      const toCorner = {
-        x: corner.x - camera.position.x,
-        y: -camera.position.y,
-        z: corner.z - camera.position.z,
-      }
-      const toTarget = {
-        x: camera.target.x - camera.position.x,
-        y: camera.target.y - camera.position.y,
-        z: camera.target.z - camera.position.z,
-      }
-      const dot = toCorner.x * toTarget.x + toCorner.y * toTarget.y + toCorner.z * toTarget.z
-      const cosine =
-        dot /
-        (Math.hypot(toCorner.x, toCorner.y, toCorner.z) *
-          Math.hypot(toTarget.x, toTarget.y, toTarget.z))
-      return Math.acos(cosine) > half
-    })
-    expect(offAxis.some(Boolean)).toBe(true)
-})
+  it('never narrows as the frame gets narrower, and never leaves its clamp', () => {
+    // What binds for the seat's own corner is its *vertical* offset -- it sits
+    // almost under the camera -- so the field of view is flat across ordinary
+    // frames. Narrower never needs less, which is the property that matters.
+    const square = cameraFor(0, 1).fov
+    expect(cameraFor(0, 0.6).fov).toBeGreaterThanOrEqual(square)
+    expect(cameraFor(0, 2.4).fov).toBeLessThanOrEqual(square)
+    for (const aspect of [0, 0.02, 1, 12, 400]) {
+      const fov = cameraFor(0, aspect).fov
+      expect([aspect, fov >= MIN_FOV, fov <= MAX_FOV]).toEqual([aspect, true, true])
+    }
+  })
+
+  it('divides the horizontal half-angle by the aspect, which is what the term is for', () => {
+    // Proved directly, with a point to the side of the axis: a frame twice as wide
+    // needs half the horizontal tangent, so it needs a narrower view for it.
+    const position = { x: 0, y: 10, z: 20 }
+    const target = { x: 0, y: 0, z: 0 }
+    const beside = { x: 6, y: 0, z: 0 }
+    const square = fovForAspect(position, target, beside, 1)
+    const wide = fovForAspect(position, target, beside, 2)
+    expect(square).toBeGreaterThan(wide)
+    expect(fovForAspect(position, target, beside, 0.5)).toBeGreaterThan(square)
+  })
+
+  it('still opens on a close view at a desktop aspect', () => {
+    // The framing the owner of the look asked for: close, not a wide establishing
+    // shot. The derived field of view has to stay in that neighbourhood.
+    expect(cameraFor(0, 4 / 3).fov).toBeGreaterThan(SEAT_FOV - 6)
+    expect(cameraFor(0, 4 / 3).fov).toBeLessThan(SEAT_FOV + 14)
+  })
 })

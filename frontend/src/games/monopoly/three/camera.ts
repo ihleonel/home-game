@@ -85,6 +85,21 @@ export const ELEVATION_DEGREES = 20
  */
 export const SEAT_FOV = 32
 
+/**
+ * The narrowest and widest vertically-framed view the scene will accept (W6).
+ *
+ * A phone in portrait is a square frame; the same camera that fills a 4:3 screen
+ * cuts the seat's own corner off the bottom of it. So the field of view is not a
+ * constant any more: it is derived from the aspect so the near corner always
+ * lands inside the frame with a margin, and the clamp keeps a degenerate aspect
+ * from producing a fisheye.
+ */
+export const MIN_FOV = 24
+export const MAX_FOV = 68
+
+/** How much room the near corner keeps from the frame's edge. */
+export const CORNER_MARGIN = 1.14
+
 /** Corners are ten spaces apart, like the ring's own shift. */
 const CORNER_INDEX_STEP = BOARD_SIZE / 4
 
@@ -142,7 +157,54 @@ export function sceneRotationFor(turns: number): number {
  * height is derived from the horizontal distance rather than fixed, so the
  * elevation is the same twenty degrees for every corner of the square.
  */
-export function cameraFor(seatIndex: number): SeatCamera {
+/**
+ * The vertical field of view that keeps ``corner`` inside a frame of ``aspect``
+ * (W6).
+ *
+ * Worked in the camera's own basis rather than by trial: the corner's offset from
+ * the view axis gives the two tangents the frustum has to satisfy -- vertical
+ * ``|y| / z`` and horizontal ``|x| / z``, the second divided by the aspect because
+ * the horizontal half-angle is ``atan(tan(fov / 2) · aspect)``. The binding one
+ * wins, the margin is multiplied in, and the result is clamped.
+ */
+export function fovForAspect(
+  position: Point3,
+  target: Point3,
+  corner: Point3,
+  aspect: number,
+): number {
+  const forward = {
+    x: target.x - position.x,
+    y: target.y - position.y,
+    z: target.z - position.z,
+  }
+  const forwardLength = Math.hypot(forward.x, forward.y, forward.z)
+  const f = { x: forward.x / forwardLength, y: forward.y / forwardLength, z: forward.z / forwardLength }
+  // Right comes from the world's up; up from the right and the forward axis.
+  const rightRaw = { x: f.z, y: 0, z: -f.x }
+  const rightLength = Math.hypot(rightRaw.x, rightRaw.z) || 1
+  const r = { x: rightRaw.x / rightLength, y: 0, z: rightRaw.z / rightLength }
+  const u = {
+    x: r.y * f.z - r.z * f.y,
+    y: r.z * f.x - r.x * f.z,
+    z: r.x * f.y - r.y * f.x,
+  }
+  const toCorner = {
+    x: corner.x - position.x,
+    y: corner.y - position.y,
+    z: corner.z - position.z,
+  }
+  const depth = Math.abs(toCorner.x * f.x + toCorner.y * f.y + toCorner.z * f.z)
+  if (depth < 1e-6) return SEAT_FOV
+  const across = Math.abs(toCorner.x * r.x + toCorner.y * r.y + toCorner.z * r.z) / depth
+  const vertical = Math.abs(toCorner.x * u.x + toCorner.y * u.y + toCorner.z * u.z) / depth
+  const safeAspect = Math.max(aspect, 0.2)
+  const needed = Math.max(vertical, across / safeAspect) * CORNER_MARGIN
+  const fov = (2 * Math.atan(needed) * 180) / Math.PI
+  return Math.min(Math.max(fov, MIN_FOV), MAX_FOV)
+}
+
+export function cameraFor(seatIndex: number, aspect: number = 4 / 3): SeatCamera {
   const corner = seatCorner(seatIndex)
   const awayX = corner.x - BOARD_CENTER.x
   const awayZ = corner.z - BOARD_CENTER.z
@@ -168,7 +230,7 @@ export function cameraFor(seatIndex: number): SeatCamera {
     position,
     target,
     rotation: rotationLookingAt(position, target),
-    fov: SEAT_FOV,
+    fov: fovForAspect(position, target, corner, aspect),
   }
 }
 
