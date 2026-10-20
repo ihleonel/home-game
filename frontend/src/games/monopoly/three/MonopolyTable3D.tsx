@@ -337,12 +337,22 @@ export function MonopolyTable3D({
   selected,
   onSelect,
   zoom = DEFAULT_ZOOM,
+  active = true,
 }: {
   match: MatchState<MonopolyView>
   seat: number
   selected: number | null
   onSelect: (index: number) => void
   zoom?: number
+  /**
+   * Whether the board tab is the one on screen (S11).
+   *
+   * The three views live in the DOM at once, so an inactive tab would otherwise
+   * keep a renderer alive behind a ``hidden`` panel. ``never`` stops the loop
+   * without tearing the scene down, so coming back does not rebuild forty
+   * textures.
+   */
+  active?: boolean
 }) {
   return (
     <div className="monopoly-table3d">
@@ -352,7 +362,12 @@ export function MonopolyTable3D({
         and nothing else does. It is also what lets a headless capture finish: a
         permanent render loop keeps the browser busy forever.
       */}
-      <Canvas dpr={[1, 2]} frameloop="demand" gl={{ antialias: true }} shadows>
+      <Canvas
+        dpr={[1, 2]}
+        frameloop={active ? 'demand' : 'never'}
+        gl={{ antialias: true }}
+        shadows
+      >
         <color args={['#171419']} attach="background" />
         <SeatCamera seat={seat} zoom={zoom} />
 

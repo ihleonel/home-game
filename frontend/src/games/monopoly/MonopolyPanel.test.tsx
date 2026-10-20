@@ -83,6 +83,7 @@ type LayoutOptions = {
   activeView?: MonopolyPane
   onViewChange?: (next: MonopolyPane) => void
   boardScene?: ReactNode
+  sceneZoom?: { step: number; onZoom: (direction: 1 | -1) => void }
 }
 
 function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
@@ -97,6 +98,7 @@ function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): Layout
     activeView: options.activeView ?? 'tablero',
     onViewChange: options.onViewChange ?? (() => {}),
     boardScene: options.boardScene,
+    sceneZoom: options.sceneZoom,
   }
 }
 
@@ -1394,5 +1396,42 @@ describe('the monopoly 3d table', () => {
     expect(go).toBeDefined()
     ;(go?.props as { onFocus: () => void }).onFocus()
     expect(onSelect.mock.calls).toEqual([[0]])
+  })
+})
+
+describe('zooming the rendered table', () => {
+  /** The zoom control with the accessible name the layout gives it. */
+  function zoomButton(rawView: MonopolyView, name: string, options: LayoutOptions): ReactElement {
+    const button = elementsWithClass(rawView, 'monopoly-viewport-button', options).find(
+      (element) => (element.props as { 'aria-label'?: string })['aria-label'] === name,
+    )
+    if (!button) throw new Error(`no zoom control named ${name}`)
+    return button
+  }
+
+  it('asks for a step in each direction from the middle of the ladder', () => {
+    const onZoom = vi.fn()
+    const rawView = view()
+    const options = { boardScene: <span>escena</span>, sceneZoom: { step: 1, onZoom } }
+    ;(zoomButton(rawView, 'Acercar el tablero', options).props as { onClick: () => void }).onClick()
+    ;(zoomButton(rawView, 'Alejar el tablero', options).props as { onClick: () => void }).onClick()
+    expect(onZoom.mock.calls).toEqual([[1], [-1]])
+  })
+
+  it('disables the step that would leave the ladder', () => {
+    const rawView = view()
+    const widest = { boardScene: <span>escena</span>, sceneZoom: { step: 0, onZoom: () => {} } }
+    const closest = { boardScene: <span>escena</span>, sceneZoom: { step: 2, onZoom: () => {} } }
+    const disabled = (button: ReactElement) => (button.props as { disabled?: boolean }).disabled === true
+    // At the widest step there is nothing further to pull back to.
+    expect(disabled(zoomButton(rawView, 'Alejar el tablero', widest))).toBe(true)
+    expect(disabled(zoomButton(rawView, 'Acercar el tablero', widest))).toBe(false)
+    expect(disabled(zoomButton(rawView, 'Acercar el tablero', closest))).toBe(true)
+    expect(disabled(zoomButton(rawView, 'Alejar el tablero', closest))).toBe(false)
+  })
+
+  it('shows no zoom controls when there is no rendered table', () => {
+    const rawView = view()
+    expect(elementsWithClass(rawView, 'monopoly-scene-zoom')).toHaveLength(0)
   })
 })

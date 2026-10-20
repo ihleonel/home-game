@@ -1303,3 +1303,22 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* S10: the zoom controls sit in the scene's corner, out of the board's way. */
+.monopoly-scene-zoom {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--monopoly-card) 92%, transparent);
+}
+
+.monopoly-scene-zoom-step {
+  padding: 0 0.35rem;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.72rem;
+}
