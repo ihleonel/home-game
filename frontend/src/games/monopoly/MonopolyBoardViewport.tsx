@@ -107,7 +107,7 @@ export function MonopolyBoardViewport({
           onClick={() => onRotate(-1)}
           type="button"
         >
-          ⟲
+          ↺
         </button>
         <button
           aria-label="Girar a la derecha"
@@ -115,7 +115,7 @@ export function MonopolyBoardViewport({
           onClick={() => onRotate(1)}
           type="button"
         >
-          ⟳
+          ↻
         </button>
         <button
           aria-label="Orientación impresa"
