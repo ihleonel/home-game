@@ -37,6 +37,7 @@ def compose_room_dependencies():
     vote_cancellation = ExpulsionVoteCancellation(expulsion_voting)
     reaping = ReapingService(
         DjangoRoomReapingGateway(),
+        expulsion_voting,
         vote_cancellation,
         grace_seconds=RECONNECT_GRACE_SECONDS,
     )

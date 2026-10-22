@@ -30,6 +30,7 @@ from django.utils import timezone
 
 from ...rooms.constants import RECONNECT_GRACE_SECONDS
 from ...rooms.features.presence.domain.rules import grace_expired
+from ...rooms.features.reaping.domain.rules import staleness_cutoff
 from ...rooms.models import Participant
 from ..models import Match, MatchSeat
 from ..runtime.application.abandon_seat import abandon_seat
@@ -46,14 +47,17 @@ class AbandonSweepOutcome:
 def _seat_is_expired(participant, now):
     """Return whether ``participant``'s seat will never reconnect (S2).
 
-    Membership already removed (``left_at``), an explicit ``inactive``, and a
-    ``reconnecting`` whose grace elapsed are all expired. ``offline`` is
-    deliberately excluded: a row that never held a socket is pre-existing
-    product slack (an arrival posted over REST whose socket never opened), not
-    the mid-match disconnect this feature resolves, so sweeping it here would
-    change unrelated behaviour. The grace criterion itself is imported from the
-    rooms rule rather than re-implemented, so this reader and the presence
-    projection cannot drift.
+    Membership already removed (``left_at``), an explicit ``inactive``, a
+    ``reconnecting`` whose grace elapsed, and an ``offline`` row quiet for longer
+    than that same grace are all expired. An ``offline`` row never held a socket
+    -- an arrival posted over REST whose socket never opened -- so it has no
+    ``disconnected_at`` to measure and its window is its last write, exactly the
+    rule the membership reaper already applies to those rows. That is what keeps
+    such a seat from becoming an exit with no door: it cannot leave while it is
+    ready, the reaper skips a busy room and the vote never targets it, so the
+    match would otherwise wait forever for somebody who is not there. The grace
+    and its cutoff are imported from the rooms rules rather than re-implemented,
+    so this reader, the reaper and the presence projection cannot drift.
     """
     if participant.left_at is not None:
         return True
@@ -62,6 +66,12 @@ def _seat_is_expired(participant, now):
     if participant.presence == Participant.Presence.RECONNECTING:
         return grace_expired(
             participant.disconnected_at, now, RECONNECT_GRACE_SECONDS
+        )
+    if participant.presence == Participant.Presence.OFFLINE:
+        return (
+            participant.updated_at is not None
+            and participant.updated_at
+            <= staleness_cutoff(now, RECONNECT_GRACE_SECONDS)
         )
     return False
 

@@ -19,8 +19,9 @@ class VoteRecord:
     id: int
     public_id: UUID
     status: str
-    target_id: int
-    initiated_by_id: int
+    target_ids: tuple[int, ...]
+    # The sweep opens votes without a caller (S6), so the starter is optional.
+    initiated_by_id: int | None
 
 
 @dataclass(frozen=True)

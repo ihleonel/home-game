@@ -58,9 +58,21 @@ export type ExpulsionBallot = {
 
 export type ExpulsionVote = {
   vote_ref: string
-  target_ref: string
-  target_display_name: string
-  started_by_ref: string
+  /**
+   * The participant refs this vote was opened for (S5).
+   *
+   * The batch replaced the single ``target_ref`` the manual vote used to
+   * carry, so the vote no longer holds a display name: the panel resolves each
+   * ref against the same roster the lobby shows (S9). A payload from before the
+   * batch is read as a manual vote of one target and never dropped.
+   */
+  targets: string[]
+  /**
+   * Who opened the vote (S6). An ``automatic`` vote is opened by the sweep and
+   * has no starter; a ``manual`` one is opened by an authorized caller.
+   */
+  origin: 'automatic' | 'manual'
+  started_by_ref: string | null
   status: 'pending' | 'approved' | 'rejected' | 'cancelled'
   resolution_reason: string
   started_at: string

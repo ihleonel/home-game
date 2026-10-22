@@ -273,30 +273,6 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function startExpulsionVote(targetRef: string): Promise<void> {
-    if (!roomSession) return
-    setPendingAction('vote')
-    setActionError(null)
-    try {
-      const response = await requestJson<VoteResponse>('/api/rooms/expulsion-votes/', {
-        method: 'POST',
-        body: JSON.stringify({
-          session_id: roomSession.sessionId,
-          target_ref: targetRef,
-        }),
-      })
-      setRoom(response.room)
-      setVoteNotice(expulsionVoteMessage(response.vote))
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'No se ha podido iniciar la votación.')
-      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
-        void refreshActiveRoom(roomSession.gameId)
-      }
-    } finally {
-      setPendingAction(null)
-    }
-  }
-
   async function castExpulsionBallot(
     voteRef: string,
     choice: 'yes' | 'no',
@@ -347,10 +323,18 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  async function submitPick(value: string): Promise<void> {
+  /**
+   * Submit one action of the running match.
+   *
+   * ``name`` is the action the screen was offered and ``value`` the option it
+   * chose, or ``null`` for an action that carries no value. The runtime
+   * validates both against what the seat was offered, so this function never
+   * decides what is legal: it posts what the screen received.
+   */
+  async function submitAction(name: string, value: string | null): Promise<void> {
     if (!roomSession || !match || match.version === null) return
     const { matchRef, version } = match
-    setPendingAction('pick')
+    setPendingAction('match')
     setActionError(null)
     try {
       const response = await requestJson<MatchEnvelope>(
@@ -359,7 +343,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
           method: 'POST',
           body: JSON.stringify({
             session_id: roomSession.sessionId,
-            action_name: 'pick',
+            action_name: name,
             action_value: value,
             expected_version: version,
           }),
@@ -375,7 +359,7 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
             ? error.message
             : 'No se ha podido registrar tu jugada.',
       )
-      // A stale version means this client composed the pick against an older
+      // A stale version means this client composed the action against an older
       // state; any other rejection still leaves the local view unconfirmed.
       // Both are resolved by re-reading the server rather than reconciling
       // locally, so the resync runs for either one.
@@ -383,6 +367,16 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
     } finally {
       setPendingAction(null)
     }
+  }
+
+  /**
+   * The single-action games' shorthand: they all name their action ``pick``.
+   *
+   * Keeping that name in one place is what let the general channel arrive
+   * without touching ``duelo`` or ``ta-te-ti``.
+   */
+  async function submitPick(value: string): Promise<void> {
+    await submitAction('pick', value)
   }
 
   const sessionGameId = roomSession?.gameId ?? null
@@ -667,8 +661,8 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
         toggleReady,
         requestPlayerSeat,
         leaveRoom,
-        startExpulsionVote,
         castExpulsionBallot,
+        submitAction,
         submitPick,
         setActionError,
       }}

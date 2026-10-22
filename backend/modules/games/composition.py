@@ -11,7 +11,10 @@ The registry owns catalog discovery only and holds no runtime state.
 """
 
 from .duelo.game import DueloDefinition
+from .monopoly.game import MonopolyDefinition
 from .registry import GameRegistry
 from .ta_te_ti.game import TaTeTiDefinition
 
-GAME_REGISTRY = GameRegistry((DueloDefinition(), TaTeTiDefinition()))
+GAME_REGISTRY = GameRegistry(
+    (DueloDefinition(), TaTeTiDefinition(), MonopolyDefinition())
+)

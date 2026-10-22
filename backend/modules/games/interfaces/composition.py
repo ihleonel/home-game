@@ -75,7 +75,10 @@ def compose_match_dependencies():
         # Reuse the rooms composition root instead of re-binding the grace
         # constant here: the reaping service must resolve the window once.
         reaping=compose_room_dependencies().reaping,
-        # The only production RandomSource: the start path draws the opening
-        # seat of a game that needs one (ta-te-ti) from it.
+        # The only production RandomSource. Both use cases need it: the start
+        # path draws the opening seat of a game that needs one (ta-te-ti and
+        # monopoly), and monopoly throws the dice inside ``apply``, so the
+        # action path needs it too. Handing it to only one of them is the
+        # defect the REST test in ``test_match_api.py`` now pins.
         rng=SystemRandomSource(),
     )

@@ -91,11 +91,26 @@ def submit_action(
         if spec.options:
             if action_value not in spec.options:
                 raise IllegalAction(action_name, seat.seat_id)
+        elif spec.freeform:
+            # The engine is the authority of a composed value (S3): any
+            # non-empty string is accepted here and graded by ``apply``.
+            if not isinstance(action_value, str) or not action_value:
+                raise IllegalAction(action_name, seat.seat_id)
         elif action_value is not None:
             raise IllegalAction(action_name, seat.seat_id)
 
         action = Action(name=action_name, value=action_value)
-        transition = definition.apply(record.state, seat.seat_id, action, rng)
+        try:
+            transition = definition.apply(record.state, seat.seat_id, action, rng)
+        except ValueError:
+            if not spec.freeform:
+                # A value from an enumerated or valueless spec is composed by
+                # the server, so a rejection there is a programming error and
+                # must stay loud instead of being masked as a client mistake.
+                raise
+            # A freeform value is composed by the client, so the engine saying
+            # no is a client error, not a broken rule.
+            raise IllegalAction(action_name, seat.seat_id) from None
         facts = tuple(
             {'name': fact.name, 'seat': fact.seat, 'detail': dict(fact.detail)}
             for fact in transition.facts

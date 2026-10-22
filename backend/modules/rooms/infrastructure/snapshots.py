@@ -29,7 +29,7 @@ def room_snapshot(room):
             room=room,
             status=ExpulsionVote.Status.PENDING,
         )
-        .select_related('target', 'initiated_by')
+        .select_related('initiated_by')
         .first()
     )
     return {
@@ -82,11 +82,21 @@ def expulsion_vote_snapshot(vote):
     ballots = list(
         vote.ballots.select_related('voter').order_by('voter__public_id')
     )
+    targets = list(
+        vote.targets.select_related('participant').order_by(
+            'participant__joined_at', 'participant__pk'
+        )
+    )
     return {
         'vote_ref': str(vote.public_id),
-        'target_ref': str(vote.target.public_id),
-        'target_display_name': vote.target.display_name,
-        'started_by_ref': str(vote.initiated_by.public_id),
+        # The batch publishes the whole set of targets (S5); the panel resolves
+        # each ref against the same roster it already shows.
+        'targets': [str(target.participant.public_id) for target in targets],
+        # Automatic votes have no starter (S6); the manual path still carries it.
+        'started_by_ref': (
+            str(vote.initiated_by.public_id) if vote.initiated_by else None
+        ),
+        'origin': vote.origin,
         'status': vote.status,
         'resolution_reason': vote.resolution_reason,
         'started_at': vote.started_at.isoformat(),

@@ -88,21 +88,28 @@ class ExpulsionVote(models.Model):
         REJECTED = 'rejected', 'Rejected'
         CANCELLED = 'cancelled', 'Cancelled'
 
+    class Origin(models.TextChoices):
+        AUTOMATIC = 'automatic', 'Automatic'
+        MANUAL = 'manual', 'Manual'
+
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     room = models.ForeignKey(
         Room,
         on_delete=models.CASCADE,
         related_name='expulsion_votes',
     )
-    target = models.ForeignKey(
-        Participant,
-        on_delete=models.CASCADE,
-        related_name='expulsion_votes_as_target',
-    )
+    # Nullable because the sweep can open a vote with no human caller (S6).
     initiated_by = models.ForeignKey(
         Participant,
         on_delete=models.CASCADE,
         related_name='expulsion_votes_started',
+        null=True,
+        blank=True,
+    )
+    origin = models.CharField(
+        max_length=16,
+        choices=Origin.choices,
+        default=Origin.AUTOMATIC,
     )
     status = models.CharField(
         max_length=16,
@@ -119,6 +126,27 @@ class ExpulsionVote(models.Model):
                 fields=('room',),
                 condition=models.Q(status='pending'),
                 name='one_pending_room_vote',
+            ),
+        ]
+
+
+class ExpulsionVoteTarget(models.Model):
+    vote = models.ForeignKey(
+        ExpulsionVote,
+        on_delete=models.CASCADE,
+        related_name='targets',
+    )
+    participant = models.ForeignKey(
+        Participant,
+        on_delete=models.CASCADE,
+        related_name='expulsion_vote_targets',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=('vote', 'participant'),
+                name='one_target_per_vote',
             ),
         ]
 

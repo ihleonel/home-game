@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { renderDueloMatch } from './duelo/screen'
 import type { MatchSeatRosterEntry } from './matchRoster'
+import { renderMonopolyMatch } from './monopoly/screen'
 import { renderTaTeTiMatch } from './ta-te-ti/screen'
 
 /**
@@ -49,6 +50,24 @@ export type MatchState<TView extends MatchRuntimeView = MatchRuntimeView> = {
 export type MatchRendererProps<TView extends MatchRuntimeView = MatchRuntimeView> = {
   match: MatchState<TView>
   busy: boolean
+  /**
+   * Submit one action by name, with the value the server offered for it.
+   *
+   * This is the general channel. The runtime validates the name against the
+   * actions the seat was offered and the value against that action's own
+   * ``options``, so a screen submits what it was handed and never composes a
+   * play the server did not offer. ``value`` is ``null`` for an action that
+   * carries none, which is exactly what the runtime requires for an action
+   * whose option list is empty.
+   */
+  onAction: (name: string, value: string | null) => void
+  /**
+   * The single-action games' shorthand, fixed to the action name ``pick``.
+   *
+   * ``duelo`` and ``ta-te-ti`` both name their only action ``pick``, so their
+   * screens keep one callback instead of repeating the name at every button.
+   * A game with more than one action uses ``onAction``.
+   */
   onPick: (value: string) => void
 }
 
@@ -73,6 +92,7 @@ export type GameScreen = (props: MatchRendererProps) => ReactElement | null
 const GAME_SCREENS: Record<string, GameScreen> = {
   duelo: renderDueloMatch,
   'ta-te-ti': renderTaTeTiMatch,
+  monopoly: renderMonopolyMatch,
 }
 
 export function hasMatchRenderer(gameId: string | undefined): boolean {

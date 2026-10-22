@@ -23,7 +23,8 @@ from rest_framework.test import APITestCase
 from modules.games.duelo import rules
 from modules.games.interfaces.composition import compose_match_dependencies
 from modules.games.interfaces.match_start import open_match_for_room
-from modules.games.models import Match, MatchSeat
+from modules.games.monopoly import cards
+from modules.games.models import Match, MatchAction, MatchSeat
 from modules.games.runtime.domain.errors import WrongSeatCount
 from modules.rooms.models import Participant, Room
 
@@ -372,6 +373,36 @@ class SubmitActionApiTests(MatchApiTestCase):
 
         self.assert_error(response, status.HTTP_400_BAD_REQUEST, 'illegal_action')
 
+    def test_a_long_value_passes_the_serializer_and_is_graded_as_illegal(self):
+        # 240 characters used to fail the 64-character serializer before the
+        # definition ever saw the value. The widened channel lets the runtime
+        # grade it, so the rejection is the domain's ``illegal_action`` and not
+        # a serializer field error.
+        response = self.submit_action(
+            self.match_ref, self.first, value='x' * 240, version=0
+        )
+
+        self.assert_error(response, status.HTTP_400_BAD_REQUEST, 'illegal_action')
+        self.assertEqual(MatchAction.objects.count(), 0)
+
+    def test_the_audit_row_round_trips_a_512_character_value(self):
+        match = Match.objects.get(public_id=self.match_ref)
+        value = 'x' * 512
+
+        action = MatchAction.objects.create(
+            match=match,
+            sequence=1,
+            seat_id='seat-0',
+            action_name='build',
+            action_value=value,
+            version=1,
+            facts=[],
+        )
+
+        self.assertEqual(
+            MatchAction.objects.get(pk=action.pk).action_value, value
+        )
+
 
 class MatchFinishResetsReadinessApiTests(MatchApiTestCase):
     def test_finishing_a_match_resets_readiness_and_unblocks_leaving(self):
@@ -652,3 +683,118 @@ class TaTeTiDrawApiTests(APITestCase):
         self.assertEqual(resync.status_code, status.HTTP_200_OK)
         self.assertTrue(resync.data['view']['finished'])
         self.assertIsNone(resync.data['view']['winner'])
+
+
+class _DiceRng:
+    """Deterministic ``RandomSource``: scripted dice, decks left in printed order.
+
+    The throw-off throws two dice per seat before the first roll of the match,
+    so the script is the flat sequence of faces in the order the seats are asked
+    for them. The opening seat therefore comes from the faces and never from
+    the shuffle, so ``shuffle`` returns the cards it was handed: a source that
+    answers a deck shuffle with anything else stores that other thing as the
+    deck, which is what made this suite fail whenever the first real roll landed
+    on a card space. ``MonopolyRulesTestCase`` rejects such a source outright.
+    """
+
+    def __init__(self, faces=()):
+        self.faces = list(faces)
+
+    def shuffle(self, items):
+        return list(items)
+
+    def roll(self, sides):
+        if not self.faces:
+            raise AssertionError('the match rolled more dice than the test scripted')
+        return self.faces.pop(0)
+
+
+class MonopolyRollApiTests(APITestCase):
+    """The monopoly dice path through the real REST endpoint.
+
+    The start path is not the only one that needs a ``RandomSource``: the dice
+    are thrown inside ``apply``, so the production composition root has to hand
+    the source to the action path as well and not only to ``open_match_for_room``.
+    No game needed randomness there before monopoly -- ``duelo`` and ``ta-te-ti``
+    are deterministic once opened -- so the missing hand-off could sit unnoticed:
+    the definition fell back to ``rng=None`` and the match failed at the first
+    click, after starting perfectly well.
+    """
+
+    def setUp(self):
+        self.room = Room.objects.create(game_id='monopoly')
+        self.first = self._participant('Guest One', 'sombrero')
+        self.second = self._participant('Guest Two', 'perro')
+
+    def _participant(self, display_name, marker):
+        return Participant.objects.create(
+            room=self.room,
+            session_id=uuid.uuid4(),
+            display_name=display_name,
+            game_marker=marker,
+            is_ready=True,
+        )
+
+    def _open(self, rng):
+        dependencies = compose_match_dependencies()
+        return open_match_for_room(
+            room=self.room,
+            reaping=dependencies.reaping,
+            store=dependencies.store,
+            registry=dependencies.registry,
+            projector=dependencies.projector,
+            rng=rng,
+        )
+
+    def test_the_first_roll_through_the_endpoint_throws_the_dice(self):
+        # seat-0 throws 12 against seat-1's 2, so seat-0 opens the match.
+        opened = self._open(_DiceRng([6, 6, 1, 1]))
+        match_ref = opened.record.match_ref
+        self.assertEqual(Match.objects.get(public_id=match_ref).state['turn'], 'seat-0')
+
+        response = self.client.post(
+            f'/api/matches/{match_ref}/actions/',
+            {
+                'session_id': str(self.first.session_id),
+                'action_name': 'roll',
+                # A roll carries no value; the runtime requires None for an
+                # action whose option list is empty.
+                'action_value': None,
+                'expected_version': 0,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        stored = Match.objects.get(public_id=match_ref)
+        faces = stored.state['last_roll']
+        self.assertEqual(len(faces), 2)
+        self.assertIn(faces[0], range(1, 7))
+        self.assertIn(faces[1], range(1, 7))
+        # No "the token left GO" check: Community Chest's first printed card
+        # advances the token to GO, and this path throws with the live
+        # RandomSource, so a total of two legitimately leaves it at zero and
+        # the assertion was flaky by construction. What matters is the check
+        # below: the client is told the position that was stored.
+        # The seat the client is told about is the seat that was persisted.
+        self.assertEqual(
+            response.data['view']['players'][0]['position'],
+            stored.state['players']['seat-0']['position'],
+        )
+
+    def test_the_match_the_start_path_persists_holds_two_real_decks(self):
+        """The stored decks are the 16 printed cards of each deck, in some order.
+
+        This class used to answer the deck shuffle with the seat ids, so the
+        match stored seat ids as its deck order and only blew up later, when a
+        roll landed on a card space: the suite failed two runs out of three for
+        a reason nothing pointed at. The start path now rejects a source that
+        does not return the deck it was given, and this pins the stored result.
+        """
+        opened = self._open(_DiceRng([6, 6, 1, 1]))
+        decks = Match.objects.get(public_id=opened.record.match_ref).state['decks']
+
+        for deck in (cards.CHANCE, cards.COMMUNITY_CHEST):
+            ids = list(cards.deck_ids(deck))
+            self.assertEqual(len(decks[deck]), len(ids))
+            self.assertEqual(set(decks[deck]), set(ids))

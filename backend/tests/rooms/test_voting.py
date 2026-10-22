@@ -11,7 +11,13 @@ from rest_framework.test import APIClient, APITestCase
 from config.asgi import application
 from modules.rooms.connections import register_connection, unregister_connection
 from modules.rooms.features.membership.domain.rules import SPECTATOR_ROLE
-from modules.rooms.models import ExpulsionBallot, ExpulsionVote, Participant, Room
+from modules.rooms.models import (
+    ExpulsionBallot,
+    ExpulsionVote,
+    ExpulsionVoteTarget,
+    Participant,
+    Room,
+)
 from tests.games.support import SCOPING_GAME_ID, SCOPING_GAME_MARKERS
 
 
@@ -184,9 +190,9 @@ class ExpulsionVoteApiTests(APITestCase):
         )
         vote = ExpulsionVote.objects.create(
             room=other_room,
-            target=target,
             initiated_by=caller,
         )
+        ExpulsionVoteTarget.objects.create(vote=vote, participant=target)
         ExpulsionBallot.objects.create(vote=vote, voter=caller)
         ExpulsionBallot.objects.create(vote=vote, voter=voter)
         self.register_participant_connection(voter)
@@ -332,7 +338,7 @@ class ExpulsionVoteApiTests(APITestCase):
         )
         self.assertEqual(rejoin.status_code, http_status.HTTP_400_BAD_REQUEST)
 
-    def test_target_rejoin_past_the_grace_window_is_reaped_and_cancels_the_pending_vote(self):
+    def test_target_rejoin_past_the_grace_window_cancels_the_pending_vote(self):
         started = self.start_vote()
 
         rejoin = self.client.post(
@@ -348,9 +354,10 @@ class ExpulsionVoteApiTests(APITestCase):
         vote = ExpulsionVote.objects.get()
         self.assertEqual(rejoin.status_code, http_status.HTTP_200_OK)
         self.assertEqual(vote.status, ExpulsionVote.Status.CANCELLED)
-        # The target was reaped before membership resolution, so the rejoin is
-        # a fresh arrival and cancels the vote as a departure, not a reconnect.
-        self.assertEqual(vote.resolution_reason, 'target_left')
+        # The sweep leaves a target already covered by a pending vote alone,
+        # so the rejoin reaches membership resolution as a reconnect and
+        # cancels the vote with the reconnect reason.
+        self.assertEqual(vote.resolution_reason, 'target_reconnected')
         self.assertIsNone(self.target.left_at)
         self.assertEqual(self.target.presence, Participant.Presence.OFFLINE)
         self.assertIsNone(rejoin.data['room']['expulsion_vote'])

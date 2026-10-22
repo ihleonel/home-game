@@ -40,6 +40,10 @@ class ActionSpec:
     name: str
     options: tuple[str, ...] = ()
     prompt: str = ''
+    # A freeform action carries a client-composed value the engine alone can
+    # grade (S3): the runtime accepts any non-empty string and the engine's
+    # ``ValueError`` is a client error, never a programming error.
+    freeform: bool = False
 
 
 @dataclass(frozen=True)
