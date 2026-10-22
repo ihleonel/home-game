@@ -5,13 +5,17 @@ import {
   BOARD_CENTER,
   MAX_FOV,
   MIN_FOV,
-  quartersForDrag,
+  QUARTER_TURN,
+  dragTurnRadians,
   fovForAspect,
   SEAT_FOV,
   cameraFor,
   cellCenter,
-  sceneRotationFor,
+  centrePrintRotation,
+  nearestTurn,
+  seatAzimuth,
   seatCorner,
+  turnToFace,
 } from './camera'
 import type { Point3 } from './camera'
 
@@ -177,28 +181,6 @@ describe('aiming the camera', () => {
   })
 })
 
-describe('the table can be turned', () => {
-  it('turns a quarter at a time, and keeps counting past a full turn', () => {
-    expect([0, 1, 2, 3].map(sceneRotationFor)).toEqual([
-      0,
-      Math.PI / 2,
-      Math.PI,
-      (3 * Math.PI) / 2,
-    ])
-    // Four quarters and none are the same angle, but not the same number: an
-    // animation must slide a quarter forward rather than three quarters back.
-    expect(sceneRotationFor(4)).toBe(Math.PI * 2)
-    expect(sceneRotationFor(4) - sceneRotationFor(3)).toBeCloseTo(Math.PI / 2)
-    expect(sceneRotationFor(-1)).toBeCloseTo(-Math.PI / 2)
-  })
-
-  it('is linear in the count, which is what makes a slide possible', () => {
-    for (const turns of [-9, -1, 0, 1, 7, 13]) {
-      expect([turns, sceneRotationFor(turns)]).toEqual([turns, (turns * Math.PI) / 2])
-    }
-  })
-})
-
 describe('the shape of the frame decides the view', () => {
   /**
    * Whether a point lands inside the frustum, computed from scratch.
@@ -278,17 +260,154 @@ describe('the shape of the frame decides the view', () => {
   })
 })
 
+/**
+ * How far to the *right* of the view axis a point sits, signed, in units of its
+ * own depth.
+ *
+ * Rebuilt from the camera's basis by its own arithmetic and not taken from the
+ * scene, so it can serve as the oracle for "the board follows the hand". The
+ * right vector is ``-r`` because the basis' ``r`` from the frustum formula points
+ * to the other side; screen x and this number move together, which is what the
+ * capture of the gesture confirmed.
+ */
+function screenRight(seat: number, point: Point3): number {
+  const { position, target } = cameraFor(seat, 4 / 3)
+  const forward = {
+    x: target.x - position.x,
+    y: target.y - position.y,
+    z: target.z - position.z,
+  }
+  const length = Math.hypot(forward.x, forward.y, forward.z)
+  const f = { x: forward.x / length, y: forward.y / length, z: forward.z / length }
+  const rightLength = Math.hypot(f.z, f.x) || 1
+  const right = { x: -f.z / rightLength, y: 0, z: f.x / rightLength }
+  const to = {
+    x: point.x - position.x,
+    y: point.y - position.y,
+    z: point.z - position.z,
+  }
+  const depth = Math.abs(to.x * f.x + to.y * f.y + to.z * f.z)
+  return (to.x * right.x + to.y * right.y + to.z * right.z) / depth
+}
+
+/** The board turned by ``angle`` about its middle, which is what the scene does. */
+function turned(point: Point3, angle: number): Point3 {
+  const x = point.x - BOARD_CENTER.x
+  const z = point.z - BOARD_CENTER.z
+  return {
+    x: BOARD_CENTER.x + x * Math.cos(angle) + z * Math.sin(angle),
+    y: point.y,
+    z: BOARD_CENTER.z - x * Math.sin(angle) + z * Math.cos(angle),
+  }
+}
+
 describe('turning the table with a drag', () => {
-  it('reports whole quarters and follows the hand', () => {
-    expect(quartersForDrag(0, 80)).toBe(0)
-    expect(quartersForDrag(79, 80)).toBe(0)
-    expect(quartersForDrag(-79, 80)).toBe(0)
-    expect(quartersForDrag(80, 80)).toBe(-1)
-    expect(quartersForDrag(-80, 80)).toBe(1)
-    expect(quartersForDrag(240, 80)).toBe(-3)
+  it('follows the hand for every pixel instead of stepping in quarters', () => {
+    // The defect this fixes: the board only moved once the finger crossed a
+    // step, so it jumped a quarter at a time. Every intermediate distance now
+    // has its own angle, which is what makes the turn continuous.
+    expect(dragTurnRadians(0, 80)).toBeCloseTo(0)
+    expect(dragTurnRadians(20, 80)).toBeCloseTo(QUARTER_TURN / 4)
+    expect(dragTurnRadians(40, 80)).toBeCloseTo(QUARTER_TURN / 2)
+    expect(dragTurnRadians(79, 80)).toBeCloseTo((79 / 80) * QUARTER_TURN)
+    expect(dragTurnRadians(80, 80)).toBeCloseTo(QUARTER_TURN)
+    expect(dragTurnRadians(-120, 80)).toBeCloseTo(-1.5 * QUARTER_TURN)
+  })
+
+  it('is linear in the pixels, which is what makes the motion smooth', () => {
+    for (const pixels of [-300, -81, -1, 0, 1, 37, 80, 300]) {
+      expect([pixels, dragTurnRadians(pixels, 80)]).toEqual([
+        pixels,
+        (pixels / 80) * QUARTER_TURN,
+      ])
+    }
   })
 
   it('refuses a step that would divide by zero instead of returning infinity', () => {
-    expect([quartersForDrag(100, 0), quartersForDrag(100, -5)]).toEqual([0, 0])
+    expect([dragTurnRadians(100, 0), dragTurnRadians(100, -5)]).toEqual([0, 0])
+  })
+
+  it('moves the near corner the way the hand went, for every seat', () => {
+    // The defect this fixes: the sign was inverted, so dragging left turned the
+    // board right. Projecting the seat's own corner before and after a drag to
+    // the right is the oracle -- no reading of the implementation's own sign is
+    // involved, so this cannot agree with a wrong sign by construction.
+    const dragged = dragTurnRadians(40, 80)
+    for (const { seat } of CORNERS) {
+      const corner = seatCorner(seat)
+      const before = screenRight(seat, corner)
+      const after = screenRight(seat, turned(corner, dragged))
+      expect([seat, after > before]).toEqual([seat, true])
+      // And a drag the other way moves it back, so the gesture is symmetric.
+      const back = screenRight(seat, turned(corner, -dragged))
+      expect([seat, back < before]).toEqual([seat, true])
+    }
+  })
+})
+
+describe('the middle of the board is printed for the seat', () => {
+  it('turns the print so the seat reads it upright, on every corner', () => {
+    // A plane lying flat with no yaw maps the top of its texture to world -z. The
+    // seat reads "up" as the direction from its own corner towards the middle, so
+    // that is where the top of the texture has to point: the middle prints
+    // upright at the table's resting angle and turns with the board after that.
+    for (const { seat } of CORNERS) {
+      const angle = centrePrintRotation(seat)
+      const up = { x: -Math.sin(angle), z: -Math.cos(angle) }
+      const corner = seatCorner(seat)
+      const toward = { x: BOARD_CENTER.x - corner.x, z: BOARD_CENTER.z - corner.z }
+      const length = Math.hypot(toward.x, toward.z)
+      expect([
+        seat,
+        Math.abs(up.x - toward.x / length) < 1e-9,
+        Math.abs(up.z - toward.z / length) < 1e-9,
+      ]).toEqual([seat, true, true])
+    }
+  })
+})
+
+describe('turning the table towards a piece', () => {
+  it('puts a seat\'s own corner nearest the camera at the printed angle', () => {
+    // The camera stands outside the seat's corner, so the board already faces
+    // that seat at angle zero: the automatic turn must not move it at all.
+    for (const { seat } of CORNERS) {
+      expect([seat, Math.abs(turnToFace(seat, seatCorner(seat))) < 1e-9]).toEqual([seat, true])
+    }
+  })
+
+  it('turns half a turn to face the corner across the board', () => {
+    for (const { seat } of CORNERS) {
+      const opposite = cellCenter(((seat + 2) % 4) * 10)
+      const turned = Math.abs(turnToFace(seat, opposite))
+      expect([seat, Math.abs(turned - Math.PI) < 1e-9]).toEqual([seat, true])
+    }
+  })
+
+  it('takes the short way round instead of spinning a full turn', () => {
+    // The board's angle accumulates, so a target has to be moved to the copy
+    // nearest what the eye is looking at, or the table would sweep the long way.
+    const turn = Math.PI * 2
+    expect(nearestTurn(0.1, 0.2)).toBeCloseTo(0.1)
+    expect(nearestTurn(0.1, turn - 0.2)).toBeCloseTo(0.1 + turn)
+    expect(nearestTurn(turn - 0.2, 0.1)).toBeCloseTo(-0.2)
+    // And the chosen copy is always within half a turn of the current angle.
+    for (const [target, current] of [
+      [0.1, 3.0],
+      [2.5, -2.9],
+      [Math.PI, 0],
+      [-Math.PI, 0.4],
+    ]) {
+      expect(Math.abs(nearestTurn(target, current) - current)).toBeLessThanOrEqual(Math.PI + 1e-9)
+    }
+  })
+
+  it('measures the camera on the same ray as the seat corner', () => {
+    for (const { seat } of CORNERS) {
+      const corner = seatCorner(seat)
+      const azimuth = Math.atan2(corner.z - BOARD_CENTER.z, corner.x - BOARD_CENTER.x)
+      const measured = seatAzimuth(seat)
+      const delta = Math.atan2(Math.sin(measured - azimuth), Math.cos(measured - azimuth))
+      expect([seat, Math.abs(delta) < 1e-9]).toEqual([seat, true])
+    }
   })
 })

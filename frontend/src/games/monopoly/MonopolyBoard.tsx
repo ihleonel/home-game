@@ -151,7 +151,7 @@ export function MonopolyBoard({
    * for the accessible mirror is asked for the ring alone; a full copy would
    * announce the turn and the last throw twice.
    */
-  centre?: 'board' | 'none'
+  centre?: 'board' | 'none' | 'print'
   /** Reports the space that takes keyboard focus, so a mirror can select it. */
   onFocus?: (index: number) => void
 }) {
@@ -215,6 +215,10 @@ export function MonopolyBoard({
 
       {centre === 'board' ? (
         <MonopolyTableCentre match={match} selected={selected} />
+      ) : centre === 'print' ? (
+        // X8: the mirror's copy of what the rendered board prints on its middle.
+        // The canvas is invisible to a screen reader, so these facts live here.
+        <MonopolyTableCentre match={match} placement="print" selected={selected} />
       ) : (
         <div
           aria-hidden="true"

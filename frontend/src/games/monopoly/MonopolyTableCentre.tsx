@@ -2,14 +2,19 @@
  * The middle of the table: the game's name, the two deck piles, the match state
  * (turn, last throw, last card, open auction) and the detail of the tapped space.
  *
- * Two placements, one source (S9 of ``monopoly-3d-table.md``):
+ * Three placements, one source (S9 of ``monopoly-3d-table.md``, X8):
  *
- * 1. The spectator sees the flat board, so the block sits inside its 9x9 hole.
- * 2. The seat sees the 3D table, where the block is drawn over the scene as a
- *    card, because a rendered board has no DOM hole to put it in.
+ * 1. The spectator sees the flat board, so the whole block sits inside its 9x9
+ *    hole, the way a printed board's middle does.
+ * 2. The seat's rendered board **prints** the name and the piles on its own
+ *    surface, so there is nothing to draw over it for those; what still needs
+ *    HTML -- the turn, the throw, the drawn card, the open auction and the
+ *    tapped space -- goes in a strip at the bottom edge (``placement='strip'``).
+ * 3. Nothing for the accessible mirror: it renders the board with ``centre``
+ *    off, because announcing the same turn twice is a defect.
  *
- * Copying the markup into the two placements would let them drift, so the board
- * renders this component instead of its own copy.
+ * Copying the markup into the placements would let them drift, so both render
+ * this component instead of their own copy.
  */
 
 import type { ReactElement } from 'react'
@@ -122,31 +127,55 @@ function spaceDetail(match: MatchState<MonopolyView>, chosen: Space): ReactEleme
 export function MonopolyTableCentre({
   match,
   selected,
+  placement = 'centre',
 }: {
   match: MatchState<MonopolyView>
   selected: number | null
+  /**
+   * ``centre`` fills the flat board's hole; ``strip`` is the seat's bottom edge,
+   * where the printed middle already carries the name and the piles (X8); and
+   * ``print`` is the accessible mirror's copy of that printed middle -- the band
+   * and nothing else, because the status lines are announced by the strip.
+   */
+  placement?: 'centre' | 'print' | 'strip'
 }) {
   const { view } = match
   const chosen = selected === null ? null : spaceAt(selected)
+  const strip = placement === 'strip'
+  const inHole = placement !== 'strip'
 
   return (
-    <div className="monopoly-centre" style={{ gridRow: '2 / 11', gridColumn: '2 / 11' }}>
-      <div className="monopoly-centre-band">
-        <p className="monopoly-brand-name">{GAME_NAME}</p>
-        {view.decks !== null && (
-          <div className="monopoly-piles">
-            <div className="monopoly-pile monopoly-pile-chance">
-              <span className="monopoly-pile-name">{DECK_LABELS.chance}</span>
-              <span className="monopoly-pile-count">{view.decks.chance}</span>
+    <div
+      className={strip ? 'monopoly-centre monopoly-centre-strip' : `monopoly-centre monopoly-centre-${placement}`}
+      style={inHole ? { gridRow: '2 / 11', gridColumn: '2 / 11' } : undefined}
+    >
+      {/* The seat's board prints the name and the counts on its own surface
+          (X8), so the strip does not repeat them: the same fact printed twice on
+          one screen is noise, and the printed one is the one that is on the
+          board. The mirror keeps them, because a canvas says nothing to a screen
+          reader. */}
+      {!strip && (
+        <div className="monopoly-centre-band">
+          <p className="monopoly-brand-name">{GAME_NAME}</p>
+          {view.decks !== null && (
+            <div className="monopoly-piles">
+              <div className="monopoly-pile monopoly-pile-chance">
+                <span className="monopoly-pile-name">{DECK_LABELS.chance}</span>
+                <span className="monopoly-pile-count">{view.decks.chance}</span>
+              </div>
+              <div className="monopoly-pile monopoly-pile-community">
+                <span className="monopoly-pile-name">{DECK_LABELS.community_chest}</span>
+                <span className="monopoly-pile-count">{view.decks.community_chest}</span>
+              </div>
             </div>
-            <div className="monopoly-pile monopoly-pile-community">
-              <span className="monopoly-pile-name">{DECK_LABELS.community_chest}</span>
-              <span className="monopoly-pile-count">{view.decks.community_chest}</span>
-            </div>
-          </div>
-        )}
-      </div>
-      <div className="monopoly-status">
+          )}
+        </div>
+      )}
+      {/* The mirror stops here: the band is what the rendered board prints, and
+          the status lines are announced by the strip, so repeating them would
+          say the same thing twice to a screen reader. */}
+      {placement !== 'print' && (
+        <div className="monopoly-status">
         <p className="monopoly-turn" role="status">
           {view.turn === null ? 'Sin turno' : `Turno de ${seatName(match, view.turn)}`}
         </p>
@@ -165,8 +194,9 @@ export function MonopolyTableCentre({
             {`Subasta de ${spaceAt(view.auction.space).name}`}
           </p>
         )}
-      </div>
-      {chosen !== null && spaceDetail(match, chosen)}
+        </div>
+      )}
+      {placement !== 'print' && chosen !== null && spaceDetail(match, chosen)}
     </div>
   )
 }

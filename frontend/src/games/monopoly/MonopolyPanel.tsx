@@ -22,6 +22,7 @@ import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
+import { QUARTER_TURN } from './three/camera'
 import './monopoly.css'
 import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
 
@@ -933,8 +934,13 @@ type MonopolyPanelLayoutProps = {
    * what every existing test renders.
    */
   boardScene?: ReactNode
-  /** How many quarters the table is turned, and the request to turn it (V3). */
-  sceneTurns?: { turns: number; onRotate: (direction: 1 | -1) => void }
+  /**
+   * How far the table is turned, in radians, and the request to turn it (V3, X7).
+   *
+   * The angle is a real number because a drag leaves the table wherever the hand
+   * stopped; the two keyboard controls still ask for a whole quarter each.
+   */
+  sceneRotation?: { angle: number; onRotate: (direction: 1 | -1) => void }
 }
 
 /**
@@ -956,7 +962,7 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
   const [selected, setSelected] = useState<number | null>(null)
   const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
   const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
-  const [turns, setTurns] = useState(0)
+  const [angle, setAngle] = useState(0)
   return (
     <MonopolyPanelLayout
       match={match}
@@ -975,11 +981,14 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
           onSelect={setSelected}
           seat={match.seatIndex ?? 0}
           selected={selected}
-          turns={turns}
-          onTurn={(step) => setTurns((count) => count + step)}
+          angle={angle}
+          onTurnBy={(radians) => setAngle((current) => current + radians)}
         />
       }
-      sceneTurns={{ turns, onRotate: (direction) => setTurns((count) => count + direction) }}
+      sceneRotation={{
+        angle,
+        onRotate: (direction) => setAngle((current) => current + direction * QUARTER_TURN),
+      }}
     />
   )
 }
@@ -995,7 +1004,7 @@ export function MonopolyPanelLayout({
   activeView,
   onViewChange,
   boardScene,
-  sceneTurns,
+  sceneRotation,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
@@ -1128,14 +1137,16 @@ export function MonopolyPanelLayout({
           <div className="monopoly-scene">
             {boardScene}
             {/*
-              S9: the middle of the table, over the rendered board. The camera
-              looks at the board's centre, so the card that carries the turn, the
-              last throw and the tapped space sits in the middle of the frame.
+              X8: the middle of the rendered board prints the game's name and the
+              deck counts on its own surface, so the card that used to float over
+              the middle is gone -- a card sits in the middle of the frame, and
+              the table can now rest at any angle (X7). What still needs HTML
+              keeps a thin strip at the bottom edge, out of the board's way.
             */}
-            <div className="monopoly-scene-centre">
-              <MonopolyTableCentre match={match} selected={selected} />
+            <div className="monopoly-scene-strip">
+              <MonopolyTableCentre match={match} placement="strip" selected={selected} />
             </div>
-            {sceneTurns !== undefined && (
+            {sceneRotation !== undefined && (
               /*
                 X2: the board is turned by dragging it. These two stay in the DOM
                 as the keyboard path -- a drag has none -- and the stylesheet keeps
@@ -1145,7 +1156,7 @@ export function MonopolyPanelLayout({
                 <button
                   aria-label="Girar el tablero a la izquierda"
                   className="monopoly-viewport-button"
-                  onClick={() => sceneTurns.onRotate(-1)}
+                  onClick={() => sceneRotation.onRotate(-1)}
                   type="button"
                 >
                   ↺
@@ -1153,7 +1164,7 @@ export function MonopolyPanelLayout({
                 <button
                   aria-label="Girar el tablero a la derecha"
                   className="monopoly-viewport-button"
-                  onClick={() => sceneTurns.onRotate(1)}
+                  onClick={() => sceneRotation.onRotate(1)}
                   type="button"
                 >
                   ↻
@@ -1168,7 +1179,7 @@ export function MonopolyPanelLayout({
             */}
             <div className="monopoly-table-mirror">
               <MonopolyBoard
-                centre="none"
+                centre="print"
                 match={match}
                 onFocus={onSelect}
                 onSelect={onSelect}

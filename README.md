@@ -143,18 +143,29 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   arithmetic in `camera.ts` -- a camera moved from an effect cannot be tested, an aim that is a
   number can -- and the seat's corner comes from its seat order, because every seat starts on GO. The
   pieces stand on their cells with their own shadows, a built street carries green houses or a red
-  hotel on the edge that faces the centre, and the turn, the last throw, the card and the tapped
-  space ride on a card over the table. That card is how the far edge is read: at this angle it is
-  compressed, so a tap is what makes a space legible. **The flat board is still there**, for two
+  hotel on the edge that faces the centre, and the middle of the board prints the game's name and the
+  two deck piles with how many cards are left -- painted on the surface, at the size the cells print
+  at, and turned so the seat reads it upright. A throw falls onto that middle as two tumbling dice
+  that come to rest showing what the server rolled, and they leave when the turn moves on; the piece
+  that throw moved then walks its cells one by one, or leaps once to a cell a card or the jail sent it
+  to. The table turns by itself towards the piece of the player whose turn starts, follows that piece
+  while it walks, and gives the player the hand back the moment they drag it. The turn,
+  the last throw, the card and the tapped space sit in a thin strip under the board, not on it: at
+  this angle the far edge is compressed, so a tap is what makes a space legible, and the strip is
+  where that detail is read. **The flat board is still there**, for two
   reasons: a spectator gets it as the whole board, and for a seat it is the accessible mirror --
   clipped out of sight, never `display: none`, because a canvas is invisible to a screen reader and
   unreachable by the keyboard, so the forty buttons keep the tab order and the announcements, and
   focusing one selects it in the rendered table too. The loop pauses when the board tab is not the
-  one open, and the scene costs about 249 kB gzip in the initial chunk -- the price of a renderer,
-  measured rather than estimated, and the reason to code-split it behind the tab if the weight ever
-  matters. What it does not do, yet: the pieces are primitives rather than the printed figures, there
-  is no metallic reflection and no depth of field, and the framing shows the whole board instead of
-  cropping it the way the reference photograph does. The board is one of the three views the player switches between, and only one of them is on
+  one open, and the scene costs about 349 kB gzip in the single initial chunk -- the price of a
+  renderer, measured rather than estimated, and the reason to code-split it behind the tab if the
+  weight ever
+  matters. Each piece is the marker its player chose, built from primitives and painted in two passes:
+  a white body, and the same shape again in black, inflated along its normals and turned inside out, so
+  the black shows only as an outline around the silhouette -- white tokens with black edges read on any
+  cell, whatever colour it is, which the earlier silver did not. What it does not do, yet: the pieces
+  are primitives rather than the printed figures, there is no depth of field, and the framing shows the
+  whole board instead of cropping it the way the reference photograph does. The board is one of the three views the player switches between, and only one of them is on
   screen at a time: `Tablero` carries the board, `Cartera` the own seat's economy -- its capital as
   a bare money value, with the label clipped out of sight instead of printed, and the jail
   restriction and the jail cards it holds only while the seat has one of them to report, because a

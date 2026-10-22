@@ -101,9 +101,13 @@ function buttonElements(
   return hostElements(tree).filter((element) => element.type === 'button')
 }
 
-function markup(rawView: MonopolyView, selected: number | null = null): string {
+function markup(
+  rawView: MonopolyView,
+  selected: number | null = null,
+  centre: 'board' | 'none' | 'print' = 'board',
+): string {
   return renderToStaticMarkup(
-    <MonopolyBoard match={matchFor(rawView)} selected={selected} onSelect={() => {}} />,
+    <MonopolyBoard centre={centre} match={matchFor(rawView)} selected={selected} onSelect={() => {}} />,
   )
 }
 
@@ -439,6 +443,20 @@ describe('the monopoly board', () => {
 
   it('shows no deck pile markup when the view reports no deck counts', () => {
     expect(markup(view({ decks: null }))).not.toContain('monopoly-pile')
+  })
+
+  it('keeps only the printed middle for the accessible mirror (X8)', () => {
+    // The rendered board paints the name and the counts on its own surface, and a
+    // canvas is invisible to a screen reader: the mirror is the one place those
+    // facts stay readable, so it carries the band. The status lines are not
+    // repeated there -- the strip already announces them.
+    const page = markup(view({ decks: { chance: 12, community_chest: 8 } }), 1, 'print')
+    expect(page).toContain('monopoly-centre-print')
+    expect(page).toMatch(/monopoly-brand-name[^>]*>Monopoly</)
+    expect(page).toContain('monopoly-pile-count">12<')
+    expect(page).toContain('monopoly-pile-count">8<')
+    expect(page).not.toContain('monopoly-turn')
+    expect(page).not.toContain('monopoly-detail')
   })
 
   it('reports a tap with the space index and never calls an action', () => {

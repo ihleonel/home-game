@@ -142,34 +142,86 @@ export function seatCorner(seatIndex: number): Point3 {
 }
 
 /**
- * How many quarters a horizontal drag asks for (X2).
+ * How far the printed middle of the board has to be turned for a seat (X8).
  *
- * Pure and exported so the gesture's arithmetic can be tested: the board follows
- * the hand, so a drag to the right (positive pixels) turns it the other way in
- * ``turns`` terms, and only whole quarters are reported -- a drag of 79 pixels
- * moves nothing, 160 moves two steps.
+ * The middle used to carry its information in an HTML card, floating over the
+ * frame; a card is not the board's middle once the table rests at an arbitrary
+ * angle (X7), so the name and the piles are printed on the surface. A plane
+ * lying flat maps the top of its texture to world ``-z``, and a seat calls "up"
+ * the direction from its own corner towards the middle, so that is where the
+ * texture's top is turned to. It is a print, not a billboard: it turns with the
+ * board from there, exactly like the cells' own lettering.
  */
-export function quartersForDrag(pixels: number, stepPx: number): number {
-  if (stepPx <= 0) return 0
-  const steps = Math.trunc(pixels / stepPx)
-  // A canonical zero: ``-Math.trunc(0.9)`` is ``-0``, which is the same number
-  // but a trap in an equality assertion and noise in a returned value.
-  return steps === 0 ? 0 : -steps
+export function centrePrintRotation(seatIndex: number): number {
+  const corner = seatCorner(seatIndex)
+  const awayX = corner.x - BOARD_CENTER.x
+  const awayZ = corner.z - BOARD_CENTER.z
+  const length = Math.hypot(awayX, awayZ) || 1
+  // ``atan2(d.x, d.z)`` is the yaw that takes ``(0, 0, -1)`` to ``-d``, and the
+  // test proves that with the rotated axis rather than with this line's sign.
+  return Math.atan2(awayX / length, awayZ / length)
 }
 
 /**
- * How far the table itself is turned, in radians, for ``turns`` quarters (V3).
+ * The direction from the middle of the board towards a seat's camera, in radians.
  *
- * The camera stands at the seat's corner and does not move; what turns is the
- * board on the table, which is what a player sitting at a real table does with
- * their hands. Clockwise from the printed orientation, because that is the
- * direction the circuit runs.
+ * The camera stands outside the seat's own corner, so this is also the direction
+ * of that corner. It is what an automatic turn aims a piece at (X11).
  */
-export function sceneRotationFor(turns: number): number {
-  // Not wrapped: a count of 3 to 4 must turn a quarter, not three quarters back
-  // through zero, and an animation has to be able to slide between them. Angles
-  // four quarters apart are the same angle anyway.
-  return (Math.round(turns) * Math.PI) / 2
+export function seatAzimuth(seatIndex: number): number {
+  const camera = cameraFor(seatIndex).position
+  return Math.atan2(camera.z - BOARD_CENTER.z, camera.x - BOARD_CENTER.x)
+}
+
+/**
+ * How far the board has to turn to bring ``point`` towards the seat's camera
+ * (X11).
+ *
+ * Rotating the board by ``θ`` moves a point at azimuth ``α`` to ``α - θ`` --
+ * three's ``Y`` rotation turns the other way in the ``atan2(z, x)`` sense -- so
+ * facing the camera asks for ``α - φ``. The result is not wrapped: the caller
+ * picks the copy nearest the angle the eye already has (``nearestTurn``), which
+ * is what keeps the table from sweeping the long way round.
+ */
+export function turnToFace(seatIndex: number, point: Point3): number {
+  const azimuth = Math.atan2(point.z - BOARD_CENTER.z, point.x - BOARD_CENTER.x)
+  return azimuth - seatAzimuth(seatIndex)
+}
+
+/**
+ * The copy of ``target`` closest to ``current`` (X11).
+ *
+ * The board's angle accumulates across turns, so two angles a full turn apart are
+ * the same view. Aiming at the raw target would sometimes spin the table all the
+ * way round to reach a face the player is already looking at from the other side.
+ */
+export function nearestTurn(target: number, current: number): number {
+  const turn = Math.PI * 2
+  return target + turn * Math.round((current - target) / turn)
+}
+
+/** A quarter turn, in radians: the unit the table settles on. */
+export const QUARTER_TURN = Math.PI / 2
+
+/**
+ * How far the hand has turned the table, in radians, for a horizontal drag (X3).
+ *
+ * Linear in the pixels, with no rounding, which is the whole point: the board
+ * follows the finger instead of waiting for it to cross a step. A drag of one
+ * ``stepPx`` turns a quarter, so the gesture keeps the reach it had when it
+ * stepped in quarters.
+ *
+ * **Positive for a drag to the right, and that sign is the whole gesture.** The
+ * board turns about the world's up axis, and rotating it by a positive angle
+ * moves its near corner towards the frame's right for a camera standing on any
+ * of the four corners: that is what ``camera.test.ts`` proves by projecting the
+ * seat's own corner before and after the drag, instead of reading the sign back
+ * from this function. The first implementation had it negative "because the
+ * quarter step reported it that way", which turned the board against the hand.
+ */
+export function dragTurnRadians(pixels: number, stepPx: number): number {
+  if (stepPx <= 0) return 0
+  return (pixels / stepPx) * QUARTER_TURN
 }
 
 /**

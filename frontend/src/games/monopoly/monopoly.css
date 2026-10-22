@@ -1247,7 +1247,11 @@
 .monopoly-table3d {
   width: 100%;
   aspect-ratio: 4 / 3;
-  max-height: min(78vh, 100%);
+  /* X8: no percentage in the cap. ``min(78vh, 100%)`` was invalid here -- the
+     scene's height is auto, so the percentage made the whole declaration drop and
+     the board took its full 4:3 height, pushing the strip under the fold. The
+     cap now leaves room for the strip below it. */
+  max-height: 72vh;
   overflow: hidden;
   border: 2px solid var(--monopoly-board-line);
   border-radius: 0.45rem;
@@ -1258,38 +1262,74 @@
   display: block;
 }
 
-/* S9/S6 of ``monopoly-3d-table.md``: the scene, the card over it and the
-   accessible board behind it. */
+/* S9/S6 of ``monopoly-3d-table.md``: the scene, what it still needs in HTML and
+   the accessible board behind it. */
 .monopoly-scene {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
   min-width: 0;
 }
 
-/* The middle of the table over the rendered board. The camera aims at the
-   board's centre, so the card belongs in the middle of the frame; it is
-   translucent because seeing the table through it is the point of the view. */
-.monopoly-scene-centre {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(26rem, 44%);
-  max-height: 52%;
+/* X8: the middle of the rendered board prints the game's name and the deck
+   counts on its own surface, so nothing floats over it any more. What still
+   needs HTML -- the turn, the throw, the drawn card, the auction and the tapped
+   space -- is a thin strip **under** the board, in flow: over the board it
+   crossed the near cells and neither read. No card chrome and no backdrop,
+   because below the board the panel's own paper is the background. */
+.monopoly-scene-strip {
   display: flex;
-  flex-direction: column;
   justify-content: center;
+  max-height: 30vh;
   overflow: auto;
-  padding: 0.6rem 0.7rem;
-  border: 1px solid var(--monopoly-card-line);
-  border-radius: 0.7rem;
-  background: color-mix(in srgb, var(--monopoly-card) 93%, transparent);
-  box-shadow: 0 0.5rem 1.4rem rgb(0 0 0 / 35%);
 }
 
-.monopoly-scene-centre .monopoly-centre {
+.monopoly-centre-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.2rem 0.9rem;
+  width: auto;
+  max-width: min(64rem, 100%);
   padding: 0;
-  overflow: visible;
   background: none;
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+/* A strip is one line of facts, so each block stops being a column. */
+.monopoly-centre-strip .monopoly-status {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.2rem 0.9rem;
+  width: auto;
+}
+
+.monopoly-centre-strip .monopoly-turn,
+.monopoly-centre-strip .monopoly-roll {
+  font-size: 0.8rem;
+}
+
+.monopoly-centre-strip .monopoly-detail {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.2rem 0.7rem;
+}
+
+.monopoly-centre-strip .monopoly-detail-name {
+  font-size: 0.85rem;
+}
+
+/* The printed rents already wrap into a row; the strip only takes away the gap
+   above them, which the card's own layout needed and a strip does not. */
+.monopoly-centre-strip .monopoly-rents {
+  margin: 0;
 }
 
 /* The accessible board: clipped out of sight, never hidden. ``display: none``
@@ -1359,12 +1399,10 @@
 
 /* ==========================================================================
    The rendered table on a phone (W1).
-   At 1400px the card over the board is right: it sits in the empty middle. At
-   400px that same card covers most of a small board and the two control rows
-   collide with it, so below this width the children leave the canvas: the scene
-   becomes a grid with the board across the top, the controls in one row and the
-   card underneath, in flow. Nothing is hidden -- every fact the card carried is
-   still on screen, just not on top of the board.
+   At 1400px the board takes the whole width. At 400px the two control rows and
+   the strip would crowd it, so below this width the scene becomes a grid: the
+   board across the top, the controls in one row and the strip underneath. The
+   strip is in flow at every width since X8; on a phone it only changes rows.
    ========================================================================== */
 
 @media (max-width: 640px) {
@@ -1401,14 +1439,15 @@
     justify-self: end;
   }
 
-  .monopoly-scene-centre {
-    position: static;
+  /* X8: the strip is already in flow under the board; on a phone it takes the
+     grid's third row, where the card used to sit. */
+  .monopoly-scene-strip {
     grid-row: 3;
     grid-column: 1 / -1;
-    width: auto;
     max-height: none;
-    transform: none;
-    box-shadow: none;
-    background: var(--monopoly-card);
+  }
+
+  .monopoly-centre-strip {
+    max-width: 100%;
   }
 }

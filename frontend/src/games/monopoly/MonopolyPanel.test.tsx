@@ -83,7 +83,8 @@ type LayoutOptions = {
   activeView?: MonopolyPane
   onViewChange?: (next: MonopolyPane) => void
   boardScene?: ReactNode
-  sceneTurns?: { turns: number; onRotate: (direction: 1 | -1) => void }
+  sceneRotation?: { angle: number; onRotate: (direction: 1 | -1) => void }
+  selected?: number | null
 }
 
 function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
@@ -91,14 +92,14 @@ function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): Layout
     match: matchFor(rawView),
     busy: options.busy ?? false,
     onAction: options.onAction ?? (() => {}),
-    selected: null,
+    selected: options.selected ?? null,
     onSelect: options.onSelect ?? (() => {}),
     trade: options.trade ?? tradeDraft(),
     onTradeChange: options.onTradeChange ?? (() => {}),
     activeView: options.activeView ?? 'tablero',
     onViewChange: options.onViewChange ?? (() => {}),
     boardScene: options.boardScene,
-    sceneTurns: options.sceneTurns,
+    sceneRotation: options.sceneRotation,
   }
 }
 
@@ -1361,11 +1362,18 @@ describe('the monopoly 3d table', () => {
     const inside = hostElements(scene[0])
     expect(inside.some((element) => (element.props as { children?: ReactNode }).children === 'escena')).toBe(true)
 
-    // The middle of the table is over the rendered board, from the same block
-    // the spectator reads inside the flat one.
-    const centre = elementsWithClass(rawView, 'monopoly-scene-centre', options)
-    expect(centre).toHaveLength(1)
-    expect(hostElements(centre[0]).some((element) => classesOf(element).includes('monopoly-centre'))).toBe(true)
+    // X8: the rendered board prints the name and the deck counts on its own
+    // surface, so what rides over it is a strip at the bottom edge -- the same
+    // block the spectator reads inside the flat one, without the printed band.
+    const strip = elementsWithClass(rawView, 'monopoly-scene-strip', options)
+    expect(strip).toHaveLength(1)
+    const inStrip = hostElements(strip[0])
+    expect(inStrip.some((element) => classesOf(element).includes('monopoly-centre'))).toBe(true)
+    expect(inStrip.some((element) => classesOf(element).includes('monopoly-centre-band'))).toBe(false)
+    // And the old card over the middle is gone: it sat in the middle of the
+    // frame, which stopped being the middle of the board when the table could
+    // rest at any angle (X7).
+    expect(elementsWithClass(rawView, 'monopoly-scene-centre', options)).toHaveLength(0)
 
     // And the flat board is still there, with its middle empty: it is the
     // accessible mirror, so announcing the turn twice would be a defect.
@@ -1373,9 +1381,33 @@ describe('the monopoly 3d table', () => {
     expect(mirror).toHaveLength(1)
     const mirrored = hostElements(mirror[0])
     expect(mirrored.some((element) => classesOf(element).includes('monopoly-board'))).toBe(true)
-    expect(mirrored.some((element) => classesOf(element).includes('monopoly-centre-empty'))).toBe(true)
+    // X8: the name and the deck counts are painted on the rendered board, so the
+    // mirror carries them; the status lines are not repeated there.
+    expect(mirrored.some((element) => classesOf(element).includes('monopoly-centre-print'))).toBe(true)
+    expect(mirrored.some((element) => classesOf(element).includes('monopoly-turn'))).toBe(false)
     // Exactly one board in the tab, and it is the mirror's.
     expect(elementsWithClass(rawView, 'monopoly-board', options)).toHaveLength(1)
+  })
+
+  it('carries every fact the card carried in the strip under the board', () => {
+    // X8: the card is gone, so nothing it showed may go with it. The turn, the
+    // throw, the drawn card, the open auction and the tapped space all have to be
+    // in the strip, which is the only HTML left over the rendered board.
+    const rawView = view({
+      last_roll: [3, 4],
+      last_card: { deck: 'chance', id: 'ch-1', title: 'Avanza a GO' },
+      auction: { space: 1, high_bid: 60, high_bidder: 'seat-1', waiting_for: ['seat-0'] },
+    })
+    const page = panelMarkup(rawView, { boardScene: <span>escena</span>, selected: 1 })
+    const strip = page.slice(page.indexOf('monopoly-scene-strip'))
+    expect([
+      strip.includes('monopoly-turn'),
+      strip.includes('Última tirada: 3 y 4'),
+      strip.includes('Suerte: Avanza a GO'),
+      strip.includes('Subasta de'),
+      strip.includes('monopoly-detail-name'),
+      strip.includes('Avenida Mediterráneo'),
+    ]).toEqual([true, true, true, true, true, true])
   })
 
   it('keeps the flat board in the tab when no scene is injected', () => {
@@ -1404,7 +1436,7 @@ describe('turning the rendered table', () => {
   it('asks for a quarter turn in each direction', () => {
     const onRotate = vi.fn()
     const rawView = view()
-    const options = { boardScene: <span>escena</span>, sceneTurns: { turns: 1, onRotate } }
+    const options = { boardScene: <span>escena</span>, sceneRotation: { angle: 1, onRotate } }
     const button = (name: string) => {
       const found = elementsWithClass(rawView, 'monopoly-viewport-button', options).find(
         (element) => (element.props as { 'aria-label'?: string })['aria-label'] === name,
