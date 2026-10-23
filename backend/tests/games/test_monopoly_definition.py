@@ -345,6 +345,34 @@ class MonopolyDefinitionTests(SimpleTestCase):
             {'kind': 'purchase', 'space': 3},
         )
 
+    def test_the_view_publishes_the_pending_card_and_never_its_roll(self):
+        """The view says which card is waiting; how it was reached stays inside."""
+        state = self.definition.apply(
+            self._start(), 'seat-0', Action(name='roll'), StubRng(dice=[1, 1])
+        ).state
+
+        seat_view = self.definition.view(state, 'seat-0')
+        spectator_view = self.definition.view(state, None)
+        expected = {
+            'kind': 'card',
+            'deck': 'community_chest',
+            'id': 'community_chest-01',
+            'title': cards.card_for('community_chest-01').title,
+        }
+        self.assertEqual(seat_view['pending'], expected)
+        self.assertEqual(spectator_view['pending'], expected)
+        # The roll the card will resolve with is internal, like the debt's own
+        # continuation: the view publishes the card and nothing else.
+        self.assertNotIn('faces', seat_view['pending'])
+        self.assertNotIn('extra', seat_view['pending'])
+        self.assertEqual(
+            [action['name'] for action in seat_view['actions']],
+            ['confirm_card', 'propose'],
+        )
+        self.assertEqual(
+            [action['name'] for action in spectator_view['actions']], []
+        )
+
     def test_the_view_is_json_serializable_and_survives_a_state_round_trip(self):
         state = self._start()
         state = self.definition.apply(
