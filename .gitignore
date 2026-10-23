@@ -3,3 +3,5 @@ docker-compose.yml
 .atl/
 /odd/
 .codegraph/
+__pycache__/
+*.py[cod]
