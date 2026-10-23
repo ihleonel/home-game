@@ -874,6 +874,97 @@ describe('the monopoly player panel', () => {
   })
 })
 
+describe('the drawn card dialog', () => {
+  const ACCEPT = 'Aceptá la carta.'
+  const CARD = {
+    kind: 'card' as const,
+    deck: 'chance',
+    id: 'chance-13',
+    title: 'Multa por exceso de velocidad: $15.',
+  }
+  const confirm = {
+    name: 'confirm_card',
+    prompt: ACCEPT,
+    options: [] as string[],
+    freeform: false,
+  }
+
+  function cardView(overrides: Partial<MonopolyView> = {}): MonopolyView {
+    return view({
+      phase: 'awaiting_decision',
+      pending: CARD,
+      last_card: { deck: CARD.deck, id: CARD.id, title: CARD.title },
+      actions: [confirm, { name: 'propose', prompt: 'Proponé', options: [], freeform: true }],
+      ...overrides,
+    })
+  }
+
+  it('shows the card and the accept the server offered', () => {
+    const onAction = vi.fn()
+    const rawView = cardView()
+
+    const dialogs = elementsWithClass(rawView, 'monopoly-modal-card', { onAction })
+
+    expect(dialogs).toHaveLength(1)
+    const dialog = dialogs[0].props as {
+      role?: string
+      'aria-modal'?: string | boolean
+      'aria-labelledby'?: string
+      'aria-describedby'?: string
+    }
+    expect(dialog.role).toBe('dialog')
+    // React renders the boolean ARIA flag as its string form in the markup.
+    expect(dialog['aria-modal']).toBe('true')
+    expect(dialog['aria-labelledby']).toBe('monopoly-card-deck')
+    expect(dialog['aria-describedby']).toBe('monopoly-card-copy')
+
+    const body = panelMarkup(rawView, { onAction })
+    expect(body).toContain('Suerte')
+    expect(body).toContain(CARD.title)
+
+    const accept = actionButtons(rawView, { onAction }).filter(
+      (button) => textOf(button) === ACCEPT,
+    )
+    expect(accept).toHaveLength(1)
+    ;(accept[0].props as { onClick: () => void }).onClick()
+    expect(onAction).toHaveBeenCalledWith('confirm_card', null)
+  })
+
+  it('keeps the accept out of the persistent action strip', () => {
+    const rawView = cardView()
+
+    const strip = elementsWithClass(rawView, 'monopoly-actions', {})
+    const stripButtons = hostElements(strip).filter((element) => element.type === 'button')
+
+    expect(stripButtons.map(textOf)).toEqual([])
+  })
+
+  it('disables the accept while the submission is in flight', () => {
+    const rawView = cardView()
+
+    const accept = actionButtons(rawView, { busy: true })[0]
+
+    expect((accept.props as { disabled?: boolean }).disabled).toBe(true)
+  })
+
+  it('stays shut for a seat the server did not ask', () => {
+    // Another seat's view carries no confirm action, so the same card pending
+    // is not that screen's to answer.
+    const rawView = cardView({
+      you: 'seat-1',
+      actions: [{ name: 'propose', prompt: 'Proponé', options: [], freeform: true }],
+    })
+
+    expect(elementsWithClass(rawView, 'monopoly-modal-card')).toHaveLength(0)
+  })
+
+  it('stays shut with no card pending', () => {
+    const rawView = view({ actions: [confirm] })
+
+    expect(elementsWithClass(rawView, 'monopoly-modal-card')).toHaveLength(0)
+  })
+})
+
 describe('the monopoly negotiation panel', () => {
   const proposeAction: MonopolyAction = {
     name: 'propose',

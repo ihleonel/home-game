@@ -1208,6 +1208,60 @@
   opacity: 0.55;
 }
 
+/* S5/S6 of ``monopoly-card-modal.md``: the card a seat just turned up waits over
+   the whole screen for its accept, because nothing else on the table is this
+   seat's to press until the card has been answered. The card wears the brand's
+   band, like the strips a player acts on, so it reads as part of the game and
+   not as a browser alert. */
+.monopoly-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(36 31 46 / 55%);
+}
+
+.monopoly-modal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: min(22rem, 100%);
+  padding: 1rem 1.15rem 1.15rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-top: var(--monopoly-band-size) solid var(--monopoly-brand);
+  border-radius: 0.75rem;
+  background: var(--monopoly-card);
+  box-shadow: 0 1rem 2.5rem rgb(36 31 46 / 35%);
+}
+
+.monopoly-modal-deck {
+  margin: 0;
+  color: var(--monopoly-brand);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.monopoly-modal-copy {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+/* The accept is the only way out, so it keeps the full thumb target and stops
+   the strip's ``flex: 1 1 auto`` from stretching it across the card. */
+.monopoly-modal-accept {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  min-height: 2.75rem;
+  padding-inline: 1.1rem;
+}
+
 .monopoly-players {
   display: flex;
   flex-direction: column;

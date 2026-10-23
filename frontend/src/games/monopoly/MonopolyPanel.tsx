@@ -18,7 +18,15 @@ import {
   sellBack,
 } from './deeds'
 import type { Deed } from './deeds'
-import { GROUP_LABELS, formatMoney, initialOf, seatIndexOf, seatName, seatTone } from './display'
+import {
+  GROUP_LABELS,
+  deckLabel,
+  formatMoney,
+  initialOf,
+  seatIndexOf,
+  seatName,
+  seatTone,
+} from './display'
 import { MonopolyBoard } from './MonopolyBoard'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
@@ -145,14 +153,15 @@ const EMPTY_TRADE_DRAFT: MonopolyTradeDraft = {
 }
 
 /**
- * The actions the negotiation block draws next to each offer (S5/S11).
+ * The actions another block of the panel draws, so the strip never draws them.
  *
- * Their options are offer ids, so an offer's terms are the only place they make
- * sense; the generic renderer leaves them to the block instead of drawing a
- * bare ``prompt: id`` button. They are never freeform, so they would otherwise
- * be drawn twice.
+ * The three answers to an offer have offer ids as options, so an offer's terms
+ * are the only place they make sense, and ``confirm_card`` belongs to the card
+ * dialog (S5 of ``monopoly-card-modal.md``): the strip is what stays on screen
+ * in every view, and a second accept next to the dialog would offer the same
+ * submission twice. They are never freeform, so they would otherwise be drawn.
  */
-const TRADE_RESPONSES = new Set(['accept', 'reject', 'withdraw'])
+const PANEL_OWNED_ACTIONS = new Set(['accept', 'reject', 'withdraw', 'confirm_card'])
 
 /**
  * The four actions that act on one property, and therefore belong on its card
@@ -511,6 +520,54 @@ function actionButtons(
         {optionLabel(action, option, buildings)}
       </button>
     ))
+}
+
+/**
+ * The card the seat on turn just turned up, waiting for its accept (S5, S6).
+ *
+ * A drawn card used to apply its effect the instant the token landed, so the
+ * table read the result before the card. The seat that drew it now reads the
+ * card first and the effect lands when it accepts; every other seat keeps
+ * reading the drawn card in the centre strip, which is why this dialog is
+ * gated on the accept the **server** offered this screen and not on the card
+ * alone. The button label is the server's prompt, verbatim, like every other
+ * action the panel draws.
+ */
+function cardDialog(
+  view: MonopolyView,
+  busy: boolean,
+  onAction: (name: string, value: string | null) => void,
+): ReactElement | null {
+  const pending = view.pending
+  if (pending === null || pending.kind !== 'card') return null
+  const accept = view.actions.find((action) => action.name === 'confirm_card')
+  if (accept === undefined) return null
+  return (
+    <div className="monopoly-modal">
+      <div
+        aria-describedby="monopoly-card-copy"
+        aria-labelledby="monopoly-card-deck"
+        aria-modal="true"
+        className="monopoly-modal-card"
+        role="dialog"
+      >
+        <p className="monopoly-modal-deck" id="monopoly-card-deck">
+          {deckLabel(pending.deck)}
+        </p>
+        <p className="monopoly-modal-copy" id="monopoly-card-copy">
+          {pending.title}
+        </p>
+        <button
+          className="monopoly-action monopoly-modal-accept"
+          disabled={busy}
+          onClick={() => onAction(accept.name, null)}
+          type="button"
+        >
+          {accept.prompt}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function ownSeatBlock(
@@ -1010,7 +1067,9 @@ export function MonopolyPanelLayout({
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
   const ownGroups = own === null ? [] : ownPropertyGroups(own)
   const canPropose = view.actions.some((action) => action.name === 'propose')
-  const genericActions = view.actions.filter((action) => !TRADE_RESPONSES.has(action.name))
+  const genericActions = view.actions.filter(
+    (action) => !PANEL_OWNED_ACTIONS.has(action.name),
+  )
   const openOffers = (view.offers ?? []).length
   const debt = view.phase === 'raising_cash' ? view.debt : null
   /**
@@ -1281,6 +1340,8 @@ export function MonopolyPanelLayout({
           {view.auction !== null && auctionBlock(view.auction, match)}
         </>,
       )}
+
+      {cardDialog(view, busy, onAction)}
     </section>
   )
 }
