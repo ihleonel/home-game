@@ -157,14 +157,20 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   clipped out of sight, never `display: none`, because a canvas is invisible to a screen reader and
   unreachable by the keyboard, so the forty buttons keep the tab order and the announcements, and
   focusing one selects it in the rendered table too. The loop pauses when the board tab is not the
-  one open, and the scene costs about 349 kB gzip in the single initial chunk -- the price of a
+  one open, and **with it open the scene now draws continuously**, because the pieces breathe: a
+  floating token asks for the next frame itself, where the table used to render only on demand. The
+  scene costs about 356 kB gzip in the single initial chunk -- the price of a
   renderer, measured rather than estimated, and the reason to code-split it behind the tab if the
   weight ever
-  matters. Each piece is the marker its player chose, built from primitives and painted in two passes:
-  a white body, and the same shape again in black, inflated along its normals and turned inside out, so
-  the black shows only as an outline around the silhouette -- white tokens with black edges read on any
-  cell, whatever colour it is, which the earlier silver did not. What it does not do, yet: the pieces
-  are primitives rather than the printed figures, there is no depth of field, and the framing shows the
+  matters. Each piece is the marker its player chose, printed as a **flat token**: a chip of paper with
+  an ink rim and the classic black silhouette on it, always facing the screen -- a billboard, so turning
+  the table never shows a figure on its side -- hovering a little over its cell with a soft contact
+  shadow and a slow bob that `prefers-reduced-motion` turns off. Black on white is what reads on any
+  cell, whatever colour it is, which the earlier silver did not. The silhouettes are paths painted into
+  a canvas when the scene mounts, so there is still no image asset: eight were traced from the sheet
+  that set the look, and the iron, the boot and the neutral counter were drawn in the same weight. The
+  room offers **ten markers** for a table of eight seats, because a marker reserves nothing. What it
+  does not do, yet: there is no depth of field, and the framing shows the
   whole board instead of cropping it the way the reference photograph does. The board is one of the three views the player switches between, and only one of them is on
   screen at a time: `Tablero` carries the board, `Cartera` the own seat's economy -- its capital as
   a bare money value, with the label clipped out of sight instead of printed, and the jail
