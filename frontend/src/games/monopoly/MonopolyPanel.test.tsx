@@ -961,8 +961,65 @@ describe('the drawn card dialog', () => {
   it('stays shut with no card pending', () => {
     const rawView = view({ actions: [confirm] })
 
-    expect(elementsWithClass(rawView, 'monopoly-modal-card')).toHaveLength(0)
+    expect(elementsWithClass(rawView, 'monopoly-modal-card')).toHaveLength(0)  })
+})
+
+describe('the viewer\'s own seat colour', () => {
+  const panes = ['tablero', 'cartera', 'mesa'] as const
+
+  /**
+   * The persistent identity chip, as the browser would paint it: a chip inside
+   * a closed pane would be found in the markup and still be invisible, which is
+   * exactly the failure this block exists to catch.
+   */
+  function paintedChips(rawView: MonopolyView, options: LayoutOptions = {}): ReactElement[] {
+    return visibleElements(MonopolyPanelLayout(layoutProps(rawView, options))).filter(
+      (element) => classesOf(element).includes('monopoly-seat-identity'),
+    )
+  }
+
+  it('keeps the viewer\'s tone, initial and name on screen whichever view is open', () => {
+    // The board, the wallet and the table each print a different set of facts,
+    // and the players list -- the only other place a seat's tone is spelled out
+    // as a legend -- lives in one view of three. Changing view is exactly when
+    // the reference is lost, so the seat's own colour gets one place no view
+    // can hide: outside every pane, beside the tabs.
+    for (const activeView of panes) {
+      const chips = paintedChips(view(), { activeView })
+
+      expect(chips, `no identity chip with ${activeView} open`).toHaveLength(1)
+      const markup = renderToStaticMarkup(chips[0])
+
+      expect(markup).toContain('Tu color')
+      expect(markup).toContain(`background:${SEAT_TONES[0]}`)
+      expect(markup).toMatch(/monopoly-seat-identity-swatch[^>]*>A<\/span>/)
+      expect(markup).toMatch(/monopoly-seat-identity-name[^>]*>Ana<\/span>/)
+    }
   })
+
+  it('keeps the initial and drops only the tone for a seat the roster cannot name', () => {
+    // The tone is presentation keyed on the roster index, so a seat the roster
+    // does not name keeps its place -- name and initial -- and loses only the
+    // colour, exactly as the board's owner badge does.
+    const rawView = view()
+    const unnamed = { ...matchFor(rawView), roster: [] }
+    const page = renderToStaticMarkup(
+      <MonopolyPanelLayout {...layoutProps(rawView)} match={unnamed} />,
+    )
+
+    expect(page).toContain('monopoly-seat-identity-swatch')
+    expect(page).not.toContain('monopoly-seat-identity-swatch" style=')
+    expect(page).toMatch(/monopoly-seat-identity-swatch[^>]*>J<\/span>/)
+    expect(page).toContain('Jugador')
+  })
+
+  it('claims no colour for a spectator, who has no seat to colour', () => {
+    const page = panelMarkup(view({ you: undefined }))
+
+    expect(paintedChips(view({ you: undefined }))).toHaveLength(1)
+    expect(page).toContain('monopoly-seat-identity')
+    expect(page).toContain('Espectador')
+    expect(page).not.toContain('monopoly-seat-identity-swatch')  })
 })
 
 describe('the monopoly negotiation panel', () => {

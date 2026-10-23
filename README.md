@@ -184,10 +184,13 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   restriction and the jail cards it holds only while the seat has one of them to report, because a
   fact reading "no restriction" says nothing -- then its properties grouped by colour with the level
   of each built one, told by the colour band on the cards and by the block they share, with the group
-  name kept for a screen reader alone so colour is never the only channel, and `Mesa` everything the table shares -- the roster of every seat, how many cards are left
-  in each deck and how many houses and hotels are left in the bank's box. The switch is a
+  name kept for a screen reader alone so colour is never the only channel, and `Mesa` everything the table shares -- the roster of every seat with the swatch of the tone the board paints, and how many houses and hotels are left in the bank's box. The switch is a
   client-side choice: local state that no action carries anywhere, and the same three views for a
-  spectator, who still gets no button. The offered actions and the open debt deliberately stay
+  spectator, who still gets no button. Above the strip sits the seat's own colour in a chip that
+  belongs to no view: the swatch, the initial and the name, pinned to the top edge of the screen, so
+  switching view or scrolling the board never takes the reference away -- the roster that spells out
+  which tone is whose lives in one view of three, and the owner badge on a cell is too small to be
+  the answer. The offered actions and the open debt deliberately stay
   **outside** the views, between the strip and the open one, so they are on screen whichever view
   the player is in and a view change can never hide an obligation the seat still has to answer; the
   `Mesa` tab carries the count of the offers waiting in it and the `Cartera` tab the count of the

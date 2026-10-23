@@ -63,6 +63,75 @@
   background: var(--monopoly-chrome);
 }
 
+/* The viewer's own colour, pinned so no view change takes it away.
+
+   The players list is the board's colour key, but it lives in one view of
+   three: a player who moves to the wallet, or comes back to the board, has
+   nowhere to check which tone is theirs. The owner badge on the board is too
+   small and the 3D piece too far, so the reference gets one place outside every
+   pane -- above the tab strip -- and it sticks to the top of the screen, which
+   keeps it one glance away at any scroll position. The tone never travels
+   alone: the swatch prints the seat's initial and the name is written beside
+   it, so colour is one cue of three. A seat the roster cannot name keeps the
+   neutral swatch and loses only the tone. */
+.monopoly-seat-identity {
+  position: sticky;
+  top: 0.5rem;
+  /* Above the board's cells (1) and the pinned action bar (5), below the
+     countdown overlay (10). */
+  z-index: 6;
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.3rem 0.75rem 0.3rem 0.4rem;
+  border: 2px solid var(--monopoly-card-line);
+  border-radius: 999px;
+  background: var(--monopoly-card);
+  color: var(--monopoly-ink);
+  font-size: 0.8rem;
+  box-shadow: 0 0.2rem 0.6rem rgb(36 31 46 / 12%);
+}
+
+/* The label is the half that says what the colour answers, so it stays quiet
+   beside the swatch and the name. */
+.monopoly-seat-identity-label {
+  color: var(--monopoly-ink-soft);
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The same shape the players list paints, one size up: the chip is the one
+   place the player reads their own tone from, so it is the one place where the
+   swatch is allowed to be bigger than the legend's. */
+.monopoly-seat-identity-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--monopoly-ink-soft);
+  color: var(--monopoly-brand-ink);
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.monopoly-seat-identity-name {
+  color: var(--monopoly-ink);
+  font-weight: 800;
+}
+
+/* A spectator has no seat to colour, so the chip drops the swatch on its own
+   (there is no tone to paint) and keeps the padding even. */
+.monopoly-seat-identity-name:only-child {
+  padding-left: 0.35rem;
+}
+
 /* S1: the view strip. It replaces the two-column grid that used to put the
    board and the panel side by side, so the board now gets the whole width of
    its own view instead of the leftover of a fixed side column. */
