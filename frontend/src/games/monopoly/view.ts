@@ -91,11 +91,25 @@ export type MonopolyAction = {
   freeform: boolean
 }
 
-/** The decision a landed space opened and the turn is waiting on. */
-export type MonopolyPending = {
-  kind: 'purchase' | 'income_tax'
-  space: number
-}
+/**
+ * The decision a landed space opened and the turn is waiting on.
+ *
+ * A card is its own shape because it is the only decision whose content is
+ * copy rather than a board index: the seat reads the card and its effect lands
+ * only when the seat accepts it. The roll the effect resolves with stays on the
+ * server.
+ */
+export type MonopolyPending =
+  | {
+      kind: 'purchase' | 'income_tax'
+      space: number
+    }
+  | {
+      kind: 'card'
+      deck: string
+      id: string
+      title: string
+    }
 
 /**
  * The open auction of a declined property (S7).
@@ -438,13 +452,27 @@ function readRoll(value: unknown): number[] | null {
   return faces
 }
 
-/** Read the pending decision, or ``null`` when there is none to act on. */
+/**
+ * Read the pending decision, or ``null`` when there is none to act on.
+ *
+ * All-or-nothing, like the rest of the optional fields: a card missing its copy
+ * costs the card decision, never the screen. The server publishes the deck, the
+ * id and the title of a card and nothing about the roll it will resolve with,
+ * so a payload that carries no title has nothing the modal could print.
+ */
 function readPending(value: unknown): MonopolyPending | null {
   if (!isRecord(value)) return null
-  const { kind, space } = value
+  const { kind } = value
+  if (kind === 'card') {
+    const { deck, id, title } = value
+    if (typeof deck !== 'string' || deck.length === 0) return null
+    if (typeof id !== 'string' || id.length === 0) return null
+    if (typeof title !== 'string') return null
+    return { kind, deck, id, title }
+  }
   if (kind !== 'purchase' && kind !== 'income_tax') return null
-  if (!isBoardIndex(space)) return null
-  return { kind, space }
+  if (!isBoardIndex(value.space)) return null
+  return { kind, space: value.space }
 }
 
 /**

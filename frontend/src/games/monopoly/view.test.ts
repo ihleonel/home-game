@@ -599,6 +599,41 @@ describe('the monopoly view parser', () => {
     expect(view?.actions.map((action) => action.name)).toEqual(['buy', 'decline'])
   })
 
+  it('reads the card a landed space turned up and is waiting on', () => {
+    const card = {
+      kind: 'card' as const,
+      deck: 'chance',
+      id: 'chance-13',
+      title: 'Multa por exceso de velocidad: $15.',
+    }
+    const view = parseMonopolyView(
+      rawView({
+        phase: 'awaiting_decision',
+        pending: card,
+        actions: [{ name: 'confirm_card', prompt: 'Aceptá la carta.', options: [] }],
+        last_card: { deck: card.deck, id: card.id, title: card.title },
+      }),
+    )
+
+    expect(view?.phase).toBe('awaiting_decision')
+    expect(view?.pending).toEqual(card)
+    expect(view?.actions.map((action) => action.name)).toEqual(['confirm_card'])
+  })
+
+  it('drops a malformed pending card without dropping the screen', () => {
+    const base = { kind: 'card', deck: 'chance', id: 'chance-13', title: 'Multa.' }
+    for (const broken of [
+      { ...base, title: undefined },
+      { ...base, title: 7 },
+      { ...base, deck: '' },
+      { ...base, id: '' },
+    ]) {
+      const view = parseMonopolyView(rawView({ pending: broken }))
+      expect(view).not.toBeNull()
+      expect(view?.pending).toBeNull()
+    }
+  })
+
   it('drops a malformed optional field instead of the whole screen', () => {
     const view = parseMonopolyView(
       rawView({
