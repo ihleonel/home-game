@@ -1009,6 +1009,12 @@ export function MonopolyPanelLayout({
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
   const ownGroups = own === null ? [] : ownPropertyGroups(own)
+  // The viewer's own tone, read from the same roster index the board's owned
+  // spaces and the players list paint. ``null`` is not a fallback colour: a
+  // seat the roster cannot name keeps the name and the initial and loses only
+  // the tone, exactly as the owner badge on the board does.
+  const ownName = typeof view.you === 'string' ? seatName(match, view.you) : null
+  const ownTone = typeof view.you === 'string' ? seatTone(seatIndexOf(match.roster, view.you)) : null
   const canPropose = view.actions.some((action) => action.name === 'propose')
   const genericActions = view.actions.filter((action) => !TRADE_RESPONSES.has(action.name))
   const openOffers = (view.offers ?? []).length
@@ -1059,6 +1065,38 @@ export function MonopolyPanelLayout({
           {winnerLine(view, match)}
         </p>
       )}
+
+      {/*
+        The viewer's own colour, in one place no view can hide.
+
+        The board frames the spaces a seat owns and the players list spells out
+        every tone, but both live inside a view: a player who moves to the
+        wallet, or comes back to the board, has nowhere to check whose colour is
+        whose. This chip sits outside every pane and above the tab strip, and it
+        sticks to the top of the screen, so switching view -- or scrolling the
+        board -- never takes the reference away. The tone is never alone: the
+        swatch prints the seat's initial and the name is written beside it.
+
+        It follows the rule the action bar already follows: what a view change
+        must not take away stays outside the panes.
+      */}
+      <p className="monopoly-seat-identity">
+        {ownName === null ? (
+          <span className="monopoly-seat-identity-name">Espectador</span>
+        ) : (
+          <>
+            <span className="monopoly-seat-identity-label">Tu color</span>
+            <span
+              aria-hidden="true"
+              className="monopoly-seat-identity-swatch"
+              style={ownTone === null ? undefined : { background: ownTone }}
+            >
+              {initialOf(ownName)}
+            </span>
+            <span className="monopoly-seat-identity-name">{ownName}</span>
+          </>
+        )}
+      </p>
 
       <div
         aria-label="Vistas de la partida"
