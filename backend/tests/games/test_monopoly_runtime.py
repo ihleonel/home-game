@@ -127,10 +127,13 @@ class MonopolyRuntimeTests(SimpleTestCase):
             )
 
     def test_an_eight_seat_room_opens_through_the_real_registry(self):
+        # The table seats eight, and the marker catalogue is larger than that
+        # (`monopoly-flat-figures.md`, S2): the seats take the first eight markers
+        # instead of one per catalogue entry, which is what this test used to do.
         seats = tuple(
-            (index, f'p{index}', marker)
-            for index, marker in enumerate(
-                option.id for option in self.definition.seat_options
+            (index, f'p{index}', option.id)
+            for index, option in enumerate(
+                self.definition.seat_options[: self.definition.max_seats]
             )
         )
         record = start_match(

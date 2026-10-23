@@ -86,6 +86,8 @@ class GameCatalogApiTests(APITestCase):
                 ('plancha', 'Plancha'),
                 ('botin', 'Botín'),
                 ('dedal', 'Dedal'),
+                ('pinguino', 'Pingüino'),
+                ('pato', 'Pato'),
             ],
         )
 

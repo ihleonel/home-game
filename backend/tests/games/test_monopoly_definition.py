@@ -84,10 +84,20 @@ class MonopolyDefinitionTests(SimpleTestCase):
                 'plancha',
                 'botin',
                 'dedal',
+                'pinguino',
+                'pato',
             ),
         )
-        self.assertEqual(
+        # A marker reserves nothing, so the catalogue only has to cover the
+        # table: the two flat-token markers (`monopoly-flat-figures.md`, S2) make
+        # it larger than `max_seats`, and the seat limit still comes from the
+        # printed board.
+        self.assertGreaterEqual(
             len(self.definition.seat_options), self.definition.max_seats
+        )
+        self.assertEqual(
+            len({option.id for option in self.definition.seat_options}),
+            len(self.definition.seat_options),
         )
 
     def test_start_requires_a_random_source(self):
