@@ -165,6 +165,49 @@ class MembershipUseCaseTests(SimpleTestCase):
             12, 'spectator_joined', {'revision': 2}
         )
 
+    def test_anonymous_spectator_gets_identity_assigned_before_persistence(self):
+        participant = _participant(role='spectator')
+        ports = _ports(
+            create_or_lock_active_room=(ActiveRoom(12, 'duelo'), True),
+            participant_for_session_for_update=None,
+            has_in_progress_match=False,
+            count_active_players=0,
+            game_max_seats=2,
+            active_participant_identities=[('Guest One', 'guante-rojo')],
+            game_seat_option_ids=('guante-rojo', 'guante-azul'),
+            create_participant=participant,
+            room_snapshot=deque(({'revision': 1}, {'revision': 2})),
+        )
+        vote_cancellation = Mock()
+        vote_cancellation.target_reconnected.return_value = None
+        data = {'game_id': 'duelo', 'as_spectator': True}
+
+        create_or_discover_room(ports, data, vote_cancellation, Mock())
+
+        ports.create_participant.assert_called_once_with(
+            12, 'Espectador 1', 'guante-azul', 'spectator'
+        )
+        self.assertEqual(
+            ports.timeline,
+            [
+                'begin',
+                'create_or_lock_active_room',
+                'has_in_progress_match',
+                'count_active_players',
+                'game_max_seats',
+                'active_participant_identities',
+                'game_seat_option_ids',
+                'create_participant',
+                'room_snapshot',
+                'room_snapshot',
+                'schedule_room_event',
+                'commit',
+            ],
+        )
+        ports.schedule_room_event.assert_called_once_with(
+            12, 'spectator_joined', {'revision': 2}
+        )
+
     def test_free_seat_without_a_match_resolves_to_player(self):
         participant = _participant()
         ports = _ports(

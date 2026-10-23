@@ -75,6 +75,74 @@ class SpectatorEntryTests(APITestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data['room']['participants'][0]['role'], 'spectator')
 
+    def create_anonymous_spectator(self):
+        return self.client.post(
+            '/api/rooms/',
+            {'game_id': 'duelo', 'as_spectator': True},
+            format='json',
+        )
+
+    def test_an_anonymous_spectator_gets_a_name_and_a_marker_assigned(self):
+        response = self.create_anonymous_spectator()
+
+        self.assertEqual(response.status_code, 201)
+        entry = response.data['room']['participants'][0]
+        self.assertEqual(entry['display_name'], 'Espectador 1')
+        self.assertEqual(entry['game_marker'], 'guante-rojo')
+        self.assertEqual(entry['role'], 'spectator')
+
+    def test_each_anonymous_spectator_gets_the_next_free_name_and_marker(self):
+        self.create_anonymous_spectator()
+
+        response = self.join_room(as_spectator=True)
+
+        self.assertEqual(response.status_code, 200)
+        entries = response.data['room']['participants']
+        self.assertEqual(
+            [entry['display_name'] for entry in entries],
+            ['Espectador 1', 'Espectador 2'],
+        )
+        self.assertEqual(
+            [entry['game_marker'] for entry in entries],
+            ['guante-rojo', 'guante-azul'],
+        )
+
+    def test_assigned_names_and_markers_skip_the_ones_the_room_already_uses(self):
+        # A player may legitimately be named like the platform prefix, and hold
+        # one of the game's markers.
+        self.create_room(display_name='Espectador 1', game_marker='guante-rojo')
+
+        entry = self.create_anonymous_spectator().data['room']['participants'][-1]
+
+        self.assertEqual(entry['display_name'], 'Espectador 2')
+        self.assertEqual(entry['game_marker'], 'guante-azul')
+
+    def test_a_spectator_gets_the_first_marker_when_every_option_is_taken(self):
+        for marker in ('guante-rojo', 'guante-azul', 'guante-verde'):
+            self.create_room(display_name=f'Player {marker}', game_marker=marker)
+
+        entry = self.create_anonymous_spectator().data['room']['participants'][-1]
+
+        self.assertEqual(entry['game_marker'], 'guante-rojo')
+
+    def test_a_spectator_that_types_a_name_keeps_it_and_gets_the_missing_marker(self):
+        response = self.client.post(
+            '/api/rooms/',
+            {'game_id': 'duelo', 'display_name': 'Guest One', 'as_spectator': True},
+            format='json',
+        )
+
+        entry = response.data['room']['participants'][0]
+        self.assertEqual(entry['display_name'], 'Guest One')
+        self.assertEqual(entry['game_marker'], 'guante-rojo')
+
+    def test_a_player_entry_still_requires_a_name_and_a_marker(self):
+        response = self.client.post('/api/rooms/', {'game_id': 'duelo'}, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(set(response.data), {'display_name', 'game_marker'})
+        self.assertFalse(Room.objects.filter(game_id='duelo').exists())
+
     def test_join_request_can_ask_for_the_spectator_role(self):
         self.create_room(display_name='Guest One', game_marker='guante-rojo')
 

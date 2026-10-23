@@ -4,17 +4,19 @@
  * The marker is the player's choice in the room and it travels in the roster
  * (``game_marker``); the board never invents it and never maps it to a label --
  * the label comes from the server too. What this module owns is the one thing
- * the server cannot send: **which silhouette** the scene builds for that id.
+ * the server cannot send: **which silhouette** the scene prints for that id.
  *
  * It is deliberately pure and free of ``three`` so the catalogue can be pinned
- * by the DOM-less harness. The scene converts a ``PieceFigure`` into meshes,
- * and new markers on the server fall back to the neutral counter instead of
- * breaking the table.
+ * by the DOM-less harness. ``figureInk.ts`` turns a ``PieceFigure`` into path
+ * data and the scene paints it on a token, and new markers on the server fall
+ * back to the neutral counter instead of breaking the table.
  *
- * Seam to remember: the eight ids are the ``seat_options`` of the monopoly
- * definition (``backend/modules/games/monopoly/game.py``). A ninth marker there
- * is invisible here until this list and the figure map learn it, which is the
- * same kind of copy ``GROUP_COLOURS`` already makes from the stylesheet.
+ * Seam to remember: the ids are the ``seat_options`` of the monopoly definition
+ * (``backend/modules/games/monopoly/game.py``), which offers **more markers than
+ * the table seats players** -- ``MAX_SEATS`` is 8 and the catalogue is 10, because
+ * a marker reserves nothing. A marker added there is invisible here until this
+ * list and the figure map learn it, which is the same kind of copy
+ * ``GROUP_COLOURS`` already makes from the stylesheet.
  */
 
 /** Every silhouette the scene can build, the neutral fallback included. */
@@ -27,6 +29,8 @@ export const PIECE_FIGURES = [
   'plancha',
   'botin',
   'dedal',
+  'pinguino',
+  'pato',
   'ficha',
 ] as const
 
@@ -39,7 +43,7 @@ export type PieceFigure = (typeof PIECE_FIGURES)[number]
  * A ``Map`` and not an object literal: an object also answers to ``toString``,
  * ``constructor`` and the rest of ``Object.prototype``, so
  * ``FIGURE_BY_MARKER['toString']`` would hand back a function and the scene
- * would ask for a figure that does not exist. The map knows the eight ids and
+ * would ask for a figure that does not exist. The map knows these ids and
  * nothing else; any other string is ``undefined`` and becomes the counter.
  */
 const FIGURE_BY_MARKER: ReadonlyMap<string, PieceFigure> = new Map([
@@ -51,6 +55,8 @@ const FIGURE_BY_MARKER: ReadonlyMap<string, PieceFigure> = new Map([
   ['plancha', 'plancha'],
   ['botin', 'botin'],
   ['dedal', 'dedal'],
+  ['pinguino', 'pinguino'],
+  ['pato', 'pato'],
 ])
 
 /**

@@ -30,7 +30,10 @@ class MonopolyDefinition:
     min_seats = rules.MIN_SEATS
     max_seats = rules.MAX_SEATS
     # Cosmetic identity, like every other game's chips: the token a player picks
-    # in the room never changes the board.
+    # in the room never changes the board. A marker reserves nothing, so the
+    # catalogue can offer more of them than the table seats players: the last two
+    # arrived with the flat tokens (`odd/tasks/monopoly-flat-figures.md`, S2) and
+    # `max_seats` stays where the printed board puts it.
     seat_options = (
         SeatOption(id='sombrero', label='Sombrero'),
         SeatOption(id='automovil', label='Automóvil'),
@@ -40,6 +43,8 @@ class MonopolyDefinition:
         SeatOption(id='plancha', label='Plancha'),
         SeatOption(id='botin', label='Botín'),
         SeatOption(id='dedal', label='Dedal'),
+        SeatOption(id='pinguino', label='Pingüino'),
+        SeatOption(id='pato', label='Pato'),
     )
 
     def start(self, seats: Sequence[Seat], rng) -> Mapping:

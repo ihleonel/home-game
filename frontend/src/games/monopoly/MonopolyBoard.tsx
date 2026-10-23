@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import type { CSSProperties, ReactElement } from 'react'
 import type { MatchState } from '../registry'
 import { BOARD, isPurchasable } from './board'
 import type { Space } from './board'
@@ -8,16 +8,14 @@ import {
   GROUP_LABELS,
   KIND_LABELS,
   formatMoney,
+  initialOf,
+  seatIndexOf,
   seatName,
+  seatTone,
 } from './display'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { spaceArea, spaceSide } from './grid'
 import type { MonopolyPlayer, MonopolyView } from './view'
-
-function initialOf(name: string): string {
-  const first = name.trim().charAt(0)
-  return first === '' ? '?' : first.toUpperCase()
-}
 
 /**
  * The development level of a space, or ``null`` when it is unbuilt (S10).
@@ -53,10 +51,23 @@ function renderBuildings(level: number): ReactElement {
 }
 
 /** The display name of the seat that owns ``index``, or ``null``. */
-function ownerName(match: MatchState<MonopolyView>, index: number): string | null {
+function ownerOf(match: MatchState<MonopolyView>, index: number): string | null {
+  const seat = match.view.owners[String(index)]
+  return seat === undefined ? null : seatName(match, seat)
+}
+
+/**
+ * The tone of the seat that owns ``index``, or ``null`` when there is none.
+ *
+ * Ownership and colour are read from two different places and neither is
+derived from the other: the seat is the server's fact in ``view.owners``, the
+ * tone is the roster entry's ``index``. A seat the roster cannot name keeps the
+ * badge and loses only the colour.
+ */
+function ownerTone(match: MatchState<MonopolyView>, index: number): string | null {
   const seat = match.view.owners[String(index)]
   if (seat === undefined) return null
-  return seatName(match, seat)
+  return seatTone(seatIndexOf(match.roster, seat))
 }
 
 /**
@@ -97,10 +108,16 @@ function spaceAriaLabel(
  * tenth of the board across, so a sentence inside it would be clipped to
  * nothing by the cell's own overflow. The words stay in the title, in the
  * accessible name and in the players list, where they can be read.
+ *
+ * The token also carries the tone of its seat (``--monopoly-seat-tone``), the
+ * same one the owned spaces are framed in: two seats standing on one cell are
+ * the hardest thing on the board to read, and the tone is what separates them
+ * when their initials happen to match.
  */
 function renderToken(player: MonopolyPlayer, match: MatchState<MonopolyView>): ReactElement {
   const name = seatName(match, player.seat)
   const isYou = player.seat === match.view.you
+  const tone = seatTone(seatIndexOf(match.roster, player.seat))
   const label = `${name}${isYou ? ' (tú)' : ''}${player.in_jail ? ' · En la cárcel' : ''}`
   const classes = [
     'monopoly-token',
@@ -109,12 +126,16 @@ function renderToken(player: MonopolyPlayer, match: MatchState<MonopolyView>): R
   ]
     .filter(Boolean)
     .join(' ')
+  // The custom property sits on the token, not on the initial, so a seat the
+  // roster cannot name simply has no tone and the stylesheet falls back to ink.
+  const style = tone === null ? undefined : ({ '--monopoly-seat-tone': tone } as CSSProperties)
   return (
     <span
       aria-label={label}
       className={classes}
       key={player.seat}
       role="img"
+      style={style}
       title={label}
     >
       <span className="monopoly-token-initial" aria-hidden="true">{initialOf(name)}</span>
@@ -133,6 +154,11 @@ function renderToken(player: MonopolyPlayer, match: MatchState<MonopolyView>): R
  *
  * Every fact it prints -- owner, positions, cash, last throw, turn -- is a
  * field of the server view; nothing about the game is recomputed here.
+ *
+ * The owner is printed twice over, and both readings are presentation: the
+ * seat's tone frames the cell (``data-owned`` plus
+ * ``--monopoly-seat-tone`` for the stylesheet) and the badge carries the tone,
+ * the seat's initial and its name. The tone never replaces the name.
  */
 export function MonopolyBoard({
   match,
@@ -161,13 +187,22 @@ export function MonopolyBoard({
     <div className="monopoly-board" role="group" aria-label="Tablero de Monopoly">
       {BOARD.map((space) => {
         const area = spaceArea(space.index)
-        const owner = ownerName(match, space.index)
+        const owner = ownerOf(match, space.index)
+        const tone = ownerTone(match, space.index)
         const auctioned = view.auction !== null && view.auction.space === space.index
         const mortgaged = view.mortgaged[String(space.index)] === true
         const level = buildingLevel(view, space.index)
         const holders = view.players.filter(
           (player) => !player.eliminated && player.position === space.index,
         )
+        // The tone travels as a custom property so the stylesheet owns the
+        // shape of the cue: the cell's frame and the badge's initial both read
+        // it, and a space with no tone simply falls back to neutral ink.
+        const style = {
+          gridRow: area.row,
+          gridColumn: area.column,
+          ...(tone === null ? {} : { '--monopoly-seat-tone': tone }),
+        } as CSSProperties
         return (
           <button
             aria-label={spaceAriaLabel(space, owner, auctioned, mortgaged, level)}
@@ -183,11 +218,12 @@ export function MonopolyBoard({
             data-group={space.group ?? undefined}
             data-kind={space.kind}
             data-mortgaged={mortgaged ? 'true' : undefined}
+            data-owned={owner === null ? undefined : 'true'}
             data-side={spaceSide(space.index)}
             key={space.index}
             onClick={() => onSelect(space.index)}
             onFocus={onFocus === undefined ? undefined : () => onFocus(space.index)}
-            style={{ gridRow: area.row, gridColumn: area.column }}
+            style={style}
             type="button"
           >
             {space.group && <span className="monopoly-space-band" aria-hidden="true" />}
@@ -203,7 +239,14 @@ export function MonopolyBoard({
                 {GROUP_INITIALS[space.group]}
               </span>
             )}
-            {owner && <span className="monopoly-space-owner">{owner}</span>}
+            {owner && (
+              <span className="monopoly-space-owner">
+                <span className="monopoly-space-owner-initial" aria-hidden="true">
+                  {initialOf(owner)}
+                </span>
+                <span className="monopoly-space-owner-name">{owner}</span>
+              </span>
+            )}
             {holders.length > 0 && (
               <span className="monopoly-space-tokens">
                 {holders.map((player) => renderToken(player, match))}

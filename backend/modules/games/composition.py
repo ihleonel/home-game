@@ -8,6 +8,11 @@ is immediately visible to the resolver and to any other catalog reader (for
 example the FRG-07 catalog work).
 
 The registry owns catalog discovery only and holds no runtime state.
+
+**The tuple order is the catalog order.** ``GameRegistry.list_games`` serves the
+definitions in the order they were registered, and the frontend renders that
+array without sorting it, so this tuple is the one place that decides which game
+the lobby offers first. Monopoly leads it.
 """
 
 from .duelo.game import DueloDefinition
@@ -16,5 +21,5 @@ from .registry import GameRegistry
 from .ta_te_ti.game import TaTeTiDefinition
 
 GAME_REGISTRY = GameRegistry(
-    (DueloDefinition(), TaTeTiDefinition(), MonopolyDefinition())
+    (MonopolyDefinition(), DueloDefinition(), TaTeTiDefinition())
 )

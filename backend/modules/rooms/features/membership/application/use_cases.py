@@ -14,11 +14,13 @@ from ..domain.rules import (
     SPECTATOR_ROLE,
     can_leave,
     can_take_player_seat,
+    first_free_game_marker,
     game_matches,
     is_disconnected_presence,
     leave_changes,
     membership_change,
     missing_identity_fields,
+    next_spectator_display_name,
     resolve_entry_role,
     resolve_returning_role,
 )
@@ -63,17 +65,35 @@ def _membership_for(ports: RoomMembershipPorts, room, data, vote_cancellation):
             participant = ports.save_membership_changes(participant.id, updates)
         return participant, change.event_name
 
-    missing = missing_identity_fields(data)
-    if missing:
-        raise MissingParticipantIdentity(missing)
     role = resolve_entry_role(
         as_spectator=bool(data.get('as_spectator', False)),
         match_in_progress=ports.has_in_progress_match(room.id),
         active_players=ports.count_active_players(room.id),
         max_seats=ports.game_max_seats(room.game_id),
     )
+    display_name = data.get('display_name')
+    game_marker = data.get('game_marker')
+    if bool(data.get('as_spectator', False)) and not (display_name and game_marker):
+        # An explicit spectator never has to type a ficha: the platform gives
+        # it the first free name and a marker the game actually offers. A value
+        # the caller did send is kept, so only the missing one is assigned.
+        used_identities = ports.active_participant_identities(room.id)
+        if not display_name:
+            display_name = next_spectator_display_name(
+                {name for name, _ in used_identities}
+            )
+        if not game_marker:
+            game_marker = first_free_game_marker(
+                {marker for _, marker in used_identities},
+                ports.game_seat_option_ids(room.game_id),
+            )
+    missing = missing_identity_fields(
+        {'display_name': display_name, 'game_marker': game_marker}
+    )
+    if missing:
+        raise MissingParticipantIdentity(missing)
     participant = ports.create_participant(
-        room.id, data['display_name'], data['game_marker'], role
+        room.id, display_name, game_marker, role
     )
     event_name = (
         'spectator_joined' if role == SPECTATOR_ROLE else 'player_joined'

@@ -14,12 +14,15 @@
  * 1. a **pure specification** per texture (``spaceTextureSpec``,
  *    ``tableTextureSpec``) returning plain data, which is what the tests pin;
  * 2. a **painter** (``paintSpace``) that reads the
- *    specification and a palette and nothing else;
+ *    specification and a palette and nothing else -- the illustrations of each
+ *    kind come from ``cellIcons.ts``, which is data too;
  * 3. one thin convenience (``spaceTexture``) that makes the
- *    offscreen canvas and call the painter. They are the only lines in this
- *    module that touch ``document``, and they are deliberately untested: this
- *    harness is Node with no canvas. The scene is checked by the headless
- *    capture and by the person looking at the board (S12).
+ *    offscreen canvas and call the painter. It is the only line in this module
+ *    that touches ``document``, and it is deliberately untested: this harness is
+ *    Node with no canvas. The painter itself is verified with a recording
+ *    context (S7 of ``monopoly-printed-cells.md``), and the result the eye sees
+ *    is checked by the headless capture and by the person looking at the board
+ *    (S12 of ``monopoly-3d-table.md``).
  *
  * The wood is generated from a fixed seed with the deterministic generator
  * below, never ``Math.random``: the visual check compares captures between runs,
@@ -32,6 +35,9 @@ import { isPurchasable, spaceAt } from '../board'
 import { HOTEL_LEVEL, deedFor, levelLabel, purchasePrice, rentForLevel } from '../deeds'
 import { GAME_NAME, GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, deckLabel, formatMoney } from '../display'
 import { spaceSide } from '../grid'
+import type { CellIcon } from './cellIcons'
+import { paintIcon, spaceIcon } from './cellIcons'
+import { mixWithWhite } from './figureTexture'
 
 /**
  * The canonical hex of each colour group of the printed board.
@@ -109,6 +115,11 @@ export type SpaceTextureSpec = {
   kind: SpaceKind
   /** The Spanish name of the kind, from ``KIND_LABELS`` (detail layer, S8). */
   kindLabel: string
+  /**
+   * The illustration the printed board draws on the cell (S1 of
+   * ``monopoly-printed-cells.md``), or ``null`` for a street.
+   */
+  icon: CellIcon | null
   /** Which edge of the ring the space sits on, so the band faces the centre. */
   side: BoardSide
   /** The colour band, or ``null`` for a space the printed board leaves plain. */
@@ -145,6 +156,7 @@ export function spaceTextureSpec(index: number): SpaceTextureSpec {
     name: space.name,
     kind: space.kind,
     kindLabel: KIND_LABELS[space.kind],
+    icon: spaceIcon(space),
     side: spaceSide(space.index),
     band:
       space.group === null
@@ -259,7 +271,7 @@ export function paintDeckPile(
   const nameTop = Math.round(height * 0.11)
   const nameHeight = Math.round(height * 0.34)
   ctx.translate(width / 2, 0)
-  paintWrapped(ctx, print.label, width * 0.82, nameHeight, nameTop, width * 0.12, SPACE_INK)
+  paintWrapped(ctx, print.label, 0, nameTop, width * 0.82, nameHeight, width * 0.12, SPACE_INK)
 
   // The rule is what stops "Suerte 7" from reading as one phrase: the number is
   // how many cards are left, not part of the deck's name.
@@ -470,6 +482,27 @@ function bandRect(side: BoardSide, size: number, thickness: number): Rect {
   return { x: 0, y: 0, width: thickness, height: size }
 }
 
+/**
+ * The rule that closes the colour band on the side that faces the centre (S5).
+ *
+ * The cell's own border already draws the outer edge of the band; the printed
+ * band is bounded on both sides, so this returns the thin ink line that sits on
+ * the paper right next to the band. It is geometry instead of a nudge: the test
+ * pins the rectangle on all four sides, which is exactly the kind of off-by-one
+ * that a capture shows as "the band looks thicker on one row".
+ */
+export function bandInnerRule(
+  side: BoardSide,
+  size: number,
+  thickness: number,
+  rule: number,
+): Rect {
+  if (side === 'bottom') return { x: 0, y: thickness, width: size, height: rule }
+  if (side === 'top') return { x: 0, y: size - thickness - rule, width: size, height: rule }
+  if (side === 'left') return { x: size - thickness - rule, y: 0, width: rule, height: size }
+  return { x: thickness, y: 0, width: rule, height: size }
+}
+
 /** The box the text may use, once the band and the padding are taken out. */
 function contentRect(side: BoardSide, size: number, pad: number, band: number): Rect {
   const width = size - 2 * pad
@@ -480,28 +513,53 @@ function contentRect(side: BoardSide, size: number, pad: number, band: number): 
   return { x: band + pad, y: pad, width: width - band, height }
 }
 
+/**
+ * The width one line of letters needs, tracking included.
+ *
+ * Tracking is spacing painted *between* letters, so a line of ``n`` letters has
+ * ``n - 1`` gaps; adding one per letter would overstate every measurement and
+ * shrink the name for no reason.
+ */
+function lineWidth(ctx: CanvasRenderingContext2D, text: string, tracking: number): number {
+  return tracking === 0 ? ctx.measureText(text).width : trackedWidth(ctx, text, tracking)
+}
+
 /** Cut a line to fit ``maxWidth``, marking the cut, instead of overrunning. */
-function ellipsize(ctx: CanvasRenderingContext2D, line: string, maxWidth: number): string {
+function ellipsize(
+  ctx: CanvasRenderingContext2D,
+  line: string,
+  maxWidth: number,
+  tracking: number,
+): string {
   let text = line
-  while (text.length > 1 && ctx.measureText(`${text}…`).width > maxWidth) {
+  while (text.length > 1 && lineWidth(ctx, `${text}…`, tracking) > maxWidth) {
     text = text.slice(0, -1)
   }
   return `${text}…`
 }
 
-/** Break a name into at most ``maxLines`` lines that fit ``maxWidth``. */
+/** One wrapped block of text: its lines, and whether every word survived. */
+type Wrapped = { lines: string[]; complete: boolean }
+
+/**
+ * Break a name into at most ``maxLines`` lines that fit ``maxWidth``.
+ *
+ * ``complete`` says whether every word survived: the painter prefers a smaller
+ * size over a cut word, so an ellipsis only appears when nothing fits.
+ */
 function wrapLines(
   ctx: CanvasRenderingContext2D,
   text: string,
   maxWidth: number,
   maxLines: number,
-): string[] {
+  tracking = 0,
+): Wrapped {
   const words = text.split(' ')
   const lines: string[] = []
   let current = ''
   for (const word of words) {
     const candidate = current === '' ? word : `${current} ${word}`
-    if (current !== '' && ctx.measureText(candidate).width > maxWidth) {
+    if (current !== '' && lineWidth(ctx, candidate, tracking) > maxWidth) {
       lines.push(current)
       current = word
     } else {
@@ -511,10 +569,53 @@ function wrapLines(
   if (current !== '') lines.push(current)
   if (lines.length > maxLines) {
     const kept = lines.slice(0, maxLines)
-    kept[maxLines - 1] = ellipsize(ctx, kept[maxLines - 1], maxWidth)
-    return kept
+    kept[maxLines - 1] = ellipsize(ctx, kept[maxLines - 1], maxWidth, tracking)
+    return { lines: kept, complete: false }
   }
-  return lines
+  return { lines, complete: true }
+}
+
+/**
+ * Draw one centred line of text with exact tracking.
+ *
+ * The printed board sets its names with wide spacing between letters, and
+ * ``ctx.letterSpacing`` is recent enough that a build can land on an engine
+ * without it, so the letters are placed by hand -- the same reason
+ * ``trackedWidth`` measures them by hand. When even the smallest size is still
+ * wider than the box (one long word on a narrow face), the line is scaled
+ * horizontally instead of running over the cell, which is what ``fillText``'s
+ * ``maxWidth`` used to do before the letters were placed one by one.
+ */
+function paintTracked(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  centreX: number,
+  y: number,
+  tracking: number,
+  maxWidth = Number.POSITIVE_INFINITY,
+): void {
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  if (tracking === 0) {
+    ctx.fillText(text, centreX, y, maxWidth)
+    return
+  }
+  const letters = [...text]
+  const widths = letters.map((letter) => ctx.measureText(letter).width)
+  const total = widths.reduce((sum, width) => sum + width, 0) + tracking * (letters.length - 1)
+  ctx.save()
+  if (total > maxWidth) {
+    ctx.translate(centreX, y)
+    ctx.scale(maxWidth / total, 1)
+    centreX = 0
+    y = 0
+  }
+  let x = centreX - total / 2
+  for (let index = 0; index < letters.length; index += 1) {
+    ctx.fillText(letters[index], x + widths[index] / 2, y)
+    x += widths[index] + tracking
+  }
+  ctx.restore()
 }
 
 /**
@@ -522,57 +623,185 @@ function wrapLines(
  *
  * A cell is small and the names are Spanish and long ("Avenida North
  * Carolina"), so the size is derived from the box instead of assumed: the first
- * size from ``preferred`` downwards whose wrapped lines fit the height wins.
+ * size from ``preferred`` downwards whose wrapped lines fit the height **and**
+ * the width, without cutting a word, wins. ``trackingFactor`` is the printed
+ * tracking in ems, so it shrinks with the font instead of becoming airy on a
+ * small name.
  */
 function paintWrapped(
   ctx: CanvasRenderingContext2D,
   text: string,
+  centreX: number,
+  top: number,
   maxWidth: number,
   maxHeight: number,
-  top: number,
   preferred: number,
   colour: string,
+  trackingFactor = 0,
+  weight = 800,
 ): void {
   const minimum = Math.max(8, Math.round(preferred * 0.55))
-  let size = minimum
   let lineHeight = minimum * 1.14
+  let tracking = minimum * trackingFactor
   let lines: string[] = []
-  for (let candidate = Math.round(preferred); candidate >= minimum; candidate -= 1) {
-    ctx.font = `800 ${candidate}px ${FONT_STACK}`
+  const fitting = (candidate: number): Wrapped => {
+    ctx.font = `${weight} ${candidate}px ${FONT_STACK}`
+    const spacing = candidate * trackingFactor
     const height = candidate * 1.14
-    const maxLines = Math.max(1, Math.floor(maxHeight / height))
-    const wrapped = wrapLines(ctx, text, maxWidth, maxLines)
-    if (wrapped.length * height <= maxHeight) {
-      size = candidate
+    const wrapped = wrapLines(
+      ctx,
+      text,
+      maxWidth,
+      Math.max(1, Math.floor(maxHeight / height)),
+      spacing,
+    )
+    const narrow = wrapped.lines.every((line) => lineWidth(ctx, line, spacing) <= maxWidth)
+    return wrapped.complete && narrow ? wrapped : { lines: [], complete: false }
+  }
+  for (let candidate = Math.round(preferred); candidate >= minimum; candidate -= 1) {
+    const height = candidate * 1.14
+    const wrapped = fitting(candidate)
+    if (wrapped.lines.length > 0 && wrapped.lines.length * height <= maxHeight) {
       lineHeight = height
-      lines = wrapped
+      tracking = candidate * trackingFactor
+      lines = wrapped.lines
       break
     }
   }
   if (lines.length === 0) {
-    ctx.font = `800 ${size}px ${FONT_STACK}`
-    lines = wrapLines(ctx, text, maxWidth, Math.max(1, Math.floor(maxHeight / lineHeight)))
+    // Nothing fits without cutting: fall back to the minimum size and let the
+    // line scale horizontally, which is the one case where the print is allowed
+    // to squeeze instead of shrink.
+    tracking = minimum * trackingFactor
+    ctx.font = `${weight} ${minimum}px ${FONT_STACK}`
+    lines = wrapLines(
+      ctx,
+      text,
+      maxWidth,
+      Math.max(1, Math.floor(maxHeight / lineHeight)),
+      tracking,
+    ).lines
   }
   ctx.fillStyle = colour
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
   const blockHeight = lines.length * lineHeight
   let y = top + (maxHeight - blockHeight) / 2 + lineHeight / 2
   for (const line of lines) {
-    ctx.fillText(line, 0, y, maxWidth)
+    paintTracked(ctx, line, centreX, y, tracking, maxWidth)
     y += lineHeight
   }
 }
 
 /**
- * Draw the face of one cell inside the already-centred, already-rotated box.
+ * The Spanish kind printed above a cell, or ``null`` when nothing is printed.
  *
- * It paints what a printed cell prints -- the band, the name, the group
- * initials and the price -- and the kind as a caption only where the name is
- * the whole story (GO, the decks, the taxes, the corners). The rents travel in
- * the specification but are not painted here: a printed cell does not carry
- * seven rent lines either, and a 256 px cell cannot. They are read in the
- * centre detail (S8) and in the panel.
+ * A caption is only for the cells whose printed name is the English of the
+ * sheet -- GO, Chance, Community Chest, the two taxes, Free Parking and Go to
+ * Jail -- where it translates a name that is not in Spanish. When the name
+ * already says the kind in Spanish ("Cárcel / Solo visitando"), printing it
+ * again would be the same words twice on a 30 mm tile. A street has no caption
+ * at all: its face is the band, the name and the price.
+ */
+export function cellCaption(spec: SpaceTextureSpec): string | null {
+  if (spec.band !== null || spec.price !== null) return null
+  const name = spec.name.toLowerCase()
+  const kind = spec.kindLabel.toLowerCase()
+  return name.includes(kind) ? null : spec.kindLabel
+}
+
+/**
+ * One rectangle of a cell's face, in the face's own ``0..width`` /
+ * ``0..height`` box (S6).
+ */
+export type CellZone = { x: number; y: number; width: number; height: number }
+
+/**
+ * The five printed rows of a cell's face. Only the name is always there.
+ *
+ * The rows are the ones the sheet prints, top to bottom: the kind as a caption
+ * where the name is not the whole story, the group initials under the band, the
+ * name, the illustration and the price at the foot.
+ */
+export type CellZones = {
+  caption: CellZone | null
+  initials: CellZone | null
+  name: CellZone
+  icon: CellZone | null
+  price: CellZone | null
+}
+
+/**
+ * Divide one cell's face into its printed rows (S6).
+ *
+ * Pure and exported because this is the half of the print a test can pin: the
+ * illustration stays square, the rows never overlap, every row stays inside the
+ * face, and the name keeps the larger share of what is left -- a picture with
+ * no name is a riddle. The price is pinned to the foot instead of following the
+ * flow, so a rounding error can never push it out of the paper.
+ */
+export function cellZones(
+  spec: SpaceTextureSpec,
+  box: { width: number; height: number },
+  size: number,
+): CellZones {
+  const hasCaption = cellCaption(spec) !== null
+  const captionHeight = hasCaption ? Math.round(size * 0.16) : 0
+  const initialsHeight = spec.band === null ? 0 : Math.round(size * 0.09)
+  const priceHeight = spec.price === null ? 0 : Math.round(size * 0.15)
+  const gap = Math.round(size * 0.02)
+  const rows =
+    1 +
+    (hasCaption ? 1 : 0) +
+    (initialsHeight === 0 ? 0 : 1) +
+    (spec.icon === null ? 0 : 1) +
+    (priceHeight === 0 ? 0 : 1)
+  const room = Math.max(
+    0,
+    box.height - captionHeight - initialsHeight - priceHeight - (rows - 1) * gap,
+  )
+  // The name always keeps a tenth of the face for itself, even on a face so
+  // short that the illustration would otherwise eat every pixel.
+  const nameFloor = Math.round(size * 0.09)
+  const iconSide =
+    spec.icon === null
+      ? 0
+      : Math.max(
+          0,
+          Math.round(Math.min(box.width * 0.64, room * 0.64, room - nameFloor - gap)),
+        )
+  const nameHeight = Math.max(1, room - iconSide - (spec.icon === null ? 0 : gap))
+
+  let y = 0
+  const row = (height: number): CellZone => {
+    const zone = { x: 0, y, width: box.width, height }
+    y += height + gap
+    return zone
+  }
+
+  const caption = hasCaption ? row(captionHeight) : null
+  const initials = initialsHeight === 0 ? null : row(initialsHeight)
+  const name = row(nameHeight)
+  let icon: CellZone | null = null
+  if (spec.icon !== null) {
+    icon = { x: Math.round((box.width - iconSide) / 2), y, width: iconSide, height: iconSide }
+    y += iconSide + gap
+  }
+  const price =
+    priceHeight === 0
+      ? null
+      : { x: 0, y: box.height - priceHeight, width: box.width, height: priceHeight }
+  return { caption, initials, name, icon, price }
+}
+
+/**
+ * Draw the face of one cell inside the already-rotated box whose origin is the
+ * face's own top-left corner.
+ *
+ * It prints what the sheet prints -- the kind caption, the group initials, the
+ * name in uppercase and tracked, the illustration of the kind and the purchase
+ * price at the foot -- and nothing about the match: the rents travel in the
+ * specification but are not painted here, because a printed cell does not carry
+ * seven rent lines either, and a 256 px cell cannot. They are read in the centre
+ * detail (S8) and in the panel.
  */
 function paintCellFace(
   ctx: CanvasRenderingContext2D,
@@ -580,54 +809,64 @@ function paintCellFace(
   box: { width: number; height: number },
   size: number,
 ): void {
-  const caption = spec.band === null && spec.price === null ? spec.kindLabel : null
-  const captionHeight = caption === null ? 0 : Math.round(size * 0.1)
-  const priceHeight = spec.price === null ? 0 : Math.round(size * 0.14)
-  const initialsHeight = spec.band === null ? 0 : Math.round(size * 0.12)
-  const nameHeight = Math.max(1, box.height - captionHeight - priceHeight - initialsHeight)
-  const top = -box.height / 2
+  const zones = cellZones(spec, box, size)
 
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
+  if (zones.caption !== null) {
+    paintWrapped(
+      ctx,
+      spec.kindLabel.toUpperCase(),      box.width / 2,
+      zones.caption.y,
+      zones.caption.width,
+      zones.caption.height,
+      size * 0.055,
+      SPACE_INK_SOFT,
+      0.07,
+      700,
+    )
+  }
 
-  if (caption !== null) {
-    const px = Math.round(size * 0.055)
-    ctx.font = `600 ${px}px ${FONT_STACK}`
+  if (zones.initials !== null && spec.band !== null) {
+    const px = Math.round(size * 0.07)
+    ctx.font = `800 ${px}px ${FONT_STACK}`
     ctx.fillStyle = SPACE_INK_SOFT
-    ctx.fillText(caption, 0, top + captionHeight / 2, box.width)
+    paintTracked(
+      ctx,
+      spec.band.initials,
+      box.width / 2,
+      zones.initials.y + zones.initials.height / 2,
+      px * 0.18,
+    )
   }
 
   paintWrapped(
     ctx,
-    spec.name,
-    box.width,
-    nameHeight,
-    top + captionHeight,
+    spec.name.toUpperCase(),
+    box.width / 2,
+    zones.name.y,
+    zones.name.width,
+    zones.name.height,
     size * 0.13,
     SPACE_INK,
+    0.05,
   )
 
-  if (spec.band !== null) {
-    const px = Math.round(size * 0.06)
-    ctx.font = `800 ${px}px ${FONT_STACK}`
-    ctx.fillStyle = SPACE_INK_SOFT
-    ctx.fillText(
-      spec.band.initials,
-      0,
-      top + captionHeight + nameHeight + initialsHeight / 2,
-      box.width,
-    )
+  if (zones.icon !== null && spec.icon !== null && zones.icon.width > 0) {
+    ctx.save()
+    ctx.translate(zones.icon.x, zones.icon.y)
+    paintIcon(ctx, spec.icon, zones.icon.width, { ink: SPACE_INK, paper: SPACE_PAPER })
+    ctx.restore()
   }
 
-  if (spec.price !== null) {
-    const px = Math.round(size * 0.1)
+  if (zones.price !== null && spec.price !== null) {
+    const px = Math.round(size * 0.13)
     ctx.font = `800 ${px}px ${FONT_STACK}`
     ctx.fillStyle = SPACE_INK
-    ctx.fillText(
+    paintTracked(
+      ctx,
       spec.price,
+      box.width / 2,
+      zones.price.y + zones.price.height / 2,
       0,
-      top + captionHeight + nameHeight + initialsHeight + priceHeight / 2,
-      box.width,
     )
   }
 }
@@ -642,8 +881,9 @@ function paintCellFace(
  * that is why the bottom row needs no turn at all, the far row needs half a turn,
  * and the two columns need a quarter each in opposite directions.
  *
- * It is exported and tested because it is the only part of this painter a test
- * can reach: the harness has no canvas, but it can rotate a vector.
+ * It is exported and tested because it is the rule of the print: pure
+ * geometry, so the DOM-less harness can rotate a vector and pin where the top
+ * of the letters points on each of the four sides.
  */
 export function textRotationFor(side: BoardSide): number {
   if (side === 'top') return Math.PI
@@ -653,16 +893,120 @@ export function textRotationFor(side: BoardSide): number {
 }
 
 /**
+ * The owner's ink of one cell face.
+ *
+ * Three states, and each one means something different: ``undefined`` is a cell
+ * the bank still owns and keeps the printed rule; ``null`` is a cell a seat owns
+ * but the roster cannot name, which keeps the frame and loses only the colour;
+ * a hex is the owning seat's tone.
+ */
+export type OwnerInk = string | null | undefined
+
+/** The neutral ink of an owned cell whose seat the roster cannot name. */
+export const OWNER_FRAME_INK = SPACE_INK
+
+/**
+ * How wide the frame of an owned cell is, as a fraction of the face's side.
+ *
+ * The printed rule is about one percent. The owner's frame is nearly three,
+ * because it is read from the far side of the table: a hairline in a dark tone
+ * would vanish into the ink it replaces (the same reason a toned chip widens its
+ * rim in ``figureTexture.ts``).
+ */
+const OWNER_FRAME_RATIO = 0.03
+
+/**
+ * How far the frame's bloom spreads, as a fraction of the face's side.
+ *
+ * The frame sits on the cell's own edge, so the halo spreads both ways and only
+ * the inner half survives the canvas: the outer half is clipped by the texture,
+ * where the face ends and the board's paper shows. What the eye reads is the
+ * light bleeding inwards over the cell.
+ */
+const OWNER_GLOW_RATIO = 0.06
+
+/** The rectangle and the stroke width of an owned cell's frame. */
+export type OwnerFrameRect = {
+  x: number
+  y: number
+  width: number
+  height: number
+  lineWidth: number
+}
+
+/**
+ * Where the frame of an owned cell sits on a face of ``size`` pixels.
+ *
+ * Exported and pure so the geometry is pinned: the stroke is centred on the
+ * sheet's own edge line, so its outer half lands exactly on the border the
+ * printed rule used to paint. That is what makes the frame *be* the printed
+ * rule instead of a second rectangle beside it.
+ */
+export function ownerFrame(size: number): OwnerFrameRect {
+  const lineWidth = Math.max(3, Math.round(size * OWNER_FRAME_RATIO))
+  return {
+    x: lineWidth / 2,
+    y: lineWidth / 2,
+    width: size - lineWidth,
+    height: size - lineWidth,
+    lineWidth,
+  }
+}
+
+/**
+ * The printed rule that closes every cell (S5 of ``monopoly-printed-cells.md``).
+ *
+ * The printed sheet draws this one heavy: at 256 px a 2 px line disappears into
+ * the scene's lighting and the cells stop reading as separate tiles.
+ */
+function paintPrintedBorder(ctx: CanvasRenderingContext2D, size: number): void {
+  const border = Math.max(2, Math.round(size * 0.011))
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.strokeStyle = SPACE_LINE
+  ctx.lineWidth = border
+  ctx.strokeRect(border / 2, border / 2, size - border, size - border)
+  ctx.restore()
+}
+
+/**
+ * Paint the glowing frame of an owned cell.
+ *
+ * Two strokes, exactly like a toned chip (``figureTexture.ts``): the bloom first,
+ * a lighter mix of the ink carrying its own colour as a shadow, and the crisp rim
+ * over it. The rim alone on cream paper reads as ink; what reads as neon is the
+ * bright halo it throws inwards.
+ */
+function paintOwnerFrame(ctx: CanvasRenderingContext2D, ink: string, size: number): void {
+  const frame = ownerFrame(size)
+  const bloom = mixWithWhite(ink, 0.55)
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.lineWidth = frame.lineWidth
+  ctx.strokeStyle = bloom
+  ctx.shadowColor = bloom
+  ctx.shadowBlur = size * OWNER_GLOW_RATIO
+  ctx.strokeRect(frame.x, frame.y, frame.width, frame.height)
+  ctx.shadowBlur = 0
+  ctx.strokeStyle = ink
+  ctx.strokeRect(frame.x, frame.y, frame.width, frame.height)
+  ctx.restore()
+}
+
+/**
  * Paint one cell of the board (S5).
  *
  * The specification is everything it reads: the painter never asks ``board.ts``
  * again, so a cell cannot be painted from one table and named from another.
- * The only extra input is the palette above, which mirrors the stylesheet.
+ * The only extra input is the palette above, which mirrors the stylesheet, and
+ * the owner's ink: an owned cell is marked by the seat that bought it, on the
+ * very edge the printed rule used to close.
  */
 export function paintSpace(
   ctx: CanvasRenderingContext2D,
   spec: SpaceTextureSpec,
   size: number,
+  owner: OwnerInk = undefined,
 ): void {
   ctx.save()
   ctx.setTransform(1, 0, 0, 1, 0, 0)
@@ -671,10 +1015,16 @@ export function paintSpace(
   ctx.fillRect(0, 0, size, size)
 
   const band = spec.band === null ? 0 : Math.round(size * 0.18)
+  const rule = Math.max(1, Math.round(size * 0.008))
   if (spec.band !== null) {
     const rect = bandRect(spec.side, size, band)
     ctx.fillStyle = spec.band.colour
     ctx.fillRect(rect.x, rect.y, rect.width, rect.height)
+    // S5: the printed band is bounded on both sides. The outer edge is the
+    // cell's own border; this is the inner rule, painted over the paper.
+    const inner = bandInnerRule(spec.side, size, band, rule)
+    ctx.fillStyle = SPACE_LINE
+    ctx.fillRect(inner.x, inner.y, inner.width, inner.height)
   }
 
   const pad = Math.round(size * 0.06)
@@ -686,34 +1036,38 @@ export function paintSpace(
   const box = quarterTurn
     ? { width: content.height, height: content.width }
     : { width: content.width, height: content.height }
+  // The face is painted from its own top-left corner: the rows of ``cellZones``
+  // are measured from there, and every row falls downwards from it.
+  ctx.translate(-box.width / 2, -box.height / 2)
   paintCellFace(ctx, spec, box, size)
   ctx.restore()
 
-  // The cell's edge, painted last so it stays a crisp rule over the band.
-  const border = Math.max(1, Math.round(size * 0.008))
-  ctx.save()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.strokeStyle = SPACE_LINE
-  ctx.lineWidth = border
-  ctx.strokeRect(border / 2, border / 2, size - border, size - border)
-  ctx.restore()
+  // The cell's edge, painted last so it stays a crisp rule over the band. An
+  // owned cell replaces that rule with its owner's frame, so the seat's colour
+  // lands exactly where the printed edge is instead of beside it.
+  if (owner === undefined) paintPrintedBorder(ctx, size)
+  else paintOwnerFrame(ctx, owner ?? OWNER_FRAME_INK, size)
 }
 
 /**
  * The finished cell texture of the space at ``index``.
  *
- * One of the two functions in this module that touch ``document``; untested on
+ * One of the functions in this module that touch ``document``; untested on
  * purpose, because the harness has no DOM. The scene wraps the returned canvas
  * in a ``THREE.CanvasTexture``.
  */
-export function spaceTexture(index: number, size: number = CELL_TEXTURE_SIZE): HTMLCanvasElement {
+export function spaceTexture(
+  index: number,
+  size: number = CELL_TEXTURE_SIZE,
+  owner: OwnerInk = undefined,
+): HTMLCanvasElement {
   const spec = spaceTextureSpec(index)
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')
   if (ctx === null) throw new Error(`no 2d context for the texture of space ${index}`)
-  paintSpace(ctx, spec, size)
+  paintSpace(ctx, spec, size, owner)
   return canvas
 }
 

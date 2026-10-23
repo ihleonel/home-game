@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
 import { MonopolyBoard } from './MonopolyBoard'
+import { SEAT_TONES } from './display'
 import type { MonopolyPlayer, MonopolyView } from './view'
 
 const roster: MatchSeatRosterEntry[] = [
@@ -157,6 +158,41 @@ describe('the monopoly board', () => {
     expect(markup(owned)).toMatch(/monopoly-space-owner[^>]*>Jugador</)
   })
 
+  it('paints the tone of the owning seat in the space and keeps the owner initial in the badge', () => {
+    // The name alone is not enough on a phone: two long names are clipped to the
+    // same shape, so the seat's tone and its initial are what identify the owner
+    // at a glance. Both come from the roster index, never from the seat id text.
+    const owned = view({ owners: { '1': 'seat-0', '3': 'seat-1' } })
+    const buttons = buttonElements(owned)
+
+    const mediterraneo = elementMarkup(spaceButton(buttons, 'Avenida Mediterráneo'))
+    const baltica = elementMarkup(spaceButton(buttons, 'Avenida Báltica'))
+
+    expect(mediterraneo).toContain(`--monopoly-seat-tone:${SEAT_TONES[0]}`)
+    expect(baltica).toContain(`--monopoly-seat-tone:${SEAT_TONES[1]}`)
+    expect(mediterraneo).toMatch(/monopoly-space-owner-initial[^>]*>A<\/span>/)
+    expect(mediterraneo).toMatch(/monopoly-space-owner-name[^>]*>Ana</)
+  })
+
+  it('leaves a space nobody owns without a tone and without the owned hook', () => {
+    const owned = view({ owners: { '1': 'seat-0' } })
+    const free = elementMarkup(spaceButton(buttonElements(owned), 'Avenida Báltica'))
+
+    expect(free).not.toContain('--monopoly-seat-tone')
+    expect(free).not.toContain('data-owned')
+  })
+
+  it('marks an owned space whose seat the roster cannot name, without inventing a tone', () => {
+    // Ownership is the server's fact and stays marked even when the roster has
+    // no entry for the seat; the colour is the only thing that stays out.
+    const owned = view({ owners: { '3': 'seat-9' } })
+    const unknown = elementMarkup(spaceButton(buttonElements(owned), 'Avenida Báltica'))
+
+    expect(unknown).toContain('data-owned="true"')
+    expect(unknown).not.toContain('--monopoly-seat-tone')
+    expect(unknown).toMatch(/monopoly-space-owner-name[^>]*>Jugador</)
+  })
+
   it('draws one token per seat still in the match and none for an eliminated seat', () => {
     const drawn = view({
       players: [
@@ -169,6 +205,32 @@ describe('the monopoly board', () => {
     expect(page.match(/monopoly-token-initial/g)).toHaveLength(1)
     expect(page).toContain('>A</span>')
     expect(page).not.toContain('>B</span>')
+  })
+
+  it('rings each token in the tone of its seat, so a shared cell reads at a glance', () => {
+    // Two seats on one cell are the hardest case to read: the initial alone can
+    // repeat, so the tone of the seat is what separates them. It is the same
+    // tone the owned spaces and the players list paint.
+    const drawn = view({
+      players: [
+        player({ seat: 'seat-0', position: 1 }),
+        player({ seat: 'seat-1', position: 1 }),
+      ],
+    })
+    const cell = elementMarkup(spaceButton(buttonElements(drawn), 'Avenida Mediterráneo'))
+
+    expect(cell).toContain(`--monopoly-seat-tone:${SEAT_TONES[0]}`)
+    expect(cell).toContain(`--monopoly-seat-tone:${SEAT_TONES[1]}`)
+  })
+
+  it('draws a token whose seat the roster cannot name without inventing a tone', () => {
+    // The token is still there -- the server says the seat is on this cell -- and
+    // the colour is the only thing that stays out.
+    const drawn = view({ players: [player({ seat: 'seat-9', position: 1 })] })
+    const cell = elementMarkup(spaceButton(buttonElements(drawn), 'Avenida Mediterráneo'))
+
+    expect(cell).toMatch(/monopoly-token-initial/)
+    expect(cell).not.toContain('--monopoly-seat-tone')
   })
 
   it('marks the viewer token and leaves a jailed seat visibly marked', () => {

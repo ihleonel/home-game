@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { MatchState } from '../registry'
 import { BOARD } from './board'
+import { SEAT_TONES } from './display'
 import { MonopolyPanel, MonopolyPanelLayout } from './MonopolyPanel'
 import type { MonopolyPane, MonopolyTradeDraft } from './MonopolyPanel'
 import type { MonopolyAction, MonopolyOffer, MonopolyPlayer, MonopolyView } from './view'
@@ -316,15 +317,14 @@ describe('the monopoly player panel', () => {
     expect(page).toContain('monopoly-own-jail-cards">2<')
   })
 
-  it('shows the cards left in each deck when the server reports them', () => {
+  it('leaves the deck counts to the table and never repeats them in a pane', () => {
     const page = panelMarkup(view({ decks: { chance: 14, community_chest: 9 } }))
 
-    expect(page).toContain('monopoly-deck-count">14<')
-    expect(page).toContain('monopoly-deck-count">9<')
-  })
-
-  it('shows no deck count when the view carries no deck information', () => {
-    expect(panelMarkup(view({ decks: null }))).not.toContain('monopoly-deck-count')
+    // S1 of ``monopoly-cards.md`` publishes ``decks`` so the table draws the
+    // thickness of each pile; the pane that holds the decisions is not the
+    // table, so a number here would be the same fact printed twice (X8).
+    expect(page).not.toContain('monopoly-deck-count')
+    expect(page).not.toContain('Mazos')
   })
 
   it('shows the auction space, the high bid, its holder and who is still to bid', () => {
@@ -832,6 +832,16 @@ describe('the monopoly player panel', () => {
 
     expect(page).toContain('monopoly-player-name">Ana (tú)<')
     expect(page).toContain('monopoly-player-name">Beto<')
+  })
+
+  it('carries the seat tone in the players list, which is the board\'s colour key', () => {
+    // A tone nobody can resolve identifies nobody: the list of seats is the
+    // legend of the board, and it paints the same tone the owned spaces paint.
+    const page = panelMarkup(view(), { activeView: 'mesa' })
+
+    expect(page).toContain(`monopoly-player-tone" style="background:${SEAT_TONES[0]}"`)
+    expect(page).toContain(`monopoly-player-tone" style="background:${SEAT_TONES[1]}"`)
+    expect(page.match(/monopoly-player-tone/g)).toHaveLength(2)
   })
 
   it('says the viewer is a spectator when the view carries no seat', () => {

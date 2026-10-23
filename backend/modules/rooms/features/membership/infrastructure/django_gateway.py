@@ -120,6 +120,20 @@ class DjangoRoomMembershipGateway:
         definition = GAME_REGISTRY.get(game_id)
         return definition.max_seats if definition is not None else None
 
+    def game_seat_option_ids(self, game_id):
+        definition = GAME_REGISTRY.get(game_id)
+        if definition is None:
+            return ()
+        return tuple(option.id for option in definition.seat_options)
+
+    def active_participant_identities(self, room_id):
+        return list(
+            Participant.objects.filter(
+                room_id=room_id,
+                left_at__isnull=True,
+            ).values_list('display_name', 'game_marker')
+        )
+
     def set_participant_role(self, participant_id, role):
         participant = Participant.objects.select_for_update().get(
             pk=participant_id

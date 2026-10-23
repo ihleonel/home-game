@@ -27,6 +27,10 @@ make test-frontend # Run the frontend tests in the running frontend container
 
 The backend startup command already applies migrations before starting Daphne. Run `make migrate` to apply migrations explicitly; `make migrate` and `make test` require the backend container to be running, and `make test-frontend` requires the frontend container to be running. The frontend suite runs on Vitest in a Node environment against `react-dom/server`, so it needs no browser and no DOM library.
 
+## Feature branches and worktrees
+
+A feature is never implemented in the root checkout. Each one gets its own branch `feat/<slug>` in a worktree under `.worktrees/<slug>`, which is git-ignored; the root checkout stays on `develop` for integration. The worktree copies `.env` and `docker-compose.yml`, because both are git-ignored, and it must change `COMPOSE_PROJECT_NAME` and `FRONTEND_PORT`: sharing the pinned `home-game-local` project name makes two checkouts address the same containers, so a test run would silently grade the wrong tree. `AGENTS.md` holds the exact commands, the merge and cleanup sequence, and the artifacts that are deliberately not replicated.
+
 ## Registered games
 
 The catalog is served from the game registry, so a game exists in HomeGame exactly when its `GameDefinition` is wired into `GAME_REGISTRY` in `backend/modules/games/composition.py`; the frontend catalog endpoint and the room entry policy both derive from it. Three games are registered:
@@ -157,14 +161,20 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   clipped out of sight, never `display: none`, because a canvas is invisible to a screen reader and
   unreachable by the keyboard, so the forty buttons keep the tab order and the announcements, and
   focusing one selects it in the rendered table too. The loop pauses when the board tab is not the
-  one open, and the scene costs about 349 kB gzip in the single initial chunk -- the price of a
+  one open, and **with it open the scene now draws continuously**, because the pieces breathe: a
+  floating token asks for the next frame itself, where the table used to render only on demand. The
+  scene costs about 356 kB gzip in the single initial chunk -- the price of a
   renderer, measured rather than estimated, and the reason to code-split it behind the tab if the
   weight ever
-  matters. Each piece is the marker its player chose, built from primitives and painted in two passes:
-  a white body, and the same shape again in black, inflated along its normals and turned inside out, so
-  the black shows only as an outline around the silhouette -- white tokens with black edges read on any
-  cell, whatever colour it is, which the earlier silver did not. What it does not do, yet: the pieces
-  are primitives rather than the printed figures, there is no depth of field, and the framing shows the
+  matters. Each piece is the marker its player chose, printed as a **flat token**: a chip of paper with
+  an ink rim and the classic black silhouette on it, always facing the screen -- a billboard, so turning
+  the table never shows a figure on its side -- hovering a little over its cell with a soft contact
+  shadow and a slow bob that `prefers-reduced-motion` turns off. Black on white is what reads on any
+  cell, whatever colour it is, which the earlier silver did not. The silhouettes are paths painted into
+  a canvas when the scene mounts, so there is still no image asset: eight were traced from the sheet
+  that set the look, and the iron, the boot and the neutral counter were drawn in the same weight. The
+  room offers **ten markers** for a table of eight seats, because a marker reserves nothing. What it
+  does not do, yet: there is no depth of field, and the framing shows the
   whole board instead of cropping it the way the reference photograph does. The board is one of the three views the player switches between, and only one of them is on
   screen at a time: `Tablero` carries the board, `Cartera` the own seat's economy -- its capital as
   a bare money value, with the label clipped out of sight instead of printed, and the jail
@@ -179,7 +189,15 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   the player is in and a view change can never hide an obligation the seat still has to answer; the
   `Mesa` tab carries the count of the offers waiting in it and the `Cartera` tab the count of the
   actions waiting on the seat's own properties, so neither an offer nobody has answered nor an
-  action waiting on a property can go silently out of sight. The panel is dressed in the game's own bright palette: a sunny
+  action waiting on a property can go silently out of sight. On a phone that pair moves to the last
+  row of the panel and sticks to the bottom edge of the screen, inside the thumb's reach, so the
+  throw is one tap away instead of one scroll away; the move is a stylesheet `order`, so the markup
+  order and with it the keyboard and screen-reader path are the ones S5 always had -- a phone draws
+  the bar last while the focus order still meets it first, the one difference the trick buys and the
+  reason it stays off every other width -- and because the bar stays in the panel's flow, with
+  nothing to reserve and no guessed height, the page can still be scrolled far enough to show the
+  board's last row and the strip under it, the bar coming to rest on the screen's edge instead of
+  jumping off it. The panel is dressed in the game's own bright palette: a sunny
   chrome, the brand red on the open tab, on the offers badge and on every button the player acts
   with, the dollar green on money, and the eight canonical colour groups of the printed board --
   brighter than the muted values this screen used to carry and, at the same time, closer to the
@@ -216,10 +234,12 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   cards wear, the `hidden` rule that takes the two closed views off the screen -- the tests reach the
   attribute, never the `display` it has to resolve to -- the token wrapping, the colour bands and the
   little houses and hotel block, and the mortgaged stripe and its struck price over them, are
-  verified in the markup they hang on, not in a browser. The palette's contrast is the one part of
-  that CSS which is measured instead of looked at: every text/background pair it introduces is
-  checked against WCAG AA (35 pairs, worst 5.39:1), because a bright palette is exactly where
-  contrast breaks silently and the value is arithmetic rather than taste.
+  verified in the markup they hang on, not in a browser; the same goes for the phone's bottom action
+  bar, whose `position: sticky`, `order` and compact padding no test resolves. The palette's
+  contrast is the one part of that CSS which is measured instead of looked at: every text/background
+  pair it introduces is checked against WCAG AA (36 pairs with the phone bar's debt line on the
+  sunny chrome, worst 5.39:1, and that last pair about 14:1), because a bright palette is exactly
+  where contrast breaks silently and the value is arithmetic rather than taste.
 
 A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
 its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`; `monopoly` reports
@@ -275,11 +295,13 @@ The countdown is the only way a match starts on every path: the API serves no ma
 
 A room that already holds the game's `max_seats` players, or whose match is already in progress, does not turn a late arrival away and does not let it break the lobby: the new session joins as a **spectator**. The same policy answers both cases, and it is derived from the game contract (`GameDefinition.min_seats`/`max_seats`) plus the room's match state, so every registered game resolves entry the same way. Entry order is: an explicit `as_spectator` request, an in-progress match, a full player roster, otherwise a player. A session that already has a membership keeps the role it was given; the only role change is an explicit promotion.
 
+An explicit `as_spectator` entry may omit both `display_name` and `game_marker`: the platform assigns the missing ones before the participant is created. The name is the first free `Espectador N` in the room, and the marker is the first seat option of the game the room is not using, falling back to the game's first option when every marker is taken. A value the caller does send is kept, so only the missing one is assigned. The room snapshot returns the resolved identity and the client reads it back instead of keeping the empty draft. A player entry still requires both fields (`400` with `{'display_name': ..., 'game_marker': ...}`), and a platform-assigned identity is never stored as the guest's own name and marker for a later room.
+
 A spectator is a member of the room with no seat, not a separate connection path. It cannot be marked ready (`PATCH /api/rooms/ready/` answers `409`, `Estás como espectador: no puedes marcarte como listo.`), it is not an expulsion-vote target and never joins the electorate, and it never occupies a seat: `open_match_for_room` builds seats only from ready players. It does see the running match — `resolve_seat_subscription` already projects the public view to a participant with no seat — and it leaves through the ordinary `POST /api/rooms/leave/`.
 
 A spectator can ask for a seat with `POST /api/rooms/play/` (`{'session_id': ...}`). The request is granted only in a lobby: never while a match is `in_progress`, because the seats are fixed when the match opens, and never when the player roster is already at `max_seats`. Otherwise the role becomes `player`, readiness stays `false`, and the room broadcasts `player_promoted`. The room snapshot carries `participants[].role` and a top-level `seat_limits` (`{'min_seats', 'max_seats'}`, or `null` for an unknown game), both on the REST read and on the socket, so the lobby can offer the action only when it can succeed.
 
-On screen, a spectator sees the lobby read-only with the notice `Estás como espectador.` and a `Quiero jugar` button that is enabled only while a seat is free, with the exact reason otherwise; the identity form offers `Entrar como espectador` from both the catalog and the lobby, and the game screen labels a seatless viewer for every game.
+On screen, a spectator sees the lobby read-only with the notice `Estás como espectador.` and a `Quiero jugar` button that is enabled only while a seat is free, with the exact reason otherwise; the identity form offers `Entrar como espectador` from both the catalog and the lobby without asking for a ficha, and the game screen labels a seatless viewer for every game.
 
 ## Player identity on the match screen
 

@@ -19,6 +19,11 @@ import { hasMatchRenderer } from '../games/registry'
 import type { MatchState } from '../games/registry'
 import { expulsionVoteMessage, splitRoomParticipants } from '../lib/format'
 import { mergeMatch, mergeMatchEvent } from '../lib/match'
+import {
+  buildMembershipRequest,
+  identityProblem,
+  resolveAssignedIdentity,
+} from '../lib/membership'
 import { readStoredRoomSession, saveGuestSession } from '../lib/session'
 import type { GuestIdentity, RoomSession } from '../lib/session'
 import { RoomSessionContext } from './roomSessionContext'
@@ -112,23 +117,18 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
       setActionError('Sal de la sala actual antes de elegir otro juego.')
       return 'rejected'
     }
-    const displayName = guestIdentity.displayName.trim()
-    if (!displayName || !guestIdentity.gameMarker) {
-      setActionError('Escribe un nombre y elige una ficha para continuar.')
+    const identityError = identityProblem(guestIdentity, options)
+    if (identityError) {
+      setActionError(identityError)
       return 'rejected'
     }
 
     membershipRequestPending.current = true
     const savedSession = readStoredRoomSession(game.id)
-    const requestBody = {
-      game_id: game.id,
-      display_name: displayName,
-      game_marker: guestIdentity.gameMarker,
-      ...(savedSession ? { session_id: savedSession.sessionId } : {}),
-      // The spectator flag is additive: a caller that does not ask for it
-      // sends exactly the same body as before.
-      ...(options?.asSpectator ? { as_spectator: true } : {}),
-    }
+    const requestBody = buildMembershipRequest(game.id, guestIdentity, {
+      asSpectator: options?.asSpectator,
+      sessionId: savedSession?.sessionId,
+    })
 
     setPendingAction(intent)
     setActionError(null)
@@ -139,16 +139,27 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(requestBody),
       })
       const reusedSession = savedSession?.sessionId === response.session_id
+      // A spectator may have submitted no identity at all: the server assigned
+      // one, so this session reads it back from the snapshot it just received.
+      const assignedIdentity = resolveAssignedIdentity(
+        response.room,
+        response.participant_ref,
+        guestIdentity,
+      )
       const nextSession: RoomSession = {
         gameId: game.id,
         sessionId: response.session_id,
         participantRef: response.participant_ref,
-        displayName,
-        gameMarker: guestIdentity.gameMarker,
+        displayName: assignedIdentity.displayName,
+        gameMarker: assignedIdentity.gameMarker,
         isReady: reusedSession ? savedSession.isReady : false,
       }
 
-      saveGuestSession(nextSession)
+      // Only an identity the guest typed is remembered for a later room; the
+      // platform's assignment belongs to this room alone.
+      saveGuestSession(nextSession, {
+        rememberIdentity: identityProblem(guestIdentity) === null,
+      })
       leavingRef.current = false
       setRoom(response.room)
       setRoomSession(nextSession)
@@ -436,7 +447,9 @@ export function RoomSessionProvider({ children }: { children: ReactNode }) {
             isReady:
               response.session_id === guestSessionId ? (savedSession?.isReady ?? false) : false,
           }
-          saveGuestSession(nextSession)
+          saveGuestSession(nextSession, {
+            rememberIdentity: savedSession?.rememberIdentity ?? true,
+          })
           setRoom(response.room)
           setVoteNotice(
             response.room.expulsion_vote

@@ -43,8 +43,10 @@ import { usePrefersReducedMotion } from './useReducedMotion'
 import { walkPlan, walkPose } from './walk'
 import type { WalkPlan } from './walk'
 import { Figure3D } from './Figure3D'
-import { figureFor } from './figures'
+import { ownedCells, ownerSignature } from './owners'
+import { seatedTokens } from './tokens'
 import {
+  CELL_TEXTURE_SIZE,
   CENTRE_FACE,
   PILE_FACE,
   centreTexture,
@@ -523,17 +525,45 @@ function BoardSlab() {
  * same orientation the painter assumes when it puts a cell's colour band on the
  * edge that faces the centre (S5 of ``textures.ts``). Changing either half
  * without the other puts every band on the outside.
+ *
+ * The face of a cell a seat owns is painted in that seat's ink: the frame
+ * takes the tile's own border, so the board says "already bought" exactly where
+ * a printed board says it. A purchase repaints the forty faces at once instead
+ * of tracking forty textures: the painter is pure canvas work, a purchase is a
+ * rare answer to a deliberate tap, and one set that is replaced as a whole
+ * cannot leak the face of a cell that changed hands.
  */
 function Cells({
+  match,
   selected,
   onSelect,
 }: {
+  match: MatchState<MonopolyView>
   selected: number | null
   onSelect: (index: number) => void
 }) {
-  const faces = useMemo(
-    () => new Map(BOARD.map((space) => [space.index, toTexture(spaceTexture(space.index), 8)])),
-    [],
+  const owned = ownedCells(match)
+  const signature = ownerSignature(owned)
+  const faces = useMemo(() => {
+    const inks = new Map(owned.map((cell) => [cell.index, cell.ink]))
+    return new Map(
+      BOARD.map((space) => [
+        space.index,
+        toTexture(spaceTexture(space.index, CELL_TEXTURE_SIZE, inks.get(space.index)), 8),
+      ]),
+    )
+    // ``signature`` is the whole input of this memo: it changes exactly when a
+    // cell is bought, sold or changes hands, and not on the fresh view object a
+    // poll brings with the same board.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature])
+  // The set that a repaint replaced leaves after this commit, never during the
+  // render that replaced it: the frame on screen may still be sampling it.
+  useEffect(
+    () => () => {
+      for (const texture of faces.values()) texture.dispose()
+    },
+    [faces],
   )
 
   return (
@@ -635,11 +665,15 @@ function placeToken(
  * and walking the throw that just moved it (X10).
  *
  * The piece is the marker the player chose in the room: ``figureFor`` maps the
- * roster's ``game_marker`` to a silhouette and ``Figure3D`` builds it from
- * primitives, because the project carries no ``.glb`` (S12c). The metal is one
- * silver for every piece, as in the box, so what a piece says is which marker you
- * picked; it casts a shadow, which is what tells the eye it is standing rather
- * than printed.
+ * roster's ``game_marker`` to a silhouette and ``Figure3D`` prints it as a flat
+ * token -- a chip of paper with the black figure on it, always facing the screen
+ * -- because the project carries no ``.glb`` (S12c) and the primitives it used to
+ * build read as lumps from a seat (``monopoly-flat-figures.md``, S3). The chip
+ * keeps the same paper for every piece, so what its shape says is which marker
+ * you picked; its rim and bloom carry the seat's tone (``tokens.ts``), which is
+ * what separates two seats that picked the same marker. It floats a little over
+ * its cell with a soft shadow underneath, which is what tells the eye it is
+ * hovering rather than printed.
  *
  * **The walk waits for the dice.** The server publishes the position a throw
  * *reached*, never the cells it crossed, so the path is the client's arithmetic
@@ -658,7 +692,7 @@ function Tokens({
   /** Where the table should be facing while a piece walks (X11). */
   followPointRef: RefObject<Point3 | null>
 }) {
-  const seated = match.view.players.filter((player) => !player.eliminated)
+  const seated = seatedTokens(match)
   const reduced = usePrefersReducedMotion()
   const invalidate = useThree((state) => state.invalidate)
   const groups = useRef(new Map<string, Group>())
@@ -740,21 +774,18 @@ function Tokens({
 
   return (
     <group>
-      {seated.map((player) => {
-        const spot = tokenSpot(match.view.players, player.seat)
-        // The roster is where the player's marker lives (X5); a seat missing
-        // from it gets the neutral counter instead of a guessed figure.
-        const entry = match.roster.find((candidate) => candidate.seat_id === player.seat)
+      {seated.map(({ seat, figure, tone }) => {
+        const spot = tokenSpot(match.view.players, seat)
         return (
           <group
-            key={player.seat}
+            key={seat}
             position={[spot?.x ?? 0, BOARD_TOP, spot?.z ?? 0]}
             ref={(node: Group | null) => {
-              if (node === null) groups.current.delete(player.seat)
-              else groups.current.set(player.seat, node)
+              if (node === null) groups.current.delete(seat)
+              else groups.current.set(seat, node)
             }}
           >
-            <Figure3D figure={figureFor(entry?.game_marker ?? '')} />
+            <Figure3D figure={figure} tone={tone} />
           </group>
         )
       })}
@@ -966,10 +997,13 @@ export function MonopolyTable3D({
   return (
     <div className="monopoly-table3d" {...turning.handlers}>
       {/*
-        S11: the board does not animate, so the scene renders on demand instead of
-        sixty times a second -- a click or a texture arriving invalidates a frame
-        and nothing else does. It is also what lets a headless capture finish: a
-        permanent render loop keeps the browser busy forever.
+        S11 said the board does not animate, and the table used to render on
+        demand: a click or a texture arriving invalidated a frame and nothing else
+        did. That is no longer the whole picture -- the flat tokens breathe
+        (``monopoly-flat-figures.md``, S4 and S6), so while the tab is open a
+        token asks for the next frame and the scene renders continuously. What
+        still holds is the pause: ``frameloop`` is ``never`` when the tab is not
+        the active view, so a closed board costs nothing.
       */}
       <Canvas
         dpr={[1, 2]}
@@ -1016,7 +1050,7 @@ export function MonopolyTable3D({
           visualAngleRef={visualAngleRef}
         >
           <BoardSlab />
-            <Cells onSelect={select} selected={selected} />
+            <Cells match={match} onSelect={select} selected={selected} />
           <Buildings view={match.view} />
           <Tokens followPointRef={followPointRef} match={match} />
           {selected !== null && <SelectedFrame index={selected} />}

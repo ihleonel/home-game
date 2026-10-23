@@ -18,7 +18,7 @@ import {
   sellBack,
 } from './deeds'
 import type { Deed } from './deeds'
-import { GROUP_LABELS, DECK_LABELS, formatMoney, seatName } from './display'
+import { GROUP_LABELS, formatMoney, initialOf, seatIndexOf, seatName, seatTone } from './display'
 import { MonopolyBoard } from './MonopolyBoard'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
@@ -1218,6 +1218,12 @@ export function MonopolyPanelLayout({
             <ul className="monopoly-players">
               {view.players.map((player) => {
                 const isYou = player.seat === view.you
+                const name = seatName(match, player.seat)
+                // The same tone the owned spaces are framed in, read from the
+                // same roster index. This list is the key of the board: a tone
+                // nobody can resolve would identify nobody, so the swatch
+                // carries the seat's initial and the name is printed beside it.
+                const tone = seatTone(seatIndexOf(match.roster, player.seat))
                 return (
                   <li
                     className={
@@ -1227,8 +1233,15 @@ export function MonopolyPanelLayout({
                     }
                     key={player.seat}
                   >
+                    <span
+                      aria-hidden="true"
+                      className="monopoly-player-tone"
+                      style={tone === null ? undefined : { background: tone }}
+                    >
+                      {initialOf(name)}
+                    </span>
                     <span className="monopoly-player-name">
-                      {`${seatName(match, player.seat)}${isYou ? ' (tú)' : ''}`}
+                      {`${name}${isYou ? ' (tú)' : ''}`}
                     </span>
                     <span className="monopoly-player-cash">{formatMoney(player.cash)}</span>
                     <span className="monopoly-player-position">
@@ -1248,22 +1261,6 @@ export function MonopolyPanelLayout({
             tradeFormBlock(view, match, busy, onAction, trade, onTradeChange, own)}
 
           {offersBlock(view, match, busy, onAction)}
-
-          {view.decks !== null && (
-            <div className="monopoly-players-block monopoly-decks">
-              <h3 className="monopoly-block-title">Mazos</h3>
-              <dl className="monopoly-own-facts">
-                <div className="monopoly-own-fact">
-                  <dt>{DECK_LABELS.chance}</dt>
-                  <dd className="monopoly-deck-count">{view.decks.chance}</dd>
-                </div>
-                <div className="monopoly-own-fact">
-                  <dt>{DECK_LABELS.community_chest}</dt>
-                  <dd className="monopoly-deck-count">{view.decks.community_chest}</dd>
-                </div>
-              </dl>
-            </div>
-          )}
 
           {view.bank !== null && (
             <div className="monopoly-players-block monopoly-bank">
