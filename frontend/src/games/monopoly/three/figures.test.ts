@@ -7,7 +7,9 @@ import { PIECE_FIGURES, figureFor } from './figures'
  *
  * The frontend is not allowed to import a Python catalogue, so the list is
  * copied here as the test's own contract: a marker added on the server and not
- * here falls back to the neutral counter, which the scene still draws.
+ * here falls back to the neutral counter, which the scene still draws. The last
+ * two arrived with the flat tokens, when the catalogue stopped matching
+ * ``MAX_SEATS`` one for one.
  */
 const CLASSIC_MARKERS = [
   'sombrero',
@@ -18,6 +20,8 @@ const CLASSIC_MARKERS = [
   'plancha',
   'botin',
   'dedal',
+  'pinguino',
+  'pato',
 ] as const
 
 describe('the marker chooses the piece', () => {
@@ -27,7 +31,7 @@ describe('the marker chooses the piece', () => {
     expect(figures).not.toContain('ficha')
   })
 
-  it('knows exactly the eight classic pieces and the neutral counter', () => {
+  it('knows exactly the ten classic pieces and the neutral counter', () => {
     const expected = [...CLASSIC_MARKERS, 'ficha']
     expect(new Set(PIECE_FIGURES)).toEqual(new Set(expected))
     expect(PIECE_FIGURES).toHaveLength(expected.length)

@@ -635,11 +635,13 @@ function placeToken(
  * and walking the throw that just moved it (X10).
  *
  * The piece is the marker the player chose in the room: ``figureFor`` maps the
- * roster's ``game_marker`` to a silhouette and ``Figure3D`` builds it from
- * primitives, because the project carries no ``.glb`` (S12c). The metal is one
- * silver for every piece, as in the box, so what a piece says is which marker you
- * picked; it casts a shadow, which is what tells the eye it is standing rather
- * than printed.
+ * roster's ``game_marker`` to a silhouette and ``Figure3D`` prints it as a flat
+ * token -- a chip of paper with the black figure on it, always facing the screen
+ * -- because the project carries no ``.glb`` (S12c) and the primitives it used to
+ * build read as lumps from a seat (``monopoly-flat-figures.md``, S3). The chip is
+ * the same paper and ink for every piece, so what a piece says is which marker you
+ * picked; it floats a little over its cell with a soft shadow underneath, which is
+ * what tells the eye it is hovering rather than printed.
  *
  * **The walk waits for the dice.** The server publishes the position a throw
  * *reached*, never the cells it crossed, so the path is the client's arithmetic
@@ -966,10 +968,13 @@ export function MonopolyTable3D({
   return (
     <div className="monopoly-table3d" {...turning.handlers}>
       {/*
-        S11: the board does not animate, so the scene renders on demand instead of
-        sixty times a second -- a click or a texture arriving invalidates a frame
-        and nothing else does. It is also what lets a headless capture finish: a
-        permanent render loop keeps the browser busy forever.
+        S11 said the board does not animate, and the table used to render on
+        demand: a click or a texture arriving invalidated a frame and nothing else
+        did. That is no longer the whole picture -- the flat tokens breathe
+        (``monopoly-flat-figures.md``, S4 and S6), so while the tab is open a
+        token asks for the next frame and the scene renders continuously. What
+        still holds is the pause: ``frameloop`` is ``never`` when the tab is not
+        the active view, so a closed board costs nothing.
       */}
       <Canvas
         dpr={[1, 2]}
