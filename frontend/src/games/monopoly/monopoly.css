@@ -945,6 +945,13 @@
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  /* The ink lives on the wrapper and not on the ``dd`` below: an inherited
+     colour loses to any declaration, so a modifier that repaints one value --
+     the capital's money green, the auction's brand bid -- wins on its own. On
+     the ``dd`` it lost: ``.monopoly-own-fact dd`` weighs 0,1,1 and beat every
+     single-class modifier printed inside the row, which is how the wallet's
+     capital kept rendering in ink while the stylesheet said green. */
+  color: var(--monopoly-ink);
 }
 
 .monopoly-own-fact dt {
@@ -956,7 +963,6 @@
 
 .monopoly-own-fact dd {
   margin: 0;
-  color: var(--monopoly-ink);
   font-weight: 700;
 }
 
