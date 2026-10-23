@@ -9,7 +9,14 @@ export type RoomSession = GuestIdentity & {
   isReady: boolean
 }
 
-export type StoredRoomSession = Pick<RoomSession, 'gameId' | 'sessionId' | 'isReady'>
+export type StoredRoomSession = Pick<RoomSession, 'gameId' | 'sessionId' | 'isReady'> & {
+  /**
+   * Whether the guest typed this session's identity. A platform-assigned
+   * spectator identity belongs to the room only: it is never remembered as
+   * this browser's own name and marker for a later room.
+   */
+  rememberIdentity: boolean
+}
 
 const DISPLAY_NAME_KEY = 'homegame:display-name'
 const ROOM_SESSION_KEY = 'homegame:room-session'
@@ -56,21 +63,29 @@ export function readStoredRoomSession(gameId: string): StoredRoomSession | null 
       gameId,
       sessionId: session.sessionId,
       isReady: session.isReady === true,
+      rememberIdentity: session.rememberIdentity !== false,
     }
   } catch {
     return null
   }
 }
 
-export function saveGuestSession(session: RoomSession): void {
-  writeSessionValue(DISPLAY_NAME_KEY, session.displayName)
-  writeSessionValue(markerStorageKey(session.gameId), session.gameMarker)
+export function saveGuestSession(
+  session: RoomSession,
+  options: { rememberIdentity?: boolean } = {},
+): void {
+  const rememberIdentity = options.rememberIdentity ?? true
+  if (rememberIdentity) {
+    writeSessionValue(DISPLAY_NAME_KEY, session.displayName)
+    writeSessionValue(markerStorageKey(session.gameId), session.gameMarker)
+  }
   writeSessionValue(
     ROOM_SESSION_KEY,
     JSON.stringify({
       gameId: session.gameId,
       sessionId: session.sessionId,
       isReady: session.isReady,
+      rememberIdentity,
     } satisfies StoredRoomSession),
   )
 }

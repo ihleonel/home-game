@@ -27,6 +27,10 @@ make test-frontend # Run the frontend tests in the running frontend container
 
 The backend startup command already applies migrations before starting Daphne. Run `make migrate` to apply migrations explicitly; `make migrate` and `make test` require the backend container to be running, and `make test-frontend` requires the frontend container to be running. The frontend suite runs on Vitest in a Node environment against `react-dom/server`, so it needs no browser and no DOM library.
 
+## Feature branches and worktrees
+
+A feature is never implemented in the root checkout. Each one gets its own branch `feat/<slug>` in a worktree under `.worktrees/<slug>`, which is git-ignored; the root checkout stays on `develop` for integration. The worktree copies `.env` and `docker-compose.yml`, because both are git-ignored, and it must change `COMPOSE_PROJECT_NAME` and `FRONTEND_PORT`: sharing the pinned `home-game-local` project name makes two checkouts address the same containers, so a test run would silently grade the wrong tree. `AGENTS.md` holds the exact commands, the merge and cleanup sequence, and the artifacts that are deliberately not replicated.
+
 ## Registered games
 
 The catalog is served from the game registry, so a game exists in HomeGame exactly when its `GameDefinition` is wired into `GAME_REGISTRY` in `backend/modules/games/composition.py`; the frontend catalog endpoint and the room entry policy both derive from it. Three games are registered:
@@ -291,11 +295,13 @@ The countdown is the only way a match starts on every path: the API serves no ma
 
 A room that already holds the game's `max_seats` players, or whose match is already in progress, does not turn a late arrival away and does not let it break the lobby: the new session joins as a **spectator**. The same policy answers both cases, and it is derived from the game contract (`GameDefinition.min_seats`/`max_seats`) plus the room's match state, so every registered game resolves entry the same way. Entry order is: an explicit `as_spectator` request, an in-progress match, a full player roster, otherwise a player. A session that already has a membership keeps the role it was given; the only role change is an explicit promotion.
 
+An explicit `as_spectator` entry may omit both `display_name` and `game_marker`: the platform assigns the missing ones before the participant is created. The name is the first free `Espectador N` in the room, and the marker is the first seat option of the game the room is not using, falling back to the game's first option when every marker is taken. A value the caller does send is kept, so only the missing one is assigned. The room snapshot returns the resolved identity and the client reads it back instead of keeping the empty draft. A player entry still requires both fields (`400` with `{'display_name': ..., 'game_marker': ...}`), and a platform-assigned identity is never stored as the guest's own name and marker for a later room.
+
 A spectator is a member of the room with no seat, not a separate connection path. It cannot be marked ready (`PATCH /api/rooms/ready/` answers `409`, `Estás como espectador: no puedes marcarte como listo.`), it is not an expulsion-vote target and never joins the electorate, and it never occupies a seat: `open_match_for_room` builds seats only from ready players. It does see the running match — `resolve_seat_subscription` already projects the public view to a participant with no seat — and it leaves through the ordinary `POST /api/rooms/leave/`.
 
 A spectator can ask for a seat with `POST /api/rooms/play/` (`{'session_id': ...}`). The request is granted only in a lobby: never while a match is `in_progress`, because the seats are fixed when the match opens, and never when the player roster is already at `max_seats`. Otherwise the role becomes `player`, readiness stays `false`, and the room broadcasts `player_promoted`. The room snapshot carries `participants[].role` and a top-level `seat_limits` (`{'min_seats', 'max_seats'}`, or `null` for an unknown game), both on the REST read and on the socket, so the lobby can offer the action only when it can succeed.
 
-On screen, a spectator sees the lobby read-only with the notice `Estás como espectador.` and a `Quiero jugar` button that is enabled only while a seat is free, with the exact reason otherwise; the identity form offers `Entrar como espectador` from both the catalog and the lobby, and the game screen labels a seatless viewer for every game.
+On screen, a spectator sees the lobby read-only with the notice `Estás como espectador.` and a `Quiero jugar` button that is enabled only while a seat is free, with the exact reason otherwise; the identity form offers `Entrar como espectador` from both the catalog and the lobby without asking for a ficha, and the game screen labels a seatless viewer for every game.
 
 ## Player identity on the match screen
 

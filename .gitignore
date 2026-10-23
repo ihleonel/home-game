@@ -1,7 +1,8 @@
 .env
 docker-compose.yml
 .atl/
-/odd/
+/odd
 .codegraph/
+/.worktrees/
 __pycache__/
 *.py[cod]

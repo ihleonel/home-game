@@ -43,8 +43,10 @@ import { usePrefersReducedMotion } from './useReducedMotion'
 import { walkPlan, walkPose } from './walk'
 import type { WalkPlan } from './walk'
 import { Figure3D } from './Figure3D'
+import { ownedCells, ownerSignature } from './owners'
 import { seatedTokens } from './tokens'
 import {
+  CELL_TEXTURE_SIZE,
   CENTRE_FACE,
   PILE_FACE,
   centreTexture,
@@ -523,17 +525,45 @@ function BoardSlab() {
  * same orientation the painter assumes when it puts a cell's colour band on the
  * edge that faces the centre (S5 of ``textures.ts``). Changing either half
  * without the other puts every band on the outside.
+ *
+ * The face of a cell a seat owns is painted in that seat's ink: the frame
+ * takes the tile's own border, so the board says "already bought" exactly where
+ * a printed board says it. A purchase repaints the forty faces at once instead
+ * of tracking forty textures: the painter is pure canvas work, a purchase is a
+ * rare answer to a deliberate tap, and one set that is replaced as a whole
+ * cannot leak the face of a cell that changed hands.
  */
 function Cells({
+  match,
   selected,
   onSelect,
 }: {
+  match: MatchState<MonopolyView>
   selected: number | null
   onSelect: (index: number) => void
 }) {
-  const faces = useMemo(
-    () => new Map(BOARD.map((space) => [space.index, toTexture(spaceTexture(space.index), 8)])),
-    [],
+  const owned = ownedCells(match)
+  const signature = ownerSignature(owned)
+  const faces = useMemo(() => {
+    const inks = new Map(owned.map((cell) => [cell.index, cell.ink]))
+    return new Map(
+      BOARD.map((space) => [
+        space.index,
+        toTexture(spaceTexture(space.index, CELL_TEXTURE_SIZE, inks.get(space.index)), 8),
+      ]),
+    )
+    // ``signature`` is the whole input of this memo: it changes exactly when a
+    // cell is bought, sold or changes hands, and not on the fresh view object a
+    // poll brings with the same board.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature])
+  // The set that a repaint replaced leaves after this commit, never during the
+  // render that replaced it: the frame on screen may still be sampling it.
+  useEffect(
+    () => () => {
+      for (const texture of faces.values()) texture.dispose()
+    },
+    [faces],
   )
 
   return (
@@ -1020,7 +1050,7 @@ export function MonopolyTable3D({
           visualAngleRef={visualAngleRef}
         >
           <BoardSlab />
-            <Cells onSelect={select} selected={selected} />
+            <Cells match={match} onSelect={select} selected={selected} />
           <Buildings view={match.view} />
           <Tokens followPointRef={followPointRef} match={match} />
           {selected !== null && <SelectedFrame index={selected} />}

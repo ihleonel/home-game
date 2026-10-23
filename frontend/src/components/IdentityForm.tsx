@@ -91,6 +91,11 @@ export function IdentityForm({
           </select>
         </label>
       </div>
+      {onSubmitAsSpectator && (
+        <p className="form-note">
+          La plataforma te asigna un nombre y una ficha si entras como espectador.
+        </p>
+      )}
       <div className="form-actions">
         <button className="button button-primary" disabled={busy} type="submit">
           {busy ? 'Conectando…' : 'Entrar en la sala'}
@@ -99,6 +104,10 @@ export function IdentityForm({
           <button
             className="button button-quiet"
             disabled={busy}
+            // A spectator does not type a ficha: the platform assigns the
+            // name and the marker, so this action must not be stopped by the
+            // required fields of the player entry.
+            formNoValidate
             type="submit"
             value="spectator"
           >

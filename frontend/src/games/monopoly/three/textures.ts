@@ -37,6 +37,7 @@ import { GAME_NAME, GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, deckLabel, format
 import { spaceSide } from '../grid'
 import type { CellIcon } from './cellIcons'
 import { paintIcon, spaceIcon } from './cellIcons'
+import { mixWithWhite } from './figureTexture'
 
 /**
  * The canonical hex of each colour group of the printed board.
@@ -892,16 +893,120 @@ export function textRotationFor(side: BoardSide): number {
 }
 
 /**
+ * The owner's ink of one cell face.
+ *
+ * Three states, and each one means something different: ``undefined`` is a cell
+ * the bank still owns and keeps the printed rule; ``null`` is a cell a seat owns
+ * but the roster cannot name, which keeps the frame and loses only the colour;
+ * a hex is the owning seat's tone.
+ */
+export type OwnerInk = string | null | undefined
+
+/** The neutral ink of an owned cell whose seat the roster cannot name. */
+export const OWNER_FRAME_INK = SPACE_INK
+
+/**
+ * How wide the frame of an owned cell is, as a fraction of the face's side.
+ *
+ * The printed rule is about one percent. The owner's frame is nearly three,
+ * because it is read from the far side of the table: a hairline in a dark tone
+ * would vanish into the ink it replaces (the same reason a toned chip widens its
+ * rim in ``figureTexture.ts``).
+ */
+const OWNER_FRAME_RATIO = 0.03
+
+/**
+ * How far the frame's bloom spreads, as a fraction of the face's side.
+ *
+ * The frame sits on the cell's own edge, so the halo spreads both ways and only
+ * the inner half survives the canvas: the outer half is clipped by the texture,
+ * where the face ends and the board's paper shows. What the eye reads is the
+ * light bleeding inwards over the cell.
+ */
+const OWNER_GLOW_RATIO = 0.06
+
+/** The rectangle and the stroke width of an owned cell's frame. */
+export type OwnerFrameRect = {
+  x: number
+  y: number
+  width: number
+  height: number
+  lineWidth: number
+}
+
+/**
+ * Where the frame of an owned cell sits on a face of ``size`` pixels.
+ *
+ * Exported and pure so the geometry is pinned: the stroke is centred on the
+ * sheet's own edge line, so its outer half lands exactly on the border the
+ * printed rule used to paint. That is what makes the frame *be* the printed
+ * rule instead of a second rectangle beside it.
+ */
+export function ownerFrame(size: number): OwnerFrameRect {
+  const lineWidth = Math.max(3, Math.round(size * OWNER_FRAME_RATIO))
+  return {
+    x: lineWidth / 2,
+    y: lineWidth / 2,
+    width: size - lineWidth,
+    height: size - lineWidth,
+    lineWidth,
+  }
+}
+
+/**
+ * The printed rule that closes every cell (S5 of ``monopoly-printed-cells.md``).
+ *
+ * The printed sheet draws this one heavy: at 256 px a 2 px line disappears into
+ * the scene's lighting and the cells stop reading as separate tiles.
+ */
+function paintPrintedBorder(ctx: CanvasRenderingContext2D, size: number): void {
+  const border = Math.max(2, Math.round(size * 0.011))
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.strokeStyle = SPACE_LINE
+  ctx.lineWidth = border
+  ctx.strokeRect(border / 2, border / 2, size - border, size - border)
+  ctx.restore()
+}
+
+/**
+ * Paint the glowing frame of an owned cell.
+ *
+ * Two strokes, exactly like a toned chip (``figureTexture.ts``): the bloom first,
+ * a lighter mix of the ink carrying its own colour as a shadow, and the crisp rim
+ * over it. The rim alone on cream paper reads as ink; what reads as neon is the
+ * bright halo it throws inwards.
+ */
+function paintOwnerFrame(ctx: CanvasRenderingContext2D, ink: string, size: number): void {
+  const frame = ownerFrame(size)
+  const bloom = mixWithWhite(ink, 0.55)
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.lineWidth = frame.lineWidth
+  ctx.strokeStyle = bloom
+  ctx.shadowColor = bloom
+  ctx.shadowBlur = size * OWNER_GLOW_RATIO
+  ctx.strokeRect(frame.x, frame.y, frame.width, frame.height)
+  ctx.shadowBlur = 0
+  ctx.strokeStyle = ink
+  ctx.strokeRect(frame.x, frame.y, frame.width, frame.height)
+  ctx.restore()
+}
+
+/**
  * Paint one cell of the board (S5).
  *
  * The specification is everything it reads: the painter never asks ``board.ts``
  * again, so a cell cannot be painted from one table and named from another.
- * The only extra input is the palette above, which mirrors the stylesheet.
+ * The only extra input is the palette above, which mirrors the stylesheet, and
+ * the owner's ink: an owned cell is marked by the seat that bought it, on the
+ * very edge the printed rule used to close.
  */
 export function paintSpace(
   ctx: CanvasRenderingContext2D,
   spec: SpaceTextureSpec,
   size: number,
+  owner: OwnerInk = undefined,
 ): void {
   ctx.save()
   ctx.setTransform(1, 0, 0, 1, 0, 0)
@@ -937,33 +1042,32 @@ export function paintSpace(
   paintCellFace(ctx, spec, box, size)
   ctx.restore()
 
-  // The cell's edge, painted last so it stays a crisp rule over the band. The
-  // printed sheet draws this one heavy: at 256 px a 2 px line disappears into
-  // the scene's lighting, and the cells stop reading as separate tiles.
-  const border = Math.max(2, Math.round(size * 0.011))
-  ctx.save()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.strokeStyle = SPACE_LINE
-  ctx.lineWidth = border
-  ctx.strokeRect(border / 2, border / 2, size - border, size - border)
-  ctx.restore()
+  // The cell's edge, painted last so it stays a crisp rule over the band. An
+  // owned cell replaces that rule with its owner's frame, so the seat's colour
+  // lands exactly where the printed edge is instead of beside it.
+  if (owner === undefined) paintPrintedBorder(ctx, size)
+  else paintOwnerFrame(ctx, owner ?? OWNER_FRAME_INK, size)
 }
 
 /**
  * The finished cell texture of the space at ``index``.
  *
- * One of the two functions in this module that touch ``document``; untested on
+ * One of the functions in this module that touch ``document``; untested on
  * purpose, because the harness has no DOM. The scene wraps the returned canvas
  * in a ``THREE.CanvasTexture``.
  */
-export function spaceTexture(index: number, size: number = CELL_TEXTURE_SIZE): HTMLCanvasElement {
+export function spaceTexture(
+  index: number,
+  size: number = CELL_TEXTURE_SIZE,
+  owner: OwnerInk = undefined,
+): HTMLCanvasElement {
   const spec = spaceTextureSpec(index)
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')
   if (ctx === null) throw new Error(`no 2d context for the texture of space ${index}`)
-  paintSpace(ctx, spec, size)
+  paintSpace(ctx, spec, size, owner)
   return canvas
 }
 

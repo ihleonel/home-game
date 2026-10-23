@@ -182,12 +182,17 @@
 
 /* An owned space is framed in its owner's seat tone. The two colour cues never
    share a surface: the group paints the inner band, the owner paints the frame,
-   so neither is read as the other. It is an inset ring and not a border, so the
-   cell's box does not change size when a space is bought. The pressed and
-   auction states are transient and urgent, so they keep their own ring and the
-   tone stays in the badge alone. */
+   so neither is read as the other. The frame is an inset ring and not a border,
+   so the cell's box does not change size when a space is bought, and it carries
+   an inner bloom of a lighter mix of the tone: a flat ring inside a pale cell
+   reads as ink, while the halo is what reads as neon -- the same two passes the
+   3D face paints on the cell's own edge. The pressed and auction states are
+   transient and urgent, so they keep their own ring and the tone stays in the
+   badge alone. */
 .monopoly-space[data-owned='true']:not([aria-pressed='true']):not(.monopoly-space-auction) {
-  box-shadow: inset 0 0 0 2px var(--monopoly-seat-tone, var(--monopoly-ink-soft));
+  box-shadow:
+    inset 0 0 0 2px var(--monopoly-seat-tone, var(--monopoly-ink-soft)),
+    inset 0 0 0.3rem color-mix(in srgb, var(--monopoly-seat-tone, var(--monopoly-ink-soft)) 55%, #fff);
 }
 
 .monopoly-space[aria-pressed='true'] {

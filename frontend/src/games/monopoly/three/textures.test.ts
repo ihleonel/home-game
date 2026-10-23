@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ColorGroup } from '../board'
 import { BOARD, BOARD_SIZE, PURCHASABLE_INDEXES, isPurchasable } from '../board'
 import { HOTEL_LEVEL, deedFor, levelLabel, purchasePrice, rentForLevel } from '../deeds'
-import { GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, formatMoney, GAME_NAME, deckLabel } from '../display'
+import { GROUP_INITIALS, GROUP_LABELS, KIND_LABELS, SEAT_TONES, formatMoney, GAME_NAME, deckLabel } from '../display'
 import { spaceSide } from '../grid'
 import { spaceIcon } from './cellIcons'
+import { mixWithWhite } from './figureTexture'
 import { RecordingContext } from './recordingContext'
 import {
   CELL_TEXTURE_SIZE,
@@ -13,6 +14,7 @@ import {
   CENTRE_TEXTURE_WIDTH,
   GROUP_COLOURS,
   DIE_TEXTURE_SIZE,
+  OWNER_FRAME_INK,
   PILE_FACE,
   PILE_TEXTURE_HEIGHT,
   PILE_TEXTURE_WIDTH,
@@ -22,6 +24,7 @@ import {
   centrePrint,
   deckPilePrint,
   diePips,
+  ownerFrame,
   paintCentre,
   paintDeckPile,
   paintSpace,
@@ -41,6 +44,15 @@ const GROUPS: readonly ColorGroup[] = [
   'green',
   'dark_blue',
 ]
+
+/** The perceived brightness of a ``#rrggbb`` colour, 0-255, good enough to order two inks. */
+function brightness(hex: string): number {
+  const value = Number.parseInt(hex.slice(1), 16)
+  const r = (value >> 16) & 0xff
+  const g = (value >> 8) & 0xff
+  const b = value & 0xff
+  return 0.299 * r + 0.587 * g + 0.114 * b
+}
 
 /** One space of every kind the spec has to tell apart. */
 const SAMPLES = {
@@ -197,6 +209,85 @@ describe('the painters the scene calls', () => {
     // capture and the person looking at the board.
     expect(typeof paintSpace).toBe('function')
     expect(paintSpace.length).toBe(3)
+  })
+})
+
+describe('the frame of an owned cell', () => {
+  const TONE = SEAT_TONES[2]
+
+  function framed(index: number, ink: string | null): RecordingContext {
+    const ctx = new RecordingContext()
+    paintSpace(ctx as unknown as CanvasRenderingContext2D, spaceTextureSpec(index), CELL_TEXTURE_SIZE, ink)
+    return ctx
+  }
+
+  it('hugs the cell’s own edge, wider than the printed rule it replaces', () => {
+    // An owned cell is read from the far side of the table: the frame takes the
+    // printed border's place, so it starts at the sheet's edge and is wide
+    // enough to still be a colour when the cell is a few dozen pixels across.
+    const frame = ownerFrame(CELL_TEXTURE_SIZE)
+
+    expect(frame.x).toBe(frame.lineWidth / 2)
+    expect(frame.x + frame.width + frame.lineWidth / 2).toBe(CELL_TEXTURE_SIZE)
+    expect(frame.y).toBe(frame.lineWidth / 2)
+    expect(frame.height).toBe(frame.width)
+    // A readability floor, in pixels of the 256 px face: below it the tone is
+    // indistinguishable from the black rule it replaced at the far edge.
+    expect(frame.lineWidth).toBeGreaterThanOrEqual(6)
+  })
+
+  it('leaves every space nobody owns with its printed rule and no glow', () => {
+    for (const space of BOARD) {
+      const ctx = new RecordingContext()
+      paintSpace(ctx as unknown as CanvasRenderingContext2D, spaceTextureSpec(space.index), CELL_TEXTURE_SIZE)
+      const strokes = ctx.of('strokeRect')
+
+      expect([space.index, strokes.length]).toEqual([space.index, 1])
+      expect([space.index, strokes[0].shadow]).toEqual([space.index, undefined])
+    }
+  })
+
+  it('frames an owned space in its seat’s tone instead of the printed rule', () => {
+    // Two strokes and no third: the printed black border is not painted under
+    // the frame, because the frame lands exactly where it was.
+    const frame = ownerFrame(CELL_TEXTURE_SIZE)
+    for (const index of PURCHASABLE_INDEXES) {
+      const strokes = framed(index, TONE).of('strokeRect')
+
+      expect([index, strokes.map((call) => call.args)]).toEqual([
+        index,
+        [[frame.x, frame.y, frame.width, frame.height], [frame.x, frame.y, frame.width, frame.height]],
+      ])
+      expect([index, strokes.map((call) => call.ink)]).toEqual([
+        index,
+        [mixWithWhite(TONE, 0.55), TONE],
+      ])
+    }
+  })
+
+  it('blooms a lighter mix of the tone inward, so the frame reads as light', () => {
+    // The same two passes as a toned chip (``figureTexture.ts``): the bloom
+    // first, carrying its own colour as a shadow, then the crisp rim over it.
+    // A dark rim on its own reads as ink, not as neon.
+    const [bloom, rim] = framed(1, TONE).of('strokeRect')
+
+    expect(bloom.ink).toBe(mixWithWhite(TONE, 0.55))
+    expect(bloom.shadow?.colour).toBe(bloom.ink)
+    expect(bloom.shadow?.blur).toBeGreaterThan(0)
+    expect(brightness(bloom.ink)).toBeGreaterThan(brightness(rim.ink))
+    expect(rim.ink).toBe(TONE)
+    expect(rim.shadow).toBeUndefined()
+  })
+
+  it('frames a cell whose seat the roster cannot name in the neutral ink', () => {
+    // Ownership is the server's fact and stays marked; the seat's colour is the
+    // only thing a roster without that seat withholds.
+    const strokes = framed(3, null).of('strokeRect')
+
+    expect(strokes.map((call) => call.ink)).toEqual([
+      mixWithWhite(OWNER_FRAME_INK, 0.55),
+      OWNER_FRAME_INK,
+    ])
   })
 })
 

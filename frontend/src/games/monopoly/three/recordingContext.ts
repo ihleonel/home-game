@@ -14,6 +14,14 @@
  * the headless capture and the person looking at the board.
  */
 
+/**
+ * The shadow a call was drawn with, when it carried one.
+ *
+ * A glow is a stroke plus a shadow of the same ink, so a suite that only read
+ * the ink could not tell a lit frame from a flat one.
+ */
+export type RecordedShadow = { colour: string; blur: number }
+
 /** One recorded call: the operation, the ink it used and its arguments. */
 export type DrawCall = {
   op: string
@@ -22,6 +30,8 @@ export type DrawCall = {
   args: readonly number[]
   /** The string argument of ``fillText``, when the operation has one. */
   text?: string
+  /** The shadow in force when the call was made, or absent for an unlit shape. */
+  shadow?: RecordedShadow
 }
 
 /** The approximation the double uses for the width of a character, in ems. */
@@ -44,6 +54,8 @@ export class RecordingContext {
   font = '10px sans-serif'
   textAlign = 'start'
   textBaseline = 'alphabetic'
+  shadowColor = 'transparent'
+  shadowBlur = 0
 
   /** The calls of one operation. */
   of(op: string): DrawCall[] {
@@ -56,7 +68,9 @@ export class RecordingContext {
   }
 
   private push(op: string, args: number[] = [], text?: string, ink?: string): void {
-    this.calls.push({ op, args, text, ink: ink ?? '' })
+    const call: DrawCall = { op, args, text, ink: ink ?? '' }
+    if (this.shadowBlur > 0) call.shadow = { colour: this.shadowColor, blur: this.shadowBlur }
+    this.calls.push(call)
   }
 
   private pushFill(op: string, args: number[] = []): void {

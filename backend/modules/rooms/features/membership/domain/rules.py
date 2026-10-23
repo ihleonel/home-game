@@ -3,6 +3,10 @@ from dataclasses import dataclass
 
 PLAYER_ROLE = 'player'
 SPECTATOR_ROLE = 'spectator'
+SPECTATOR_NAME_PREFIX = 'Espectador'
+MISSING_IDENTITY_MESSAGE = (
+    'Este campo es obligatorio para participar en una sala nueva.'
+)
 
 
 @dataclass(frozen=True)
@@ -104,12 +108,44 @@ def membership_change(
     return MembershipChange(tuple(updates.items()), event_name)
 
 
-def missing_identity_fields(data):
+def missing_identity_fields(identity):
+    """The identity values a new participant still has to carry (S4).
+
+    An explicit spectator may arrive without them: the platform assigns the
+    missing ones before this check, and a player entry never does.
+    """
     return {
-        field: 'Este campo es obligatorio para participar en una sala nueva.'
+        field: MISSING_IDENTITY_MESSAGE
         for field in ('display_name', 'game_marker')
-        if field not in data
+        if not identity.get(field)
     }
+
+
+def next_spectator_display_name(used_display_names):
+    """The first free ``Espectador N`` name in the room (S4).
+
+    The number is per room and deterministic, so two anonymous spectators
+    never collide and a player who is already called ``Espectador 1`` is
+    respected instead of duplicated.
+    """
+    number = 1
+    while f'{SPECTATOR_NAME_PREFIX} {number}' in used_display_names:
+        number += 1
+    return f'{SPECTATOR_NAME_PREFIX} {number}'
+
+
+def first_free_game_marker(used_game_markers, seat_option_ids):
+    """The first marker the room is not using, else the game's first (S4).
+
+    A spectator holds no seat, so its marker is only the visual chip the
+    roster and the match screen show. It must still be an option the game
+    offers, and a room that already uses every option falls back to the first
+    one instead of inventing an unknown marker.
+    """
+    for option_id in seat_option_ids:
+        if option_id not in used_game_markers:
+            return option_id
+    return seat_option_ids[0] if seat_option_ids else None
 
 
 def game_matches(room_game_id, requested_game_id):
