@@ -38,6 +38,11 @@ class GameRegistry:
 
         ``markers`` is the compatibility name for the definition's
         ``seat_options``; the DTO shape must not drift from the static catalog.
+
+        The DTOs come back **in registration order**, and that order is served to
+        the frontend unchanged: the lobby renders the array as it arrives and
+        never sorts it. Which game is offered first is therefore decided by the
+        order of the tuple in the composition root, not here.
         """
         return tuple(
             {

@@ -34,15 +34,18 @@ class GameCatalogApiTests(APITestCase):
 
     def test_catalog_serves_exactly_the_registered_games_with_their_seat_options(self):
         catalog = self.get_catalog()
+        # The facts are looked up by id and never by position. The order is a rule
+        # of its own (``test_monopoly_leads_the_catalog``), and pinning a label, a
+        # description or a marker list to an index makes any reorder rewrite facts
+        # it never changed.
+        by_id = {game['id']: game for game in catalog}
 
         self.assertEqual(_normalized(catalog), _normalized(GAME_REGISTRY.list_games()))
-        self.assertEqual(
-            [game['id'] for game in catalog], ['duelo', 'ta-te-ti', 'monopoly']
-        )
+        self.assertEqual(set(by_id), {'duelo', 'ta-te-ti', 'monopoly'})
         self.assertEqual(
             [
                 (marker['id'], marker['label'])
-                for marker in catalog[0]['markers']
+                for marker in by_id['duelo']['markers']
             ],
             [
                 ('guante-rojo', 'Guante rojo'),
@@ -51,13 +54,13 @@ class GameCatalogApiTests(APITestCase):
             ],
         )
         self.assertEqual(
-            (catalog[1]['label'], catalog[1]['description']),
+            (by_id['ta-te-ti']['label'], by_id['ta-te-ti']['description']),
             ('Ta-te-ti', 'Formá una línea de tres y ganá la partida.'),
         )
         self.assertEqual(
             [
                 (marker['id'], marker['label'])
-                for marker in catalog[1]['markers']
+                for marker in by_id['ta-te-ti']['markers']
             ],
             [
                 ('sol', 'Sol'),
@@ -66,7 +69,7 @@ class GameCatalogApiTests(APITestCase):
             ],
         )
         self.assertEqual(
-            (catalog[2]['label'], catalog[2]['description']),
+            (by_id['monopoly']['label'], by_id['monopoly']['description']),
             (
                 'Monopoly',
                 'Comprá, alquilá y llevá a la quiebra a tus rivales: gana el último solvente.',
@@ -75,7 +78,7 @@ class GameCatalogApiTests(APITestCase):
         self.assertEqual(
             [
                 (marker['id'], marker['label'])
-                for marker in catalog[2]['markers']
+                for marker in by_id['monopoly']['markers']
             ],
             [
                 ('sombrero', 'Sombrero'),
@@ -90,6 +93,17 @@ class GameCatalogApiTests(APITestCase):
                 ('pato', 'Pato'),
             ],
         )
+
+    def test_monopoly_leads_the_catalog(self):
+        """Monopoly is the first game the lobby offers (S1).
+
+        The rule is asserted on the served catalog and not on the registry, so a
+        registry reorder that never reaches the endpoint cannot pass this test by
+        accident.
+        """
+        catalog = self.get_catalog()
+
+        self.assertEqual(catalog[0]['id'], 'monopoly')
 
     def test_catalog_dto_has_exactly_the_four_expected_keys(self):
         for game in self.get_catalog():
