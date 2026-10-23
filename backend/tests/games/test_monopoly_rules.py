@@ -66,6 +66,12 @@ class MonopolyRulesTestCase(SimpleTestCase):
     def _act(self, state, seat, name):
         return rules.apply_action(state, seat, Action(name=name), None)
 
+    def _confirm(self, state, seat='seat-0', *faces):
+        """Confirm the pending card, with the dice its effect may still need."""
+        return rules.apply_action(
+            state, seat, Action(name='confirm_card'), ScriptedRng(*faces)
+        )
+
     def _facts(self, transition):
         """Flatten the facts of a transition into ``(name, seat, detail)``."""
         return tuple(
@@ -1059,7 +1065,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
         state = self._place(state, 'seat-0', 4)
         state = self._top_card(state, cards.CHANCE, 'chance-12')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(
             transition.state['players']['seat-0']['cash'], 1500 - (25 * 2 + 100)
@@ -1074,7 +1080,7 @@ class MonopolyBuildingTests(MonopolyRulesTestCase):
         state = self._place(state, 'seat-0', 14)
         state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-14')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(
             transition.state['players']['seat-0']['cash'], 1500 - (40 + 115)
@@ -1541,7 +1547,7 @@ class MonopolyDeckTests(MonopolyRulesTestCase):
             self._place(self._open(), 'seat-0', 4), cards.CHANCE, 'chance-09'
         )
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(len(transition.state['decks'][cards.CHANCE]), 15)
         self.assertNotIn('chance-09', transition.state['decks'][cards.CHANCE])
@@ -1552,13 +1558,206 @@ class MonopolyDeckTests(MonopolyRulesTestCase):
         )
 
 
+def _public_card(pending):
+    """The part of a card decision the view may publish (S4 of the increment)."""
+    return {key: pending[key] for key in ('kind', 'deck', 'id')}
+
+
+class MonopolyCardConfirmationTests(MonopolyRulesTestCase):
+    """The card waits for its seat to read it (S1 to S3 of ``monopoly-card-modal.md``)."""
+
+    def test_landing_on_a_card_space_turns_the_card_up_and_stops(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 4), cards.CHANCE, 'chance-13'
+        )
+
+        transition = self._roll(state, 'seat-0', 1, 2)
+
+        # The card is drawn and announced, and nothing it orders has happened.
+        self.assertEqual(
+            _public_card(transition.state['pending']),
+            {'kind': 'card', 'deck': cards.CHANCE, 'id': 'chance-13'},
+        )
+        self.assertEqual(transition.state['phase'], rules.PHASE_AWAITING_DECISION)
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1500)
+        self.assertNotIn('card_paid', [fact[0] for fact in self._facts(transition)])
+        self.assertEqual(
+            [fact[0] for fact in self._facts(transition)],
+            ['roll_recorded', 'moved', 'card_drawn'],
+        )
+
+    def test_the_card_decision_offers_the_confirm_and_nothing_else(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 4), cards.CHANCE, 'chance-13'
+        )
+        opened = self._roll(state, 'seat-0', 1, 2).state
+
+        specs = rules.legal_actions(opened, 'seat-0')
+        self.assertIn('confirm_card', [spec.name for spec in specs])
+        self.assertEqual(
+            [spec.prompt for spec in specs if spec.name == 'confirm_card'],
+            ['Aceptá la carta.'],
+        )
+        # The turn's own actions are gone until the card is answered.
+        for blocked in ('roll', 'end_turn', 'buy', 'decline'):
+            with self.subTest(action=blocked):
+                self.assertNotIn(blocked, [spec.name for spec in specs])
+
+    def test_only_the_seat_on_turn_may_confirm_the_card(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 4), cards.CHANCE, 'chance-13'
+        )
+        opened = self._roll(state, 'seat-0', 1, 2).state
+
+        self.assertNotIn('confirm_card', self._names(opened, 'seat-1'))
+        with self.assertRaises(ValueError):
+            self._confirm(opened, 'seat-1')
+
+    def test_confirming_applies_the_effect_and_clears_the_card(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 4), cards.CHANCE, 'chance-13'
+        )
+        opened = self._roll(state, 'seat-0', 1, 2).state
+
+        transition = self._confirm(opened)
+
+        self.assertEqual(transition.state['players']['seat-0']['cash'], 1485)
+        self.assertIsNone(transition.state['pending'])
+        self.assertEqual(transition.state['phase'], rules.PHASE_MANAGING)
+        self.assertIn(
+            ('card_paid', 'seat-0', {'amount': 15, 'to': None}),
+            self._facts(transition),
+        )
+        self.assertNotIn('confirm_card', self._names(transition.state, 'seat-0'))
+
+    def test_a_card_cannot_be_confirmed_twice(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 4), cards.CHANCE, 'chance-08'
+        )
+        opened = self._roll(state, 'seat-0', 1, 2).state
+        applied = self._confirm(opened).state
+
+        with self.assertRaises(ValueError):
+            self._confirm(applied)
+
+    def test_a_card_on_a_doubles_keeps_the_extra_turn_for_after_the_accept(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 3), cards.CHANCE, 'chance-08'
+        )
+
+        opened = self._roll(state, 'seat-0', 2, 2)
+        # While the card is pending the roll owns neither a new throw nor the turn.
+        self.assertEqual(opened.state['phase'], rules.PHASE_AWAITING_DECISION)
+        self.assertEqual(opened.state['turn'], 'seat-0')
+
+        applied = self._confirm(opened.state)
+
+        self.assertEqual(applied.state['players']['seat-0']['cash'], 1550)
+        self.assertEqual(applied.state['phase'], rules.PHASE_AWAITING_ROLL)
+        self.assertEqual(applied.state['turn'], 'seat-0')
+        self.assertIn('roll', self._names(applied.state, 'seat-0'))
+
+    def test_a_card_that_advances_opens_its_purchase_after_the_accept(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 2), cards.CHANCE, 'chance-04'
+        )
+        opened = self._roll(state, 'seat-0', 2, 3).state
+        self.assertEqual(
+            _public_card(opened['pending']),
+            {'kind': 'card', 'deck': cards.CHANCE, 'id': 'chance-04'},
+        )
+
+        applied = self._confirm(opened)
+
+        self.assertEqual(applied.state['players']['seat-0']['position'], 11)
+        # St. Charles Place is unowned, so the card leaves the seat deciding.
+        self.assertEqual(applied.state['pending'], {'kind': 'purchase', 'space': 11})
+        self.assertEqual(applied.state['phase'], rules.PHASE_AWAITING_DECISION)
+
+    def test_the_card_chain_opens_the_second_card_and_pays_nothing_yet(self):
+        """Going back three from Chance 36 lands on Community Chest 33 (S3)."""
+        state = self._place(self._open(), 'seat-0', 33)
+        state = self._top_card(state, cards.CHANCE, 'chance-10')
+        state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-02')
+
+        # 33 + 3 = 36, a Chance space, which goes back three to 33.
+        opened = self._roll(state, 'seat-0', 1, 2)
+        self.assertEqual(opened.state['pending']['id'], 'chance-10')
+        # The card record keeps what the effect needs and never publishes it.
+        self.assertEqual(opened.state['pending']['faces'], [1, 2])
+        self.assertIs(opened.state['pending']['extra'], False)
+
+        chained = self._confirm(opened.state)
+        self.assertEqual(chained.state['players']['seat-0']['position'], 33)
+        self.assertEqual(chained.state['players']['seat-0']['cash'], 1500)
+        self.assertEqual(
+            _public_card(chained.state['pending']),
+            {'kind': 'card', 'deck': cards.COMMUNITY_CHEST, 'id': 'community_chest-02'},
+        )
+        self.assertEqual(
+            [fact[2]['id'] for fact in self._facts(opened) if fact[0] == 'card_drawn'],
+            ['chance-10'],
+        )
+        self.assertEqual(
+            [fact[2]['id'] for fact in self._facts(chained) if fact[0] == 'card_drawn'],
+            ['community_chest-02'],
+        )
+
+        applied = self._confirm(chained.state)
+        self.assertEqual(applied.state['players']['seat-0']['cash'], 1700)
+        self.assertIsNone(applied.state['pending'])
+
+    def test_confirming_a_charge_the_cash_cannot_cover_opens_the_debt_window(self):
+        state = self._place(self._open(), 'seat-0', 14)
+        state = self._cash(state, 'seat-0', 10)
+        state = self._give(state, 39, 'seat-0')
+        state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-11')
+        opened = self._roll(state, 'seat-0', 1, 2).state
+        self.assertEqual(opened['phase'], rules.PHASE_AWAITING_DECISION)
+
+        charged = self._confirm(opened)
+
+        self.assertEqual(charged.state['phase'], rules.PHASE_RAISING_CASH)
+        self.assertEqual(charged.state['debt']['amount'], 100)
+        self.assertIn(
+            ('debt_incurred', 'seat-0', {'amount': 100, 'creditor': None}),
+            self._facts(charged),
+        )
+        # The window raised its cash and the debt resumes the step the card
+        # interrupted, which is the same continuation a printed charge stores.
+        raised = rules.apply_action(
+            charged.state, 'seat-0', Action(name='mortgage', value='39'), None
+        ).state
+        paid = rules.apply_action(raised, 'seat-0', Action(name='pay_debt'), None)
+        self.assertEqual(paid.state['players']['seat-0']['cash'], 110)
+        self.assertEqual(paid.state['phase'], rules.PHASE_MANAGING)
+        self.assertIsNone(paid.state['debt'])
+
+    def test_confirming_the_jail_card_puts_it_in_hand_and_ends_the_turn(self):
+        state = self._top_card(
+            self._place(self._open(), 'seat-0', 4), cards.CHANCE, 'chance-11'
+        )
+        opened = self._roll(state, 'seat-0', 1, 2).state
+
+        applied = self._confirm(opened)
+
+        player = applied.state['players']['seat-0']
+        self.assertEqual(player['position'], board.JAIL_INDEX)
+        self.assertIs(player['in_jail'], True)
+        self.assertEqual(applied.state['turn'], 'seat-1')
+        self.assertIn(
+            ('sent_to_jail', 'seat-0', {'reason': 'go_to_jail'}), self._facts(applied)
+        )
+
+
 class MonopolyCardMoneyTests(MonopolyRulesTestCase):
     """The money and player-to-player effects of a drawn card (S10, S11)."""
 
     def _draw(self, card_id, deck=cards.CHANCE, seat='seat-0', start=4, **setup):
+        """Roll onto the card space and accept the card it turns up (S2)."""
         state = self._place(self._open(**setup), seat, start)
         state = self._top_card(state, deck, card_id)
-        return self._roll(state, seat, 1, 2)
+        return self._confirm(self._roll(state, seat, 1, 2).state, seat)
 
     def test_a_card_can_collect_from_the_bank(self):
         transition = self._draw('community_chest-02', deck=cards.COMMUNITY_CHEST, start=14)
@@ -1583,7 +1782,7 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         state = self._place(state, 'seat-0', 14)
         state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-09')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1520)
         self.assertEqual(transition.state['players']['seat-1']['cash'], 1490)
@@ -1601,7 +1800,7 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         state = self._place(state, 'seat-0', 4)
         state = self._top_card(state, cards.CHANCE, 'chance-15')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1400)
         self.assertEqual(transition.state['players']['seat-1']['cash'], 1550)
@@ -1620,7 +1819,7 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         state = self._cash(self._place(self._open(), 'seat-0', 14), 'seat-0', 10)
         state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-11')
 
-        opened = self._roll(state, 'seat-0', 1, 2)
+        opened = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
         self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
         self.assertIn(
             ('debt_incurred', 'seat-0', {'amount': 100, 'creditor': None}),
@@ -1646,7 +1845,7 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         state = self._give(state, 6, 'seat-0')
         state = self._top_card(state, cards.CHANCE, 'chance-15')
 
-        opened = self._roll(state, 'seat-0', 1, 2)
+        opened = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
         self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
         self.assertEqual(opened.state['debt']['creditor'], 'seat-1')
         self.assertEqual(opened.state['debt']['amount'], 50)
@@ -1673,7 +1872,7 @@ class MonopolyCardMoneyTests(MonopolyRulesTestCase):
         state = rules.initial_state(('seat-0', 'seat-1', 'seat-2', 'seat-3'), 'seat-0')
         state = self._cash(state, 'seat-0', 60)
         state = self._top_card(state, cards.CHANCE, 'chance-15')
-        opened = self._land_on_card(state, 'seat-0', cards.CHANCE)
+        opened = self._confirm(self._land_on_card(state, 'seat-0', cards.CHANCE).state)
         self.assertEqual(opened.state['debt']['creditor'], 'seat-2')
         self.assertEqual(opened.state['debt']['resume']['remaining'], ['seat-3'])
 
@@ -1702,7 +1901,7 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
         # Railroad at 5 is nine spaces forward: the lap crosses GO.
         state = self._draw_from('chance-14', start=33)
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 5)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1700)
@@ -1712,7 +1911,7 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
     def test_advance_inside_the_lap_pays_no_salary_and_opens_the_purchase(self):
         state = self._draw_from('chance-03', start=19)
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 24)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1500)
@@ -1721,7 +1920,7 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
     def test_advance_to_go_collects_the_salary(self):
         state = self._draw_from('chance-02', start=19)
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 0)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1700)
@@ -1730,7 +1929,7 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
     def test_advance_pays_the_rent_of_the_space_it_reaches(self):
         state = self._give(self._draw_from('chance-01', start=19), 39, 'seat-1')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 39)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1450)
@@ -1740,7 +1939,7 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
         # Two railroads held is a $50 rent normally; the card doubles it.
         state = self._give(self._give(self._draw_from('chance-05'), 15, 'seat-1'), 25, 'seat-1')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 15)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1400)
@@ -1750,7 +1949,8 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
         # The landing throw is 1+2 and the card throws 3+4 on its own.
         state = self._give(self._draw_from('chance-07'), 12, 'seat-1')
 
-        transition = self._roll(state, 'seat-0', 1, 2, 3, 4)
+        drawn = self._roll(state, 'seat-0', 1, 2).state
+        transition = self._confirm(drawn, 'seat-0', 3, 4)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 12)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1430)
@@ -1761,7 +1961,7 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
     def test_the_nearest_utility_opens_the_purchase_when_it_is_unowned(self):
         state = self._draw_from('chance-07')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 12)
         self.assertEqual(transition.state['pending'], {'kind': 'purchase', 'space': 12})
@@ -1769,7 +1969,7 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
     def test_going_back_three_resolves_the_space_it_reaches(self):
         state = self._give(self._draw_from('chance-10', start=19), 19, 'seat-1')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 19)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1484)
@@ -1780,19 +1980,29 @@ class MonopolyCardMovementTests(MonopolyRulesTestCase):
         state = self._draw_from('chance-10', start=33)
         state = self._top_card(state, cards.COMMUNITY_CHEST, 'community_chest-02')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
-
-        self.assertEqual(transition.state['players']['seat-0']['position'], 33)
-        self.assertEqual(transition.state['players']['seat-0']['cash'], 1700)
+        drawn = self._roll(state, 'seat-0', 1, 2)
         self.assertEqual(
-            [fact[2]['id'] for fact in self._facts(transition) if fact[0] == 'card_drawn'],
-            ['chance-10', 'community_chest-02'],
+            [fact[2]['id'] for fact in self._facts(drawn) if fact[0] == 'card_drawn'],
+            ['chance-10'],
         )
+
+        # Accepting the first card walks back onto the other deck, which turns
+        # its own card up and waits for its own accept.
+        chained = self._confirm(drawn.state)
+        self.assertEqual(chained.state['players']['seat-0']['position'], 33)
+        self.assertEqual(chained.state['players']['seat-0']['cash'], 1500)
+        self.assertEqual(
+            [fact[2]['id'] for fact in self._facts(chained) if fact[0] == 'card_drawn'],
+            ['community_chest-02'],
+        )
+
+        applied = self._confirm(chained.state)
+        self.assertEqual(applied.state['players']['seat-0']['cash'], 1700)
 
     def test_going_to_jail_from_a_card_ends_the_turn_without_the_salary(self):
         state = self._draw_from('chance-11')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         player = transition.state['players']['seat-0']
         self.assertEqual(player['position'], board.JAIL_INDEX)
@@ -2097,7 +2307,7 @@ class MonopolyMortgageTests(MonopolyRulesTestCase):
         state = self._place(state, 'seat-0', 4)
         state = self._top_card(state, cards.CHANCE, 'chance-07')
 
-        transition = self._roll(state, 'seat-0', 1, 2)
+        transition = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
 
         self.assertEqual(transition.state['players']['seat-0']['position'], 12)
         self.assertEqual(transition.state['players']['seat-0']['cash'], 1500)
@@ -2315,7 +2525,7 @@ class MonopolyRaisingCashTests(MonopolyRulesTestCase):
         state = self._cash(state, 'seat-0', 70)
         state = self._top_card(state, cards.CHANCE, 'chance-15')
 
-        opened = self._roll(state, 'seat-0', 1, 2)
+        opened = self._confirm(self._roll(state, 'seat-0', 1, 2).state)
         self.assertEqual(opened.state['phase'], rules.PHASE_RAISING_CASH)
         self.assertEqual(opened.state['debt']['creditor'], 'seat-2')
         self.assertEqual(opened.state['debt']['amount'], 50)

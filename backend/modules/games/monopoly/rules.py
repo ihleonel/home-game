@@ -65,6 +65,7 @@ ACTION_ROLL = 'roll'
 ACTION_PAY_JAIL_FINE = 'pay_jail_fine'
 ACTION_BUY = 'buy'
 ACTION_DECLINE = 'decline'
+ACTION_CONFIRM_CARD = 'confirm_card'
 ACTION_PAY_INCOME_TAX_FIXED = 'pay_income_tax_fixed'
 ACTION_PAY_INCOME_TAX_PERCENT = 'pay_income_tax_percent'
 ACTION_END_TURN = 'end_turn'
@@ -741,6 +742,13 @@ def _phase_specs(state: Mapping, seat: str) -> tuple[ActionSpec, ...]:
 
     if phase == PHASE_AWAITING_DECISION:
         pending = state['pending'] or {}
+        if pending.get('kind') == 'card':
+            # The seat reads the card it just turned up and only then does the
+            # effect land, so the whole turn is a sequence the table can follow
+            # (S1, S2 of ``monopoly-card-modal.md``).
+            return (
+                ActionSpec(name=ACTION_CONFIRM_CARD, prompt='Aceptá la carta.'),
+            )
         if pending.get('kind') == 'purchase':
             index = pending['space']
             price = deeds.purchase_price(index)
@@ -1045,9 +1053,8 @@ def _resolve_landing(state, seat: str, faces, events, rng, rent_rule=None, extra
 
     deck = cards.deck_for_space(index)
     if deck is not None:
-        return _resolve_card(
-            state, seat, _draw(state, seat, deck, events), faces, events, rng, extra
-        )
+        _open_card(state, seat, deck, faces, extra, events)
+        return 'decision'
 
     if kind is board.SpaceKind.GO_TO_JAIL:
         _send_to_jail(state, seat, 'go_to_jail', events)
@@ -1108,6 +1115,47 @@ def _offer_purchase(state, seat: str, index: int, events) -> None:
     state['phase'] = PHASE_AWAITING_DECISION
     state['pending'] = {'kind': 'purchase', 'space': index}
     events.append(Fact(name='purchase_offered', seat=seat, detail={'space': index}))
+
+
+def _open_card(state, seat: str, deck: str, faces, extra: bool, events) -> None:
+    """Turn the top card of ``deck`` up and wait for the seat to read it (S1).
+
+    The card is drawn, recycled and announced here, exactly as before; what
+    changed is that its effect is not applied now. The pending record keeps what
+    the effect needs and what the view must never publish: the faces of the roll
+    that brought the token here -- a card that charges a utility rent uses those
+    -- and whether the roll was a double, so the extra turn still arrives after
+    the card is answered (S2 of ``monopoly-card-modal.md``).
+    """
+    card = _draw(state, seat, deck, events)
+    state['phase'] = PHASE_AWAITING_DECISION
+    state['pending'] = {
+        'kind': 'card',
+        'deck': card.deck,
+        'id': card.id,
+        'faces': list(faces),
+        'extra': extra,
+    }
+
+
+def _apply_confirm_card(state, seat: str, action, rng) -> Transition:
+    """Apply the pending card's effect now that the seat accepted it (S2, S3).
+
+    The effect resumes the same path an immediate draw used to take, including
+    the purchase decision, the jail, the extra turn and a chained card, so the
+    deferral changes when the effect lands, never what it does.
+    """
+    _require_phase(state, PHASE_AWAITING_DECISION)
+    pending = _require_pending(state, 'card')
+    card = cards.card_for(pending['id'])
+    faces = list(pending['faces'])
+    extra = pending['extra']
+    state = _copy(state)
+    events = []
+    state['pending'] = None
+    resolution = _resolve_card(state, seat, card, faces, events, rng, extra=extra)
+    _finish_step(state, resolution, extra, events)
+    return Transition(state=state, facts=tuple(events))
 
 
 def _draw(state, seat: str, deck: str, events):
@@ -2307,6 +2355,7 @@ _HANDLERS = {
     ACTION_PAY_JAIL_FINE: _apply_pay_jail_fine,
     ACTION_BUY: _apply_buy,
     ACTION_DECLINE: _apply_decline,
+    ACTION_CONFIRM_CARD: _apply_confirm_card,
     ACTION_PAY_INCOME_TAX_FIXED: _apply_income_tax_fixed,
     ACTION_PAY_INCOME_TAX_PERCENT: _apply_income_tax_percent,
     ACTION_END_TURN: _apply_end_turn,
