@@ -53,8 +53,11 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   the raise-cash window instead of ending the seat on the spot, so a debt reaches bankruptcy when
   the seat declares it, never automatically.
   The Chance and Community Chest decks are dealt: landing on either space turns up the top card
-  of its own deck, resolves it and recycles it to the bottom, and the classic United States set
-  of 32 cards is transcribed with a test that pins it card by card. Everything a card prints is
+  of its own deck, recycles it to the bottom and announces it, and the effect lands only when the
+  seat that drew it accepts the card in a dialog. A double that draws a card still gets its extra
+  turn after the accept, and a card that lands the token on the other deck turns a second card up
+  for its own accept. The classic United States set of 32 cards is transcribed with a test that
+  pins it card by card. Everything a card prints is
   implemented: advancing to a named space and paying the GO salary when the lap wraps, the
   nearest railroad with its doubled rent, the nearest utility with its fresh throw and ten times
   the throw, going back three spaces, going to jail, the Get Out of Jail Free card a seat holds
@@ -235,7 +238,9 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   attribute, never the `display` it has to resolve to -- the token wrapping, the colour bands and the
   little houses and hotel block, and the mortgaged stripe and its struck price over them, are
   verified in the markup they hang on, not in a browser; the same goes for the phone's bottom action
-  bar, whose `position: sticky`, `order` and compact padding no test resolves. The palette's
+  bar, whose `position: sticky`, `order` and compact padding no test resolves, and for the drawn
+  card's dialog, whose fixed overlay, dimming and centring no test resolves either -- the tests reach
+  its role, its labels and the accept it submits. The palette's
   contrast is the one part of that CSS which is measured instead of looked at: every text/background
   pair it introduces is checked against WCAG AA (36 pairs with the phone bar's debt line on the
   sunny chrome, worst 5.39:1, and that last pair about 14:1), because a bright palette is exactly
