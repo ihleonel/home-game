@@ -1451,3 +1451,122 @@
     max-width: 100%;
   }
 }
+
+/* ==========================================================================
+   The actions at the bottom of a phone.
+
+   S5 keeps the open debt and the offered actions outside every view, so no view
+   change can hide an obligation. On a phone that pair used to sit under the tab
+   strip, at the top of the page: the throw and the end of the turn were as far
+   from the thumb as the screen allows. Below the mobile breakpoint it leaves its
+   place and takes the last row of the panel, where it sticks to the bottom edge
+   of the screen -- the thumb's own zone, and the turn is always one tap away
+   instead of one scroll away.
+
+   ``order`` is what moves it, not the markup: the DOM order S5 relies on -- debt
+   and actions before the open view -- stays exactly as it is, so the keyboard
+   and a screen reader still walk the path they always walked and the desktop
+   layout, where the order is untouched, keeps reading the same way. The price is
+   that on a phone the drawn order puts the bar last while the focus order still
+   reaches it first; the reading order is the one every other width has, and the
+   bar is the pair the player acts with, so it is kept.
+
+   Sticky and not fixed: the bar stays inside the panel's flow, so the panel ends
+   *after* it and the page can always be scrolled far enough to reveal the last
+   row of the board and the strip under it. A fixed bar would need the panel to
+   reserve its height by hand, and a bar taller than that guess would trap the
+   end of the view underneath it.
+
+   ``:has`` is the same baseline as the ``color-mix`` this file already relies on
+   (every baseline browser has supported it since 2023); the selector keeps the
+   stretch below to the states that really show a bar, so a spectator and a
+   finished match pay nothing for it.
+   ========================================================================== */
+
+@media (max-width: 640px) {
+  /* The bar owns the bottom of the screen, and the panel is what gives it a
+     bottom: the panel fills the height the header leaves and the open view
+     absorbs that height, so the bar's own row is the panel's last one. Without
+     this stretch ``sticky`` only pins the bar when the content already
+     overflows, and a short view would leave it floating mid-screen -- lower
+     than before, but not at the thumb. The panel's bottom padding and margin go
+     with it: with them the bar would sit a rem higher once the page is fully
+     scrolled, and the whole strip would jump at the end of the scroll. */
+  .monopoly-panel:has(.monopoly-persistent) {
+    flex: 1;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  /* The open view takes the height the bar leaves, and the board sits in the
+     middle of it: on a phone the width caps the board, so growing it is not an
+     option and the air would otherwise pile up in one band between the board
+     and the bar. The lists in ``Cartera`` and ``Mesa`` stay top-aligned -- a
+     list that starts in the middle of an empty block reads as a mistake -- and
+     only the board takes the centre. */
+  .monopoly-pane {
+    flex: 1;
+  }
+
+  .monopoly-pane-tablero {
+    justify-content: center;
+  }
+
+  /* The bar is the last thing on the screen, so the screen's own bottom spacing
+     would only lift it off the edge again. */
+  .match-screen:has(.monopoly-persistent) {
+    padding-bottom: 0;
+  }
+
+  .monopoly-persistent {
+    order: 1;
+    position: sticky;
+    bottom: 0;
+    /* Below the countdown overlay (10), above the board's own cells (1). */
+    z-index: 5;
+    gap: 0.45rem;
+    /* ``env`` resolves to zero unless the viewport opts into the notch; with
+       the default viewport the browser already insets the layout above the home
+       indicator, and this line costs nothing there. */
+    padding: 0.55rem 0.55rem calc(0.55rem + env(safe-area-inset-bottom, 0px));
+    border: 2px solid var(--monopoly-brand);
+    border-radius: 0.75rem;
+    /* Opaque on purpose: while it is stuck it is painted over the view it
+       precedes, and the board must not show through the buttons. */
+    background: var(--monopoly-chrome);
+    box-shadow: 0 -0.35rem 1rem rgb(36 31 46 / 18%);
+  }
+
+  /* The bar is the card now, so the blocks inside it lose the frame they wear in
+     the flow: a card inside a card would spend the bar's height on borders. */
+  .monopoly-persistent .monopoly-debt,
+  .monopoly-persistent .monopoly-actions-block {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+  }
+
+  /* ``Deuda`` and ``Acciones`` still name the bar for a screen reader -- the
+     debt line already says what it is and the button group carries its own
+     ``aria-label`` -- while the printed title gives its row back to the buttons.
+     Clipped, never hidden. */
+  .monopoly-persistent .monopoly-block-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    clip-path: inset(50%);
+    border: 0;
+  }
+
+  /* A thumb target first: the buttons split the bar into two per row on a
+     narrow phone, and the minimum keeps every one of them at least 44px tall. */
+  .monopoly-persistent .monopoly-action {
+    flex: 1 1 8rem;
+    min-height: 2.75rem;
+  }
+}

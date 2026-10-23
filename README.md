@@ -185,7 +185,15 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   the player is in and a view change can never hide an obligation the seat still has to answer; the
   `Mesa` tab carries the count of the offers waiting in it and the `Cartera` tab the count of the
   actions waiting on the seat's own properties, so neither an offer nobody has answered nor an
-  action waiting on a property can go silently out of sight. The panel is dressed in the game's own bright palette: a sunny
+  action waiting on a property can go silently out of sight. On a phone that pair moves to the last
+  row of the panel and sticks to the bottom edge of the screen, inside the thumb's reach, so the
+  throw is one tap away instead of one scroll away; the move is a stylesheet `order`, so the markup
+  order and with it the keyboard and screen-reader path are the ones S5 always had -- a phone draws
+  the bar last while the focus order still meets it first, the one difference the trick buys and the
+  reason it stays off every other width -- and because the bar stays in the panel's flow, with
+  nothing to reserve and no guessed height, the page can still be scrolled far enough to show the
+  board's last row and the strip under it, the bar coming to rest on the screen's edge instead of
+  jumping off it. The panel is dressed in the game's own bright palette: a sunny
   chrome, the brand red on the open tab, on the offers badge and on every button the player acts
   with, the dollar green on money, and the eight canonical colour groups of the printed board --
   brighter than the muted values this screen used to carry and, at the same time, closer to the
@@ -222,10 +230,12 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   cards wear, the `hidden` rule that takes the two closed views off the screen -- the tests reach the
   attribute, never the `display` it has to resolve to -- the token wrapping, the colour bands and the
   little houses and hotel block, and the mortgaged stripe and its struck price over them, are
-  verified in the markup they hang on, not in a browser. The palette's contrast is the one part of
-  that CSS which is measured instead of looked at: every text/background pair it introduces is
-  checked against WCAG AA (35 pairs, worst 5.39:1), because a bright palette is exactly where
-  contrast breaks silently and the value is arithmetic rather than taste.
+  verified in the markup they hang on, not in a browser; the same goes for the phone's bottom action
+  bar, whose `position: sticky`, `order` and compact padding no test resolves. The palette's
+  contrast is the one part of that CSS which is measured instead of looked at: every text/background
+  pair it introduces is checked against WCAG AA (36 pairs with the phone bar's debt line on the
+  sunny chrome, worst 5.39:1, and that last pair about 14:1), because a bright palette is exactly
+  where contrast breaks silently and the value is arithmetic rather than taste.
 
 A finished match reports one of `three_in_a_row`, `draw`, `last_solvent` or `win_by_abandon` as
 its outcome reason (`duelo` reports `best_of_three` or `win_by_abandon`; `monopoly` reports
