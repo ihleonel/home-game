@@ -12,6 +12,7 @@
  */
 
 import type { MatchState } from '../registry'
+import type { MatchSeatRosterEntry } from '../matchRoster'
 import type { ColorGroup, SpaceKind } from './board'
 import type { MonopolyView } from './view'
 
@@ -119,4 +120,79 @@ export function formatMoney(value: number): string {
 export function seatName(match: MatchState<MonopolyView>, seatId: string): string {
   const entry = match.roster.find((candidate) => candidate.seat_id === seatId)
   return entry ? entry.display_name : 'Jugador'
+}
+
+/**
+ * The initial the board prints inside the badge and the token of a seat.
+ *
+ * A name with no letters at all (an empty roster name) still gets a glyph, so a
+ * badge is never blank: ``?`` says there is a name the client could not read.
+ */
+export function initialOf(name: string): string {
+  const first = name.trim().charAt(0)
+  return first === '' ? '?' : first.toUpperCase()
+}
+
+/**
+ * The ink of each seat, indexed by the roster's ``index``.
+ *
+ * The board answers "who owns this space". A name alone does not answer it at a
+ * glance: the badge is a handful of pixels wide, so two long names are clipped
+ * to the same shape and only a careful reader can tell them apart. A tone per
+ * seat is what a player actually scans, and it costs the protocol nothing: the
+ * roster already publishes the seat's index, every client derives the same
+ * tone, and the server never learns that a colour exists.
+ *
+ * Three rules keep it honest:
+ *
+ * 1. **One tone per seat the table can hold.** The palette is exactly eight
+ *    entries -- the printed board's own ``MAX_SEATS`` -- and never repeats
+ *    itself inside that range. An index beyond it wraps, which is a colour two
+ *    seats would share, and that is why the caller always prints the seat's
+ *    initial next to the tone: colour is never the only cue.
+ * 2. **It never competes with a colour group.** The eight deed colours are the
+ *    light or mid-tone hues of the printed board; these are deliberately dark
+ *    and muted. They also sit on different surfaces -- the group paints the
+ *    inner band, the owner paints the cell's frame and the badge's initial -- so
+ *    a player who cannot tell violet from navy still reads both facts.
+ * 3. **It is presentation, never state.** Nothing about ownership is derived
+ *    here: the seat comes from ``view.owners`` and its name from the roster.
+ *    A seat the roster does not name has no index, and therefore no tone.
+ */
+export const SEAT_TONES: readonly string[] = [
+  '#5b2a86', // violeta
+  '#0b7285', // petróleo
+  '#1b3a8f', // azul marino
+  '#4d5d1f', // oliva
+  '#9c1d3f', // vino
+  '#2f7d32', // verde bosque
+  '#6b2d5c', // ciruela
+  '#7a4a00', // ámbar oscuro
+]
+
+/**
+ * The tone of one seat index, or ``null`` when the index cannot name a seat.
+ *
+ * ``null`` is not a fallback colour on purpose: an unnameable seat gets the
+ * badge without the tone instead of a tone that would claim an identity.
+ */
+export function seatTone(index: number | null | undefined): string | null {
+  if (index === null || index === undefined) return null
+  if (!Number.isInteger(index) || index < 0) return null
+  return SEAT_TONES[index % SEAT_TONES.length]
+}
+
+/**
+ * The roster index of ``seatId``, or ``null`` when the roster does not name it.
+ *
+ * The index is read from the roster entry and never parsed out of the seat id:
+ * the id is an opaque string the server mints, while ``index`` is the public
+ * fact the tone is keyed on.
+ */
+export function seatIndexOf(
+  roster: readonly MatchSeatRosterEntry[],
+  seatId: string,
+): number | null {
+  const entry = roster.find((candidate) => candidate.seat_id === seatId)
+  return entry === undefined ? null : entry.index
 }

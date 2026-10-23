@@ -42,6 +42,20 @@ export const TOKEN_PAPER = '#fbf9f3'
 /** The ink: the rim, and the silhouette printed inside it. */
 export const TOKEN_INK = '#0d0b10'
 
+/**
+ * The margin the seat's bloom needs inside the texture, as a fraction of its
+ * side.
+ *
+ * The glow is painted into the same square canvas as the chip, and a shadow that
+ * runs past that edge is cut off -- a clipped halo reads as a square, not as
+ * light. So the chip keeps a margin, and ``Figure3D`` enlarges the sprite by the
+ * same fraction, which leaves the printed chip exactly the size it always was.
+ */
+export const TOKEN_HALO = 0.08
+
+/** How far the bloom spreads from the rim, as a fraction of the canvas side. */
+const GLOW_BLUR = 0.06
+
 /** Anisotropy the chips share with the cells and the dice. */
 const ANISOTROPY = 8
 
@@ -94,7 +108,58 @@ function inkPath(figure: PieceFigure): Path2D {
 }
 
 /**
- * Paint one token's face: paper, rim and silhouette.
+ * The inks of one chip: the printed paper, the rim and the bloom around it.
+ *
+ * Without a seat tone the chip is exactly the printed piece the project always
+ * shipped: black rim, no glow. With one, the rim takes the seat's tone and the
+ * bloom a lighter mix of the same tone, because a dark rim alone reads as ink on
+ * white paper and what the eye reads as neon is the bright halo around it.
+ */
+export type TokenInks = {
+  paper: string
+  rim: string
+  glow: string
+  /**
+   * How thick the rim is drawn, as a fraction of the canvas side.
+   *
+   * The printed rim is a hairline (``RIM_WIDTH``) and stays that way for a chip
+   * with no tone. A toned chip needs a wider band for a different reason: at the
+   * far edge of the table the chip is a couple of dozen pixels across, and a
+   * hairline in a dark tone is indistinguishable from the black ink it replaced,
+   * which is exactly the "I cannot see the colour" this increment fixes.
+   */
+  rimWidth: number
+}
+
+/**
+ * Mix a ``#rrggbb`` colour toward white by ``amount`` (0 keeps it, 1 whitens it).
+ *
+ * Written out instead of using ``color-mix`` because the chip is a canvas: CSS
+ * colour functions do not exist here, and a canvas cannot read a custom property
+ * without a mounted element. A spelling this function cannot read is returned
+ * unchanged rather than turned into a colour it did not inspect.
+ */
+export function mixWithWhite(hex: string, amount: number): string {
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return hex
+  const value = Number.parseInt(hex.slice(1), 16)
+  const channels = [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+  const mixed = channels.map((channel) => Math.round(channel + (255 - channel) * amount))
+  return `#${mixed.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
+}
+
+/** How much wider the rim of a toned chip is, as a fraction of the canvas side. */
+const TONED_RIM_WIDTH = 0.04
+
+/** The inks of a chip for a seat tone, or the printed inks when there is none. */
+export function tokenInks(tone: string | null): TokenInks {
+  if (tone === null) {
+    return { paper: TOKEN_PAPER, rim: TOKEN_INK, glow: 'transparent', rimWidth: RIM_WIDTH }
+  }
+  return { paper: TOKEN_PAPER, rim: tone, glow: mixWithWhite(tone, 0.55), rimWidth: TONED_RIM_WIDTH }
+}
+
+/**
+ * Paint one token's face: paper, rim, bloom and silhouette.
  *
  * Split from the texture so the drawing is one readable block, and because the
  * canvas is what a visual review looks at when the scene is too slow to trust.
@@ -105,18 +170,35 @@ export function paintToken(
   ctx: CanvasRenderingContext2D,
   figure: PieceFigure,
   size: number,
+  inks: TokenInks = tokenInks(null),
 ): void {
   ctx.clearRect(0, 0, size, size)
-  const rim = Math.max(2, size * RIM_WIDTH)
-  roundedSquare(ctx, rim / 2, rim / 2, size - rim, size * CARD_RADIUS)
-  ctx.fillStyle = TOKEN_PAPER
+  const margin = size * TOKEN_HALO
+  const face = size - 2 * margin
+  const rim = Math.max(2, size * inks.rimWidth)
+  roundedSquare(ctx, margin + rim / 2, margin + rim / 2, face - rim, face * CARD_RADIUS)
+  ctx.fillStyle = inks.paper
   ctx.fill()
+
+  // The bloom comes first, as one stroke of the glow ink carrying a shadow of
+  // its own colour: the shadow spreads into the margin and the stroke keeps the
+  // halo from looking like a blurry blob with no edge. A tone-less chip strokes
+  // with ``transparent``, so this is the printed piece with no glow at all.
+  ctx.save()
   ctx.lineWidth = rim
-  ctx.strokeStyle = TOKEN_INK
+  ctx.strokeStyle = inks.glow
+  ctx.shadowColor = inks.glow
+  ctx.shadowBlur = size * GLOW_BLUR
+  ctx.stroke()
+  ctx.restore()
+
+  // The rim itself, crisp, on top of its own glow.
+  ctx.lineWidth = rim
+  ctx.strokeStyle = inks.rim
   ctx.stroke()
 
-  const inset = size * INK_INSET
-  const scale = (size - 2 * inset) / INK_BOX
+  const inset = margin + face * INK_INSET
+  const scale = (face - 2 * face * INK_INSET) / INK_BOX
   ctx.save()
   ctx.translate(inset, inset)
   ctx.scale(scale, scale)
@@ -148,34 +230,35 @@ export function paintContactShadow(ctx: CanvasRenderingContext2D, size: number):
 }
 
 /**
- * The textures of the chips, one per figure.
+ * The textures of the chips, one per figure and seat tone.
  *
  * Cached and never disposed, like the forty cell faces: at most one texture per
- * marker exists in a match, they are tiny, and remounting the scene (switching to
- * the board tab and back) must not repaint or re-upload them.
+ * marker *per seat tone* exists in a match (bounded by the eight seats the board
+ * holds), they are tiny, and remounting the scene (switching to the board tab and
+ * back) must not repaint or re-upload them.
  */
-const TOKEN_TEXTURES = new Map<PieceFigure, CanvasTexture>()
+const TOKEN_TEXTURES = new Map<string, CanvasTexture>()
 
-/** The painted face of one figure, ready for a sprite. */
-export function tokenTexture(figure: PieceFigure): CanvasTexture {
-  const cached = TOKEN_TEXTURES.get(figure)
+/** The painted face of one figure in one seat tone, ready for a sprite. */
+export function tokenTexture(figure: PieceFigure, tone: string | null = null): CanvasTexture {
+  const key = `${figure}:${tone ?? 'none'}`
+  const cached = TOKEN_TEXTURES.get(key)
   if (cached !== undefined) return cached
   const canvas = document.createElement('canvas')
   canvas.width = TOKEN_TEXTURE_SIZE
   canvas.height = TOKEN_TEXTURE_SIZE
   const ctx = canvas.getContext('2d')
   if (ctx === null) throw new Error(`no 2d context for the token of ${figure}`)
-  paintToken(ctx, figure, TOKEN_TEXTURE_SIZE)
+  paintToken(ctx, figure, TOKEN_TEXTURE_SIZE, tokenInks(tone))
   const texture = toTexture(canvas, ANISOTROPY)
-  TOKEN_TEXTURES.set(figure, texture)
+  TOKEN_TEXTURES.set(key, texture)
   return texture
 }
 
 let contactShadow: CanvasTexture | null = null
 
 /** The one contact shadow every chip shares. */
-export function contactShadowTexture(): CanvasTexture {
-  if (contactShadow !== null) return contactShadow
+export function contactShadowTexture(): CanvasTexture {  if (contactShadow !== null) return contactShadow
   const canvas = document.createElement('canvas')
   canvas.width = SHADOW_TEXTURE_SIZE
   canvas.height = SHADOW_TEXTURE_SIZE

@@ -16,6 +16,13 @@
  * every seat and at every angle -- and the colour of the chip, not the angle, is
  * what tells two pieces on one cell apart.
  *
+ * **The chip carries the seat's tone.** Its rim is painted in the tone the 2D
+ * board, the owner badge and the players list already use, and a lighter bloom of
+ * the same tone glows around it -- the effect the printed chip needs to stay
+ * legible on a shared cell, where two seats with the same marker would otherwise
+ * be the same picture. ``paintToken`` owns that drawing and ``tokens.ts`` owns
+ * which tone each seat gets; this file only places the chip in the scene.
+ *
  * **What the bob costs.** Rendering is on demand (S11 of
  * ``monopoly-3d-table.md``), so a continuous animation has to ask for the next
  * frame: with the board tab open the scene renders continuously, and with it
@@ -32,11 +39,20 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useRef } from 'react'
 import type { Mesh, Sprite } from 'three'
 import type { PieceFigure } from './figures'
-import { contactShadowTexture, tokenTexture } from './figureTexture'
+import { TOKEN_HALO, contactShadowTexture, tokenTexture } from './figureTexture'
 import { usePrefersReducedMotion } from './useReducedMotion'
 
 /** The side of the chip, in cells: half a space, so two chips on one cell clear each other. */
 const TOKEN_SIZE = 0.5
+
+/**
+ * The side of the sprite, in cells.
+ *
+ * Larger than the chip by the margin the bloom needs: the halo is painted inside
+ * the texture, so the sprite carries that margin as transparent pixels and the
+ * printed chip stays exactly ``TOKEN_SIZE`` across.
+ */
+const TOKEN_PLANE = TOKEN_SIZE / (1 - 2 * TOKEN_HALO)
 
 /**
  * How high the middle of the chip floats over the printed surface, in cells.
@@ -84,12 +100,12 @@ function tokenPhase(figure: PieceFigure): number {
  * Drawn inside the group ``Tokens`` positions and walks, so the chip inherits the
  * walk's lift and the spread of a shared cell and only owns the float above them.
  */
-export function Figure3D({ figure }: { figure: PieceFigure }) {
+export function Figure3D({ figure, tone }: { figure: PieceFigure; tone: string | null }) {
   const chip = useRef<Sprite>(null)
   const shadow = useRef<Mesh>(null)
   const reduced = usePrefersReducedMotion()
   const invalidate = useThree((state) => state.invalidate)
-  const face = tokenTexture(figure)
+  const face = tokenTexture(figure, tone)
   const halo = contactShadowTexture()
   const phase = tokenPhase(figure)
 
@@ -127,7 +143,7 @@ export function Figure3D({ figure }: { figure: PieceFigure }) {
       <sprite
         ref={chip}
         position={[0, TOKEN_HEIGHT, 0]}
-        scale={[TOKEN_SIZE, TOKEN_SIZE, 1]}
+        scale={[TOKEN_PLANE, TOKEN_PLANE, 1]}
       >
         <spriteMaterial map={face} transparent depthWrite={false} toneMapped={false} />
       </sprite>

@@ -180,6 +180,16 @@
   border-color: var(--monopoly-you-border);
 }
 
+/* An owned space is framed in its owner's seat tone. The two colour cues never
+   share a surface: the group paints the inner band, the owner paints the frame,
+   so neither is read as the other. It is an inset ring and not a border, so the
+   cell's box does not change size when a space is bought. The pressed and
+   auction states are transient and urgent, so they keep their own ring and the
+   tone stays in the badge alone. */
+.monopoly-space[data-owned='true']:not([aria-pressed='true']):not(.monopoly-space-auction) {
+  box-shadow: inset 0 0 0 2px var(--monopoly-seat-tone, var(--monopoly-ink-soft));
+}
+
 .monopoly-space[aria-pressed='true'] {
   border-color: var(--monopoly-you-border);
   box-shadow: inset 0 0 0 2px var(--monopoly-brand-soft);
@@ -373,20 +383,46 @@
   letter-spacing: 0.06em;
 }
 
-/* The owner is a bordering badge with the player's name, never a bare colour. */
+/* The owner is a badge with the seat's tone, its initial and the player's name.
+   The name stays in the markup and the accessible name, but on a narrow cell it
+   is what gets clipped first: the initial is the part that survives, which is
+   why the tone never travels without it. The players list paints the same tone
+   for the same seat, so the list is the key of the board. */
 .monopoly-space-owner {
+  display: inline-flex;
   overflow: hidden;
   align-self: center;
+  align-items: center;
+  gap: 0.1rem;
   max-width: 100%;
-  padding: 0 0.12rem;
+  padding: 0 0.12rem 0 0.06rem;
   border: 1px solid var(--monopoly-ink-soft);
   border-radius: 0.15rem;
   background: var(--monopoly-paper);
   color: var(--monopoly-ink-soft);
   font-size: 0.36rem;
   font-weight: 700;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.monopoly-space-owner-initial {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 50%;
+  background: var(--monopoly-seat-tone, var(--monopoly-ink-soft));
+  color: var(--monopoly-brand-ink);
+  font-size: 0.28rem;
+  font-weight: 800;
+}
+
+.monopoly-space-owner-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .monopoly-space-tokens {
@@ -427,19 +463,30 @@
   justify-content: center;
   width: 0.62rem;
   height: 0.62rem;
-  border: 1px solid var(--monopoly-ink);
+  border: 1px solid var(--monopoly-seat-tone, var(--monopoly-ink));
   border-radius: 50%;
   background: var(--monopoly-paper);
   color: var(--monopoly-ink);
   font-size: 0.4rem;
   font-weight: 800;
   line-height: 1;
+  /* The seat's tone, as a lit rim: a tight glow in the tone itself and a wider
+     bloom in a lighter mix of it, which is what reads as neon on the printed
+     paper of the board instead of as a grey shadow. It is a ``filter`` and not
+     a ``box-shadow`` on purpose -- ``filter`` composes with the inset rings the
+     "you" and jailed states already paint, so the seat's colour can never
+     erase another cue. A token without a tone (a seat the roster cannot name)
+     gets ``transparent`` and therefore no glow at all. */
+  filter:
+    drop-shadow(0 0 0.05rem var(--monopoly-seat-tone, transparent))
+    drop-shadow(0 0 0.24rem color-mix(in srgb, var(--monopoly-seat-tone, transparent) 62%, #fff));
 }
 
 /* The viewer's own seat keeps its distinguishing ring, on the head now that
-   the token has two parts. */
+   the token has two parts. It deliberately does **not** touch the border: the
+   rim belongs to the seat's tone, and the brand ring inside it is what says
+   "this one is you", so the two cues add up instead of replacing each other. */
 .monopoly-token-you .monopoly-token-initial {
-  border-color: var(--monopoly-you-border);
   color: var(--monopoly-you);
   box-shadow: inset 0 0 0 2px var(--monopoly-brand-soft);
 }
@@ -1173,6 +1220,26 @@
   border-top: 1px solid var(--line);
   color: var(--monopoly-ink-soft);
   font-size: 0.85rem;
+}
+
+/* The swatch of a seat in the players list: the same tone the owned spaces are
+   framed in, so this list is the colour key of the board. It is round and it
+   prints the seat's initial, so the swatch is never colour alone. The ring
+   keeps it readable over the row's own background. */
+.monopoly-player-tone {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: var(--monopoly-ink-soft);
+  color: var(--monopoly-brand-ink);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .monopoly-player-name {

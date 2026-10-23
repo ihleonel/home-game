@@ -43,7 +43,7 @@ import { usePrefersReducedMotion } from './useReducedMotion'
 import { walkPlan, walkPose } from './walk'
 import type { WalkPlan } from './walk'
 import { Figure3D } from './Figure3D'
-import { figureFor } from './figures'
+import { seatedTokens } from './tokens'
 import {
   CENTRE_FACE,
   PILE_FACE,
@@ -638,10 +638,12 @@ function placeToken(
  * roster's ``game_marker`` to a silhouette and ``Figure3D`` prints it as a flat
  * token -- a chip of paper with the black figure on it, always facing the screen
  * -- because the project carries no ``.glb`` (S12c) and the primitives it used to
- * build read as lumps from a seat (``monopoly-flat-figures.md``, S3). The chip is
- * the same paper and ink for every piece, so what a piece says is which marker you
- * picked; it floats a little over its cell with a soft shadow underneath, which is
- * what tells the eye it is hovering rather than printed.
+ * build read as lumps from a seat (``monopoly-flat-figures.md``, S3). The chip
+ * keeps the same paper for every piece, so what its shape says is which marker
+ * you picked; its rim and bloom carry the seat's tone (``tokens.ts``), which is
+ * what separates two seats that picked the same marker. It floats a little over
+ * its cell with a soft shadow underneath, which is what tells the eye it is
+ * hovering rather than printed.
  *
  * **The walk waits for the dice.** The server publishes the position a throw
  * *reached*, never the cells it crossed, so the path is the client's arithmetic
@@ -660,7 +662,7 @@ function Tokens({
   /** Where the table should be facing while a piece walks (X11). */
   followPointRef: RefObject<Point3 | null>
 }) {
-  const seated = match.view.players.filter((player) => !player.eliminated)
+  const seated = seatedTokens(match)
   const reduced = usePrefersReducedMotion()
   const invalidate = useThree((state) => state.invalidate)
   const groups = useRef(new Map<string, Group>())
@@ -742,21 +744,18 @@ function Tokens({
 
   return (
     <group>
-      {seated.map((player) => {
-        const spot = tokenSpot(match.view.players, player.seat)
-        // The roster is where the player's marker lives (X5); a seat missing
-        // from it gets the neutral counter instead of a guessed figure.
-        const entry = match.roster.find((candidate) => candidate.seat_id === player.seat)
+      {seated.map(({ seat, figure, tone }) => {
+        const spot = tokenSpot(match.view.players, seat)
         return (
           <group
-            key={player.seat}
+            key={seat}
             position={[spot?.x ?? 0, BOARD_TOP, spot?.z ?? 0]}
             ref={(node: Group | null) => {
-              if (node === null) groups.current.delete(player.seat)
-              else groups.current.set(player.seat, node)
+              if (node === null) groups.current.delete(seat)
+              else groups.current.set(seat, node)
             }}
           >
-            <Figure3D figure={figureFor(entry?.game_marker ?? '')} />
+            <Figure3D figure={figure} tone={tone} />
           </group>
         )
       })}
