@@ -45,7 +45,11 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   unimproved rent, a railroad scales with how many the owner holds and a utility pays four or
   ten times the roll), both taxes, bankruptcy and elimination. Every seat throws for the
   opening turn and the highest total opens (ties re-throw), so its definition requires a real
-  `RandomSource` exactly as `ta-te-ti`'s does.
+  `RandomSource` exactly as `ta-te-ti`'s does. Every throw the rules make -- the turn's own roll, a
+  roll made from jail, the third double and the fresh throw a utility card forces -- is appended to
+  the match state in play order and never truncated, while the projected view publishes only the
+  newest 30: the snapshot stays bounded however long the match runs, and the whole history waits in
+  the state for the end-of-match statistics that are not built yet.
   Bankruptcy follows the printed rule's creditor split: a debt to another player hands that
   player the debtor's cash and properties, while a debt to the bank takes the cash out of the
   game and returns the properties to the bank unowned -- and that last part is one of the recorded
@@ -186,7 +190,15 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   of each built one, told by the colour band on the cards and by the block they share, with the group
   name kept for a screen reader alone so colour is never the only channel, and `Mesa` everything the table shares -- the roster of every seat with the swatch of the tone the board paints, and how many houses and hotels are left in the bank's box. The switch is a
   client-side choice: local state that no action carries anywhere, and the same three views for a
-  spectator, who still gets no button. Above the strip sits the seat's own colour in a chip that
+  spectator, who still gets no button. On the board view a spectator also reads the match's throws
+  in one chronological list, oldest first with the newest at the bottom: each row names the seat
+  with the tone the board paints, the two faces, the total and whether the throw was a double, keyed
+  by the throw's own sequence number because the published window slides and a key taken from the
+  position would end up naming a different throw. The list takes its own column beside the board
+  from 900px up and sits under the board on a smaller screen, with one bounded scroll that follows
+  the newest throw only while the reader is already at the bottom, so scrolling up to read an older
+  throw is not undone; a player never gets the list, since the seat on turn is the one acting and a
+  log of everyone's throws would be a fourth thing to read while the turn waits. Above the strip sits the seat's own colour in a chip that
   belongs to no view: the swatch, the initial and the name, pinned to the top edge of the screen, so
   switching view or scrolling the board never takes the reference away -- the roster that spells out
   which tone is whose lives in one view of three, and the owner badge on a cell is too small to be
