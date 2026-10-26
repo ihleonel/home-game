@@ -241,11 +241,12 @@ class MonopolyDefinitionTests(SimpleTestCase):
 
         self.assertEqual(view['decks'], {'chance': 16, 'community_chest': 16})
         self.assertIsNone(view['last_card'])
-        # The order is hidden information: the only list-valued fields are the
-        # roster and the seat's own actions, so no card id list can leak.
+        # The order is hidden information: the list-valued fields are the roster,
+        # the seat's own actions, the offers and the roll history, and none of
+        # them carries a card id -- a roll names a seat and two faces.
         self.assertEqual(
             sorted(key for key in view if isinstance(view[key], list)),
-            ['actions', 'offers', 'players'],
+            ['actions', 'offers', 'players', 'rolls'],
         )
 
     def test_the_opening_view_has_no_buildings_and_the_full_bank(self):
@@ -573,4 +574,71 @@ class MonopolyDefinitionTests(SimpleTestCase):
 
         self.assertEqual(
             view['debt'], {'seat': 'seat-0', 'creditor': None, 'amount': 75}
+        )
+
+
+class MonopolyRollHistoryViewTests(SimpleTestCase):
+    """The published window of the roll history (S2 of ``monopoly-roll-history.md``).
+
+    The state keeps every throw; the snapshot carries the last thirty, which is
+    what a spectator reads. The tests pin the window's size, its chronological
+    order and the exact shape of an entry, because a published field is a
+    contract the frontend parses.
+    """
+
+    def setUp(self):
+        self.definition = MonopolyDefinition()
+        seats = _seats()
+        dice = []
+        for seat in seats:
+            dice.extend([6, 6] if seat.index == 0 else [1, 1])
+        self.state = self.definition.start(seats, StubRng(dice=dice))
+
+    def _with_rolls(self, count):
+        state = copy.deepcopy(self.state)
+        state['rolls'] = [
+            {
+                'seq': seq,
+                'seat': 'seat-0' if seq % 2 == 0 else 'seat-1',
+                'dice': [1 + seq % 6, 1 + (seq + 1) % 6],
+                'doubles': False,
+            }
+            for seq in range(count)
+        ]
+        return state
+
+    def test_the_view_publishes_no_rolls_before_the_first_throw(self):
+        self.assertEqual(self.definition.view(self.state, 'seat-0')['rolls'], [])
+
+    def test_the_view_publishes_one_throw_in_play_order(self):
+        state = self.definition.apply(
+            self.state, 'seat-0', Action(name='roll'), StubRng(dice=[1, 2])
+        ).state
+
+        self.assertEqual(
+            self.definition.view(state, 'seat-0')['rolls'],
+            [{'seq': 0, 'seat': 'seat-0', 'dice': [1, 2], 'doubles': False}],
+        )
+
+    def test_the_view_publishes_only_the_last_thirty_rolls(self):
+        view = self.definition.view(self._with_rolls(40), None)
+
+        self.assertEqual(len(view['rolls']), 30)
+        self.assertEqual(view['rolls'][0]['seq'], 10)
+        self.assertEqual(view['rolls'][-1]['seq'], 39)
+        self.assertEqual(
+            [entry['seq'] for entry in view['rolls']], list(range(10, 40))
+        )
+
+    def test_a_match_with_fewer_than_thirty_rolls_publishes_the_ones_it_has(self):
+        view = self.definition.view(self._with_rolls(3), None)
+
+        self.assertEqual([entry['seq'] for entry in view['rolls']], [0, 1, 2])
+
+    def test_a_spectator_reads_the_same_roll_history(self):
+        state = self._with_rolls(5)
+
+        self.assertEqual(
+            self.definition.view(state, None)['rolls'],
+            self.definition.view(state, 'seat-0')['rolls'],
         )
