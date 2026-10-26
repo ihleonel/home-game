@@ -3337,3 +3337,85 @@ class MonopolyTradeTests(MonopolyRulesTestCase):
         self.assertEqual(self._names(pending, 'seat-1'), ('propose',))
         self._rejected(pending, 'seat-1', 'buy')
         self._rejected(pending, 'seat-1', 'decline')
+
+
+class MonopolyRollHistoryTests(MonopolyRulesTestCase):
+    """The roll history the state keeps (S1 of ``monopoly-roll-history.md``).
+
+    Every throw the rules make is appended in play order, because the view
+    publishes a window of it and the end of the match will read all of it. What
+    each test pins is the record and not the throw: the seat, the faces and the
+    doubles flag, with ``seq`` as the position that never moves because the list
+    is never truncated.
+    """
+
+    def _jailed(self, seat='seat-0', jail_turns=0):
+        state = rules.initial_state(('seat-0', 'seat-1'), seat)
+        return self._player(
+            state,
+            seat,
+            in_jail=True,
+            jail_turns=jail_turns,
+            position=board.JAIL_INDEX,
+        )
+
+    def test_a_new_match_opens_with_no_rolls(self):
+        self.assertEqual(self._open()['rolls'], [])
+
+    def test_a_turn_roll_is_recorded_with_its_seat_and_faces(self):
+        transition = self._roll(self._open(), 'seat-0', 2, 3)
+        self.assertEqual(
+            transition.state['rolls'],
+            [{'seq': 0, 'seat': 'seat-0', 'dice': [2, 3], 'doubles': False}],
+        )
+        # The record is additive: ``last_roll`` still means "the last throw".
+        self.assertEqual(transition.state['last_roll'], [2, 3])
+
+    def test_rolls_accumulate_in_play_order_across_seats(self):
+        # From 15 a 2 and a 3 land on Free Parking, so the seat keeps the turn
+        # and can hand it over without a purchase decision in the way.
+        first = self._roll(self._place(self._open(), 'seat-0', 15), 'seat-0', 2, 3)
+        ended = self._act(first.state, 'seat-0', 'end_turn')
+        second = self._roll(ended.state, 'seat-1', 6, 6)
+        self.assertEqual(
+            second.state['rolls'],
+            [
+                {'seq': 0, 'seat': 'seat-0', 'dice': [2, 3], 'doubles': False},
+                {'seq': 1, 'seat': 'seat-1', 'dice': [6, 6], 'doubles': True},
+            ],
+        )
+
+    def test_a_roll_made_from_jail_is_recorded(self):
+        transition = self._roll(self._jailed(), 'seat-0', 2, 3)
+        self.assertEqual(
+            transition.state['rolls'],
+            [{'seq': 0, 'seat': 'seat-0', 'dice': [2, 3], 'doubles': False}],
+        )
+
+    def test_the_third_double_is_recorded_before_the_jail(self):
+        first = self._roll(self._open(), 'seat-0', 5, 5)
+        second = self._roll(first.state, 'seat-0', 5, 5)
+        third = self._roll(second.state, 'seat-0', 5, 5)
+        self.assertEqual(
+            [entry['dice'] for entry in third.state['rolls']],
+            [[5, 5], [5, 5], [5, 5]],
+        )
+        self.assertEqual(
+            [entry['seq'] for entry in third.state['rolls']], [0, 1, 2]
+        )
+        self.assertTrue(all(entry['doubles'] for entry in third.state['rolls']))
+        self.assertEqual(third.state['players']['seat-0']['position'], board.JAIL_INDEX)
+
+    def test_the_roll_a_card_forces_is_recorded_with_the_same_seat(self):
+        state = self._give(self._open(), 12, 'seat-1')
+        state = self._place(state, 'seat-0', 4)
+        state = self._top_card(state, cards.CHANCE, 'chance-07')
+        drawn = self._roll(state, 'seat-0', 1, 2)
+        confirmed = self._confirm(drawn.state, 'seat-0', 3, 4)
+        self.assertEqual(
+            confirmed.state['rolls'],
+            [
+                {'seq': 0, 'seat': 'seat-0', 'dice': [1, 2], 'doubles': False},
+                {'seq': 1, 'seat': 'seat-0', 'dice': [3, 4], 'doubles': False},
+            ],
+        )

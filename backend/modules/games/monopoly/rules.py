@@ -157,6 +157,9 @@ def initial_state(
         'phase': PHASE_AWAITING_ROLL,
         'turn': first_seat,
         'last_roll': None,
+        # The match's roll history, in play order and never truncated (S1 of
+        # ``monopoly-roll-history.md``). The view publishes a window of it.
+        'rolls': [],
         'pending': None,
         'debt': None,
         'doubles_count': 0,
@@ -917,10 +920,29 @@ def _throw(state, seat: str, rng, events):
 
     Used by the turn's own roll and by the card that makes the seat throw
     again, so both record the throw the same way.
+
+    Every throw is also appended to ``state['rolls']``, the match's roll history
+    (S1 of ``monopoly-roll-history.md``): the entry carries the seat, the faces,
+    the doubles flag and its own ``seq``. The whole history stays in the state
+    for the end-of-match statistics; the view publishes only a window of it.
+    ``seq`` is the position in the list, which is stable because the list is
+    never truncated -- that is what lets the published window slide without
+    reusing a key. ``setdefault`` covers a snapshot written before this field
+    existed: a match already under way starts its history at its next throw
+    instead of failing.
     """
     faces = [rng.roll(DICE_SIDES) for _ in range(DICE_COUNT)]
     doubles = faces[0] == faces[1]
     state['last_roll'] = list(faces)
+    rolls = state.setdefault('rolls', [])
+    rolls.append(
+        {
+            'seq': len(rolls),
+            'seat': seat,
+            'dice': list(faces),
+            'doubles': doubles,
+        }
+    )
     events.append(
         Fact(
             name='roll_recorded',
