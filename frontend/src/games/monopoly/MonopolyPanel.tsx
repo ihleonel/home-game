@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { ReactElement, ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ReactElement, ReactNode, RefObject, UIEvent } from 'react'
 import type { MatchRendererProps, MatchState } from '../registry'
 import { BOARD_SIZE, isPurchasable, spaceAt } from './board'
 import type { ColorGroup, Space } from './board'
@@ -32,7 +32,13 @@ import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
 import { QUARTER_TURN } from './three/camera'
 import './monopoly.css'
-import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
+import type {
+  MonopolyAction,
+  MonopolyAuction,
+  MonopolyPlayer,
+  MonopolyRoll,
+  MonopolyView,
+} from './view'
 
 /**
  * The three views of a match screen (S1 of ``monopoly-view-switcher.md``).
@@ -998,6 +1004,14 @@ type MonopolyPanelLayoutProps = {
    * stopped; the two keyboard controls still ask for a whole quarter each.
    */
   sceneRotation?: { angle: number; onRotate: (direction: 1 | -1) => void }
+  /**
+   * How the spectator's roll history is scrolled (S5).
+   *
+   * The wrapper owns the ref, so this pure component never reads a hook and the
+   * markup tests can keep calling it directly. Without it the history still
+   * draws its throws; it only loses the follow-the-newest behaviour.
+   */
+  rollsScroll?: RollsScroll
 }
 
 /**
@@ -1020,6 +1034,7 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
   const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
   const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
   const [angle, setAngle] = useState(0)
+  const rollsScroll = useRollsScroll(match.view.rolls)
   return (
     <MonopolyPanelLayout
       match={match}
@@ -1046,7 +1061,113 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
         angle,
         onRotate: (direction) => setAngle((current) => current + direction * QUARTER_TURN),
       }}
+      rollsScroll={rollsScroll}
     />
+  )
+}
+
+/**
+ * Where the spectator's roll history is scrolled to (S5 of
+ * ``monopoly-roll-history.md``).
+ *
+ * The ref and the handler are built by the stateful wrapper, because the pure
+ * layout this file exports is what the markup tests call directly and a
+ * component that reads a hook cannot be called that way.
+ */
+type RollsScroll = {
+  scrollRef: RefObject<HTMLDivElement | null>
+  onScroll: (event: UIEvent<HTMLDivElement>) => void
+}
+
+/**
+ * Keep the roll history at its newest throw, while the reader is already there.
+ *
+ * Reading an older throw means scrolling up, and a log that pulled the view back
+ * down would take that reading away: the newest throw moves the scroll only when
+ * the reader was at the bottom before it arrived.
+ */
+function useRollsScroll(rolls: MonopolyRoll[]): RollsScroll {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const atBottom = useRef(true)
+  const newest = rolls.length === 0 ? null : rolls[rolls.length - 1].seq
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (node === null || !atBottom.current) return
+    node.scrollTop = node.scrollHeight
+  }, [newest])
+
+  return {
+    scrollRef,
+    onScroll: (event) => {
+      const node = event.currentTarget
+      // A pixel of slack, so a zoomed-in reader still counts as at the bottom.
+      atBottom.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 1
+    },
+  }
+}
+
+/**
+ * The throws the match has published, oldest first (S3-S5 of
+ * ``monopoly-roll-history.md``).
+ *
+ * Only a spectator reads it. A player has the board, the wallet and the table,
+ * and the seat on turn is the one acting, so a log of everyone's throws would be
+ * a fourth thing to read while the turn waits for them.
+ *
+ * The list is chronological with the newest throw at the bottom, and each row is
+ * keyed by the throw's own ``seq``: the window the server publishes slides, so a
+ * key taken from the position would end up naming a different throw.
+ */
+function RollHistory({
+  match,
+  view,
+  scroll,
+}: {
+  match: MatchState<MonopolyView>
+  view: MonopolyView
+  scroll?: RollsScroll
+}) {
+  return (
+    <aside aria-labelledby="monopoly-rolls-title" className="monopoly-rolls">
+      <h3 className="monopoly-block-title" id="monopoly-rolls-title">
+        Historial de tiradas
+      </h3>
+      <div
+        className="monopoly-rolls-scroll"
+        onScroll={scroll?.onScroll}
+        ref={scroll?.scrollRef ?? null}
+      >
+        {view.rolls.length === 0 ? (
+          <p className="monopoly-rolls-empty">Todavía no se tiraron los dados.</p>
+        ) : (
+          <ol aria-label="Tiradas de la partida" className="monopoly-rolls-list">
+            {view.rolls.map((roll) => {
+              const tone = seatTone(seatIndexOf(match.roster, roll.seat))
+              return (
+                <li className="monopoly-throw" key={roll.seq}>
+                  <span className="monopoly-throw-seat">
+                    <span
+                      aria-hidden="true"
+                      className="monopoly-throw-swatch"
+                      style={tone === null ? undefined : { background: tone }}
+                    />
+                    {seatName(match, roll.seat)}
+                  </span>
+                  <span className="monopoly-throw-dice">
+                    {`${roll.dice[0]} y ${roll.dice[1]}`}
+                  </span>
+                  <span className="monopoly-throw-total">
+                    {`(${roll.dice[0] + roll.dice[1]})`}
+                  </span>
+                  {roll.doubles && <span className="monopoly-throw-doubles">Dobles</span>}
+                </li>
+              )
+            })}
+          </ol>
+        )}
+      </div>
+    </aside>
   )
 }
 
@@ -1062,9 +1183,19 @@ export function MonopolyPanelLayout({
   onViewChange,
   boardScene,
   sceneRotation,
+  rollsScroll,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
+  /**
+   * Whether this screen holds no seat (S3 of ``monopoly-roll-history.md``).
+   *
+   * It is the same signal the identity chip above the tabs reads: the server
+   * projects ``you`` only for the seat it built the view for, so its absence
+   * is what being a spectator means. The seat index is not the signal -- a
+   * spectator still watches from somewhere.
+   */
+  const spectating = view.you === undefined
   const ownGroups = own === null ? [] : ownPropertyGroups(own)
   // The viewer's own tone, read from the same roster index the board's owned
   // spaces and the players list paint. ``null`` is not a fallback colour: a
@@ -1116,6 +1247,73 @@ export function MonopolyPanelLayout({
       {children}
     </div>
   )
+
+  /**
+   * The board view's content, whichever way it is drawn.
+   *
+   * The rendered table when the panel has one, and the flat board otherwise,
+   * which is what a screen reader reads and what a test without a renderer
+   * sees (S6 of ``monopoly-3d-table.md``). It is one value so the spectator's
+   * history can sit beside it without drawing the board twice.
+   */
+  const tablero =
+    boardScene === undefined ? (
+      <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
+    ) : (
+      <div className="monopoly-scene">
+        {boardScene}
+        {/*
+          X8: the middle of the rendered board prints the game's name and the
+          deck counts on its own surface, so the card that used to float over
+          the middle is gone -- a card sits in the middle of the frame, and
+          the table can now rest at any angle (X7). What still needs HTML
+          keeps a thin strip at the bottom edge, out of the board's way.
+        */}
+        <div className="monopoly-scene-strip">
+          <MonopolyTableCentre match={match} placement="strip" selected={selected} />
+        </div>
+        {sceneRotation !== undefined && (
+          /*
+            X2: the board is turned by dragging it. These two stay in the DOM
+            as the keyboard path -- a drag has none -- and the stylesheet keeps
+            them clipped until one of them takes focus.
+          */
+          <div className="monopoly-scene-turns" role="group" aria-label="Giro del tablero">
+            <button
+              aria-label="Girar el tablero a la izquierda"
+              className="monopoly-viewport-button"
+              onClick={() => sceneRotation.onRotate(-1)}
+              type="button"
+            >
+              ↺
+            </button>
+            <button
+              aria-label="Girar el tablero a la derecha"
+              className="monopoly-viewport-button"
+              onClick={() => sceneRotation.onRotate(1)}
+              type="button"
+            >
+              ↻
+            </button>
+          </div>
+        )}
+        {/*
+          S6: the accessible board. A canvas is invisible to a screen reader
+          and unreachable by the keyboard, so the forty buttons are still
+          here -- clipped out of sight, never ``display: none``, because that
+          would take away both the tab order and the announcement.
+        */}
+        <div className="monopoly-table-mirror">
+          <MonopolyBoard
+            centre="print"
+            match={match}
+            onFocus={onSelect}
+            onSelect={onSelect}
+            selected={selected}
+          />
+        </div>
+      </div>
+    )
 
   return (
     <section className="monopoly-panel" aria-label="Mesa de Monopoly">
@@ -1228,62 +1426,13 @@ export function MonopolyPanelLayout({
 
       {pane(
         'tablero',
-        boardScene === undefined ? (
-          <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
-        ) : (
-          <div className="monopoly-scene">
-            {boardScene}
-            {/*
-              X8: the middle of the rendered board prints the game's name and the
-              deck counts on its own surface, so the card that used to float over
-              the middle is gone -- a card sits in the middle of the frame, and
-              the table can now rest at any angle (X7). What still needs HTML
-              keeps a thin strip at the bottom edge, out of the board's way.
-            */}
-            <div className="monopoly-scene-strip">
-              <MonopolyTableCentre match={match} placement="strip" selected={selected} />
-            </div>
-            {sceneRotation !== undefined && (
-              /*
-                X2: the board is turned by dragging it. These two stay in the DOM
-                as the keyboard path -- a drag has none -- and the stylesheet keeps
-                them clipped until one of them takes focus.
-              */
-              <div className="monopoly-scene-turns" role="group" aria-label="Giro del tablero">
-                <button
-                  aria-label="Girar el tablero a la izquierda"
-                  className="monopoly-viewport-button"
-                  onClick={() => sceneRotation.onRotate(-1)}
-                  type="button"
-                >
-                  ↺
-                </button>
-                <button
-                  aria-label="Girar el tablero a la derecha"
-                  className="monopoly-viewport-button"
-                  onClick={() => sceneRotation.onRotate(1)}
-                  type="button"
-                >
-                  ↻
-                </button>
-              </div>
-            )}
-            {/*
-              S6: the accessible board. A canvas is invisible to a screen reader
-              and unreachable by the keyboard, so the forty buttons are still
-              here -- clipped out of sight, never ``display: none``, because that
-              would take away both the tab order and the announcement.
-            */}
-            <div className="monopoly-table-mirror">
-              <MonopolyBoard
-                centre="print"
-                match={match}
-                onFocus={onSelect}
-                onSelect={onSelect}
-                selected={selected}
-              />
-            </div>
+        spectating ? (
+          <div className="monopoly-tablero-with-rolls">
+            {tablero}
+            <RollHistory match={match} scroll={rollsScroll} view={view} />
           </div>
+        ) : (
+          tablero
         ),
       )}
 

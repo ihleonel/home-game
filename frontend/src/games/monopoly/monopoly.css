@@ -1599,6 +1599,116 @@
 }
 
 /* ==========================================================================
+   El historial de tiradas del espectador (S3-S5 of ``monopoly-roll-history.md``).
+
+   Solo el espectador lo lee, y solo en la solapa Tablero. Por defecto la pila
+   pone el historial debajo del tablero, que es lo que necesita un dispositivo
+   pequeño; a partir de 900px pasa a ser una columna al costado y el tablero se
+   queda con el ancho que le queda. El scroll es uno solo, el de la lista: el
+   encabezado no se va con ella.
+   ========================================================================== */
+
+.monopoly-tablero-with-rolls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.monopoly-rolls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-radius: 0.75rem;
+  background: var(--monopoly-card);
+}
+
+/* ``contain``: llegar al final del historial no arrastra la página. */
+.monopoly-rolls-scroll {
+  max-height: 18rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.monopoly-rolls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-throw {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.4rem;
+  padding: 0.1rem 0;
+  color: var(--monopoly-ink);
+  font-size: 0.82rem;
+}
+
+.monopoly-throw-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 700;
+}
+
+/* El tono del asiento, como en el chip de identidad y en las fichas: la fila
+   nunca se apoya solo en el nombre para decir de quién es la tirada. */
+.monopoly-throw-swatch {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 0.15rem;
+  background: var(--monopoly-ink-soft);
+}
+
+.monopoly-throw-dice,
+.monopoly-throw-total {
+  font-variant-numeric: tabular-nums;
+}
+
+.monopoly-throw-total {
+  color: var(--monopoly-ink-soft);
+}
+
+.monopoly-throw-doubles {
+  padding: 0 0.3rem;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--monopoly-brand) 16%, transparent);
+  color: var(--monopoly-brand);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.monopoly-rolls-empty {
+  margin: 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.85rem;
+}
+
+@media (min-width: 900px) {
+  .monopoly-tablero-with-rolls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(13rem, 17rem);
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .monopoly-rolls-scroll {
+    max-height: 60vh;
+  }
+}
+
+/* ==========================================================================
    The rendered table on a phone (W1).
    At 1400px the board takes the whole width. At 400px the two control rows and
    the strip would crowd it, so below this width the scene becomes a grid: the

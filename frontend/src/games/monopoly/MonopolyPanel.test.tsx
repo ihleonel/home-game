@@ -1612,3 +1612,90 @@ describe('turning the rendered table', () => {
     expect(elementsWithClass(view(), 'monopoly-scene-turns')).toHaveLength(0)
   })
 })
+
+describe('the spectator roll history', () => {
+  const ROLLS = [
+    { seq: 7, seat: 'seat-1', dice: [4, 6], doubles: false },
+    { seq: 8, seat: 'seat-0', dice: [5, 5], doubles: true },
+  ]
+
+  /** A spectator payload: the server projects no seat, so there is no ``you``. */
+  function spectatorView(overrides: Partial<MonopolyView> = {}): MonopolyView {
+    const payload = view({ rolls: ROLLS, ...overrides })
+    delete payload.you
+    return payload
+  }
+
+  function visibleClasses(rawView: MonopolyView, className: string, options: LayoutOptions): boolean {
+    const tree = MonopolyPanelLayout(layoutProps(rawView, options))
+    return visibleElements(tree).some((element) => classesOf(element).includes(className))
+  }
+
+  it('reads every throw of the published window, with its seat and total', () => {
+    const page = panelMarkup(spectatorView())
+
+    expect(page).toContain('Historial de tiradas')
+    expect(page).toContain('Beto')
+    expect(page).toContain('4 y 6')
+    expect(page).toContain('(10)')
+    expect(page).toContain('Ana')
+    expect(page).toContain('5 y 5')
+    expect(page).toContain('(10)')
+  })
+
+  it('marks a double and leaves the rest unmarked', () => {
+    const rows = elementsWithClass(spectatorView(), 'monopoly-throw')
+
+    expect(rows).toHaveLength(2)
+    const marked = rows.filter((row) =>
+      hostElements(row).some((element) => classesOf(element).includes('monopoly-throw-doubles')),
+    )
+    expect(marked).toHaveLength(1)
+    // The double is the newest throw: the 5 and 5 of the second row.
+    expect(marked[0].key).toBe('8')
+    expect(panelMarkup(spectatorView()).match(/Dobles/g)).toHaveLength(1)
+  })
+
+  it('keys each row by its own seq, so a sliding window never reuses one', () => {
+    const rows = elementsWithClass(spectatorView(), 'monopoly-throw')
+
+    expect(rows.map((row) => row.key)).toEqual(['7', '8'])
+  })
+
+  it('says so before the first throw instead of drawing an empty list', () => {
+    const page = panelMarkup(spectatorView({ rolls: [] }))
+
+    expect(page).toContain('Todavía no se tiraron los dados.')
+    expect(elementsWithClass(spectatorView({ rolls: [] }), 'monopoly-throw')).toHaveLength(0)
+  })
+
+  it('wraps the table and the history together, so the layout can place them', () => {
+    const page = spectatorView()
+    const wrapper = elementsWithClass(page, 'monopoly-tablero-with-rolls', {
+      boardScene: <div className="scratch-scene" />,
+    })
+
+    expect(wrapper).toHaveLength(1)
+    const inside = hostElements(wrapper[0]).map((element) => classesOf(element))
+    expect(inside.some((classes) => classes.includes('scratch-scene'))).toBe(true)
+    expect(inside.some((classes) => classes.includes('monopoly-rolls'))).toBe(true)
+  })
+
+  it('draws no history for a player, who has a seat of their own', () => {
+    const page = panelMarkup(view({ rolls: ROLLS }))
+
+    expect(page).not.toContain('Historial de tiradas')
+    expect(elementsWithClass(view({ rolls: ROLLS }), 'monopoly-rolls')).toHaveLength(0)
+    expect(
+      elementsWithClass(view({ rolls: ROLLS }), 'monopoly-tablero-with-rolls', {
+        boardScene: <div className="scratch-scene" />,
+      }),
+    ).toHaveLength(0)
+  })
+
+  it('stays inside the board view, which is the only tab that draws it', () => {
+    expect(visibleClasses(spectatorView(), 'monopoly-rolls', { activeView: 'tablero' })).toBe(true)
+    expect(visibleClasses(spectatorView(), 'monopoly-rolls', { activeView: 'cartera' })).toBe(false)
+    expect(visibleClasses(spectatorView(), 'monopoly-rolls', { activeView: 'mesa' })).toBe(false)
+  })
+})
