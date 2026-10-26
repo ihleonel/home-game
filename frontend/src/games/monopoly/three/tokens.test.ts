@@ -37,6 +37,7 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     players: [player({ seat: 'seat-0' })],
     owners: {},
     last_roll: null,
+    rolls: [],
     pending: null,
     decks: null,
     last_card: null,

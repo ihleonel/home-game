@@ -37,6 +37,7 @@ function view(owners: Record<string, string>): MonopolyView {
     players: [player('seat-0'), player('seat-1')],
     owners,
     last_roll: null,
+    rolls: [],
     pending: null,
     decks: null,
     last_card: null,

@@ -51,6 +51,7 @@ function rawView(overrides: Record<string, unknown> = {}): Record<string, unknow
     auction: null,
     offers: [],
     last_roll: [1, 2],
+    rolls: [{ seq: 0, seat: 'seat-0', dice: [1, 2], doubles: false }],
     pending: null,
     actions: [{ name: 'roll', prompt: 'Tirá los dados.', options: [], freeform: false }],
     you: 'seat-0',
@@ -92,6 +93,7 @@ describe('the monopoly view parser', () => {
     delete payload.bank
     delete payload.debt
     delete payload.offers
+    delete payload.rolls
 
     expect(parseMonopolyView(payload)).toEqual({
       finished: false,
@@ -109,6 +111,7 @@ describe('the monopoly view parser', () => {
       auction: null,
       offers: [],
       last_roll: null,
+      rolls: [],
       pending: null,
       actions: [],
     })
@@ -657,6 +660,48 @@ describe('the monopoly view parser', () => {
     expect(parseMonopolyView(rawView({ last_roll: [1, 2, 3] }))?.last_roll).toBeNull()
     expect(parseMonopolyView(rawView({ last_roll: [1, 7] }))?.last_roll).toBeNull()
     expect(parseMonopolyView(rawView({ last_roll: [6, 6] }))?.last_roll).toEqual([6, 6])
+  })
+
+  it('reads the roll history entry by entry, in the order it arrived', () => {
+    const rolls = [
+      { seq: 12, seat: 'seat-1', dice: [4, 6], doubles: false },
+      { seq: 13, seat: 'seat-0', dice: [5, 5], doubles: true },
+    ]
+
+    const view = parseMonopolyView(rawView({ rolls }))
+
+    expect(view?.rolls).toEqual(rolls)
+  })
+
+  it('drops an unreadable roll and keeps the rest of the history', () => {
+    const view = parseMonopolyView(
+      rawView({
+        rolls: [
+          { seq: 0, seat: 'seat-0', dice: [1, 2], doubles: false },
+          { seat: 'seat-0', dice: [1, 2], doubles: false },
+          { seq: 2, seat: '', dice: [1, 2], doubles: false },
+          { seq: 3, seat: 'seat-0', dice: [1, 7], doubles: false },
+          { seq: 4, seat: 'seat-0', dice: [1], doubles: false },
+          { seq: 5, seat: 'seat-0', dice: [1, 2], doubles: 'yes' },
+          { seq: 'six', seat: 'seat-0', dice: [1, 2], doubles: false },
+          'nope',
+          { seq: 9, seat: 'seat-1', dice: [3, 4], doubles: false },
+        ],
+      }),
+    )
+
+    expect(view?.rolls).toEqual([
+      { seq: 0, seat: 'seat-0', dice: [1, 2], doubles: false },
+      { seq: 9, seat: 'seat-1', dice: [3, 4], doubles: false },
+    ])
+  })
+
+  it('empties the roll history when the field is not a list', () => {
+    for (const broken of ['two', 7, null, { seq: 0 }]) {
+      const view = parseMonopolyView(rawView({ rolls: broken }))
+      expect(view).not.toBeNull()
+      expect(view?.rolls).toEqual([])
+    }
   })
 
   it('drops a malformed action and keeps the valid ones', () => {
