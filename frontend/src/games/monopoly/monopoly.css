@@ -99,16 +99,6 @@
   box-shadow: 0 0.2rem 0.6rem rgb(36 31 46 / 12%);
 }
 
-/* The label is the half that says what the colour answers, so it stays quiet
-   beside the swatch and the name. */
-.monopoly-seat-identity-label {
-  color: var(--monopoly-ink-soft);
-  font-size: 0.7rem;
-  font-weight: 750;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 /* The same shape the players list paints, one size up: the chip is the one
    place the player reads their own tone from, so it is the one place where the
    swatch is allowed to be bigger than the legend's. */

@@ -994,7 +994,10 @@ describe('the viewer\'s own seat colour', () => {
       expect(chips, `no identity chip with ${activeView} open`).toHaveLength(1)
       const markup = renderToStaticMarkup(chips[0])
 
-      expect(markup).toContain('Tu color')
+      // The chip prints the colour, the seat and nothing else: a printed label
+      // over the swatch is what made the panel read as a data sheet, the same
+      // reason the wallet dropped the word "Capital" over its number.
+      expect(markup).not.toContain('Tu color')
       expect(markup).toContain(`background:${SEAT_TONES[0]}`)
       expect(markup).toMatch(/monopoly-seat-identity-swatch[^>]*>A<\/span>/)
       expect(markup).toMatch(/monopoly-seat-identity-name[^>]*>Ana<\/span>/)
@@ -1780,7 +1783,7 @@ describe('the capital beside the seats', () => {
 
       expect(chips, `no header chip with ${activeView} open`).toHaveLength(1)
       const markup = renderToStaticMarkup(chips[0])
-      expect(markup).toContain('Tu color')
+      expect(markup).not.toContain('Tu color')
       expect(markup).toContain('Ana')
       expect(markup).toContain('$1.500')
       // The tone is never the only cue: the swatch prints the initial too.

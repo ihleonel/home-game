@@ -1611,7 +1611,6 @@ export function MonopolyPanelLayout({
           <span className="monopoly-seat-identity-name">Espectador</span>
         ) : (
           <>
-            <span className="monopoly-seat-identity-label">Tu color</span>
             <span
               aria-hidden="true"
               className="monopoly-seat-identity-swatch"
