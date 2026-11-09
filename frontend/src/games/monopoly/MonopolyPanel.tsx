@@ -26,7 +26,9 @@ import {
   seatIndexOf,
   seatName,
   seatTone,
+  signedMoney,
 } from './display'
+import type { CashMotion } from './cashMotion'
 import { MonopolyBoard } from './MonopolyBoard'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
@@ -978,6 +980,102 @@ function offersBlock(
   )
 }
 
+/**
+ * What the capital strip prints while counts are running (S1-S6 of
+ * ``monopoly-capital-bar.md``).
+ *
+ * The wrapper owns the clock, so the pure layout receives the numbers already
+ * decided: the amount to show per seat, the count behind each change, and the
+ * sentence a screen reader is told. Without it the strip prints the amounts the
+ * view published, which is what every markup test renders and what a player sees
+ * before the first change of the match.
+ */
+export type CapitalStrip = {
+  /** The amount to show, keyed by seat id, for the seats mid-count. */
+  shown: ReadonlyMap<string, number>
+  /** The change running per seat, keyed by seat id; a seat absent is settled. */
+  motions: ReadonlyMap<string, CashMotion>
+  /** What the polite live region says about the changes of this view. */
+  announce: string
+}
+
+/**
+ * Every seat's capital, in one strip no view can hide (S1).
+ *
+ * It sits outside the three panes, beside the identity chip, because that is the
+ * only place a view change cannot take it away: the wallet holds the viewer's
+ * money and the players list holds everyone's, and both live inside a pane, so a
+ * player reading the board sees no capital at all. The tone, the initial and the
+ * name are the same three cues the rest of the panel uses, and the direction of a
+ * change is written as a sign beside the colour, never by colour alone (S4).
+ */
+function capitalStrip(
+  view: MonopolyView,
+  match: MatchState<MonopolyView>,
+  capital: CapitalStrip | undefined,
+): ReactElement {
+  return (
+    <div className="monopoly-capital" role="group" aria-label="Capital de los jugadores">
+      <ul className="monopoly-capital-list">
+        {view.players.map((player) => {
+          const name = seatName(match, player.seat)
+          const tone = seatTone(seatIndexOf(match.roster, player.seat))
+          const motion = capital?.motions.get(player.seat) ?? null
+          const shown = capital?.shown.get(player.seat) ?? player.cash
+          return (
+            <li
+              className={
+                player.eliminated
+                  ? 'monopoly-capital-seat monopoly-capital-out'
+                  : 'monopoly-capital-seat'
+              }
+              data-cash-trend={motion === null ? undefined : motion.trend}
+              data-out={player.eliminated ? 'true' : undefined}
+              key={player.seat}
+            >
+              <span
+                aria-hidden="true"
+                className="monopoly-capital-tone"
+                style={tone === null ? undefined : { background: tone }}
+              >
+                {initialOf(name)}
+              </span>
+              <span className="monopoly-capital-name">
+                {`${name}${player.seat === view.you ? ' (tú)' : ''}`}
+              </span>
+              <span className="monopoly-capital-amount">
+                {/* While a count runs, the digits that move are decoration: the
+                    amount a reader gets is the one the server published, and a
+                    live region never reads the units in between (S6). */}
+                {motion === null ? (
+                  <span className="monopoly-capital-figure">{formatMoney(player.cash)}</span>
+                ) : (
+                  <>
+                    <span aria-hidden="true" className="monopoly-capital-figure">
+                      {formatMoney(shown)}
+                    </span>
+                    <span className="monopoly-visually-hidden">
+                      {formatMoney(player.cash)}
+                    </span>
+                  </>
+                )}
+              </span>
+              {motion !== null && (
+                <span aria-hidden="true" className="monopoly-capital-change">
+                  {signedMoney(motion.delta)}
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      <p aria-live="polite" className="monopoly-capital-announce" role="status">
+        {capital?.announce ?? ''}
+      </p>
+    </div>
+  )
+}
+
 type MonopolyPanelLayoutProps = {
   match: MatchState<MonopolyView>
   busy: boolean
@@ -1012,6 +1110,16 @@ type MonopolyPanelLayoutProps = {
    * draws its throws; it only loses the follow-the-newest behaviour.
    */
   rollsScroll?: RollsScroll
+  /**
+   * What the capital strip is counting, when a count is running (S3, S5, S6 of
+   * ``monopoly-capital-bar.md``).
+   *
+   * The wrapper owns the clock and hands the layout the numbers it already
+   * decided, for the same reason ``rollsScroll`` is a prop: the layout stays a
+   * pure function of its props, and this is the component the markup tests call.
+   * Without it the strip prints the amounts the view published.
+   */
+  capital?: CapitalStrip
 }
 
 /**
@@ -1184,6 +1292,7 @@ export function MonopolyPanelLayout({
   boardScene,
   sceneRotation,
   rollsScroll,
+  capital,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
@@ -1354,6 +1463,8 @@ export function MonopolyPanelLayout({
           </>
         )}
       </p>
+
+      {capitalStrip(view, match, capital)}
 
       <div
         aria-label="Vistas de la partida"
