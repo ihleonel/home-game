@@ -31,6 +31,11 @@
   --monopoly-brand-soft: #fbdde2;
   --monopoly-fun-yellow: #ffd21f;
   --monopoly-money: #0f7038;
+  /* The colour of money leaving a seat. Deliberately not ``--monopoly-brand``:
+     the brand red marks what the player can act on, and a rent paid is not an
+     action. Measured against the two surfaces it lands on: 7.62:1 on
+     ``--monopoly-card`` and 6.75:1 on ``--monopoly-chrome`` (WCAG AA). */
+  --monopoly-loss: #a4161a;
   --monopoly-band-size: 0.42rem;
   /* S10: the size of the little houses and the hotel block. Kept as custom
      properties so the mobile breakpoint can shrink the marker without ever
@@ -130,6 +135,182 @@
    (there is no tone to paint) and keeps the padding even. */
 .monopoly-seat-identity-name:only-child {
   padding-left: 0.35rem;
+}
+
+/* ==========================================================================
+   The capital strip (S1-S6 of ``monopoly-capital-bar.md``)
+
+   Every seat's money, in the one place a view change cannot take it away. It
+   sits beside the identity chip and above the tab strip, and it sticks for the
+   same reason the chip does: a player scrolling a long board must not have to
+   go back to the wallet to know what they can afford.
+   ========================================================================== */
+.monopoly-capital {
+  position: sticky;
+  /* Under the identity chip, which is sticky at 0.5rem and owns the top band. */
+  top: 3.4rem;
+  /* Above the board's cells (1) and below the identity chip (6). */
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-radius: 0.75rem;
+  background: var(--monopoly-chrome);
+}
+
+.monopoly-capital-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-capital-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.15rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.8rem;
+}
+
+/* The same round swatch the identity chip and the players list paint, one size
+   down: the tone is the key of the board and it has to read the same here. */
+.monopoly-capital-tone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: var(--monopoly-ink-soft);
+  color: var(--monopoly-brand-ink);
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.monopoly-capital-name {
+  max-width: 6.5rem;
+  overflow: hidden;
+  color: var(--monopoly-ink);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tabular figures, or a counting amount would jitter as its digits change. */
+.monopoly-capital-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.monopoly-capital-figure {
+  color: var(--monopoly-money);
+  font-weight: 800;
+}
+
+/* An eliminated seat keeps its row: the table still reads what it ended with,
+   and the row says it is out instead of quietly disappearing. */
+.monopoly-capital-out {
+  opacity: 0.55;
+}
+
+.monopoly-capital-out .monopoly-capital-figure {
+  color: var(--monopoly-ink-soft);
+}
+
+/* S4: the direction of a change. The colour never travels alone -- the row
+   carries ``data-cash-trend`` and the badge prints the sign -- so a player who
+   cannot tell the two hues apart still reads which way the money moved. */
+.monopoly-capital-seat[data-cash-trend='up'] {
+  --monopoly-cash-tone: var(--monopoly-money);
+}
+
+.monopoly-capital-seat[data-cash-trend='down'] {
+  --monopoly-cash-tone: var(--monopoly-loss);
+}
+
+.monopoly-capital-seat[data-cash-trend] {
+  border-color: var(--monopoly-cash-tone);
+  background: color-mix(in srgb, var(--monopoly-cash-tone) 12%, var(--monopoly-card));
+  animation: monopoly-cash-pop 0.5s ease-out;
+}
+
+.monopoly-capital-seat[data-cash-trend] .monopoly-capital-figure {
+  color: var(--monopoly-cash-tone);
+}
+
+/* The badge of the net change: it rises into place once and stays until the
+   count is over, when the layout stops rendering it. */
+.monopoly-capital-change {
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monopoly-cash-tone) 16%, var(--monopoly-card));
+  color: var(--monopoly-cash-tone);
+  font-size: 0.72rem;
+  font-weight: 800;
+  animation: monopoly-cash-rise 0.6s ease-out;
+}
+
+@keyframes monopoly-cash-pop {
+  0% {
+    transform: scale(1.08);
+  }
+
+  60% {
+    transform: scale(0.98);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes monopoly-cash-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+
+  45% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(-0.1rem);
+  }
+}
+
+/* S5: the count is decoration. With less motion asked for, the numbers still
+   move (the hook jumps straight to the new amount) and these two flourishes
+   stop; the badge keeps its colour and its sign, so nothing is lost. */
+@media (prefers-reduced-motion: reduce) {
+  .monopoly-capital-seat[data-cash-trend],
+  .monopoly-capital-change {
+    animation: none;
+  }
+}
+
+/* The live region is for a screen reader: the badge above is what a person
+   sees, and this is what gets announced, once, with the net amount. */
+.monopoly-capital-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+  border: 0;
 }
 
 /* S1: the view strip. It replaces the two-column grid that used to put the
