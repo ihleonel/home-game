@@ -1006,15 +1006,69 @@ export type CapitalStrip = {
   sequence: number
 }
 
+/** The count running behind one seat's money, or ``null`` when it is settled. */
+function cashMotionOf(capital: CapitalStrip | undefined, seat: string): CashMotion | null {
+  return capital?.motions.get(seat) ?? null
+}
+
 /**
- * Every seat's capital, in one strip no view can hide (S1).
+ * One seat's money, wherever it is printed (S2, S6).
  *
- * It sits outside the three panes, beside the identity chip, because that is the
- * only place a view change cannot take it away: the wallet holds the viewer's
- * money and the players list holds everyone's, and both live inside a pane, so a
- * player reading the board sees no capital at all. The tone, the initial and the
- * name are the same three cues the rest of the panel uses, and the direction of a
- * change is written as a sign beside the colour, never by colour alone (S4).
+ * The chip and the strip share this and nothing else prints an amount, so the
+ * two places cannot disagree about grouping, sign or accessibility. While a
+ * count runs the digits that move are decoration: the amount a reader gets is
+ * the one the server published, and a live region never reads the units in
+ * between.
+ */
+function cashAmount(player: MonopolyPlayer, capital: CapitalStrip | undefined): ReactElement {
+  const motion = cashMotionOf(capital, player.seat)
+  const shown = capital?.shown.get(player.seat) ?? player.cash
+  return (
+    <span className="monopoly-cash-amount">
+      {motion === null ? (
+        <span className="monopoly-cash-figure">{formatMoney(player.cash)}</span>
+      ) : (
+        <>
+          <span aria-hidden="true" className="monopoly-cash-figure">
+            {formatMoney(shown)}
+          </span>
+          <span className="monopoly-visually-hidden">{formatMoney(player.cash)}</span>
+        </>
+      )}
+      {motion !== null && (
+        <span aria-hidden="true" className="monopoly-cash-change">
+          {signedMoney(motion.delta)}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * What a screen reader is told about the changes of one view (S6).
+ *
+ * It lives outside both places because it is not a place: a player reads the
+ * chip and a spectator reads the strip, and both are told the same net amount.
+ * The keyed child is what makes the same sentence twice in a row a mutation a
+ * live region can announce: an identical string in an identical node is
+ * invisible to a screen reader.
+ */
+function cashAnnounceRegion(capital: CapitalStrip | undefined): ReactElement {
+  return (
+    <p aria-live="polite" className="monopoly-cash-announce" role="status">
+      <span key={capital?.sequence ?? 0}>{capital?.announce ?? ''}</span>
+    </p>
+  )
+}
+
+/**
+ * Every seat's capital, for the one viewer with no seat of its own (S1).
+ *
+ * A player reads their money in the header chip, which already carried their
+ * colour and their name; repeating it here, next to the money of everyone else,
+ * was saying the same thing twice and keeping a comparison nobody asked for on
+ * screen. A spectator has no seat to print, so the whole table's capital is
+ * theirs: same tone, initial, name and count as the rest of the panel.
  */
 function capitalStrip(
   view: MonopolyView,
@@ -1027,8 +1081,6 @@ function capitalStrip(
         {view.players.map((player) => {
           const name = seatName(match, player.seat)
           const tone = seatTone(seatIndexOf(match.roster, player.seat))
-          const motion = capital?.motions.get(player.seat) ?? null
-          const shown = capital?.shown.get(player.seat) ?? player.cash
           return (
             <li
               className={
@@ -1036,7 +1088,7 @@ function capitalStrip(
                   ? 'monopoly-capital-seat monopoly-capital-out'
                   : 'monopoly-capital-seat'
               }
-              data-cash-trend={motion === null ? undefined : motion.trend}
+              data-cash-trend={cashMotionOf(capital, player.seat)?.trend}
               data-out={player.eliminated ? 'true' : undefined}
               key={player.seat}
             >
@@ -1047,41 +1099,12 @@ function capitalStrip(
               >
                 {initialOf(name)}
               </span>
-              <span className="monopoly-capital-name">
-                {`${name}${player.seat === view.you ? ' (tú)' : ''}`}
-              </span>
-              <span className="monopoly-capital-amount">
-                {/* While a count runs, the digits that move are decoration: the
-                    amount a reader gets is the one the server published, and a
-                    live region never reads the units in between (S6). */}
-                {motion === null ? (
-                  <span className="monopoly-capital-figure">{formatMoney(player.cash)}</span>
-                ) : (
-                  <>
-                    <span aria-hidden="true" className="monopoly-capital-figure">
-                      {formatMoney(shown)}
-                    </span>
-                    <span className="monopoly-visually-hidden">
-                      {formatMoney(player.cash)}
-                    </span>
-                  </>
-                )}
-              </span>
-              {motion !== null && (
-                <span aria-hidden="true" className="monopoly-capital-change">
-                  {signedMoney(motion.delta)}
-                </span>
-              )}
+              <span className="monopoly-capital-name">{name}</span>
+              {cashAmount(player, capital)}
             </li>
           )
         })}
       </ul>
-      {/* The keyed child is what makes the same sentence twice in a row a
-          mutation a live region can announce: an identical string in an
-          identical node is invisible to a screen reader. */}
-      <p aria-live="polite" className="monopoly-capital-announce" role="status">
-        <span key={capital?.sequence ?? 0}>{capital?.announce ?? ''}</span>
-      </p>
     </div>
   )
 }
@@ -1580,8 +1603,11 @@ export function MonopolyPanelLayout({
         It follows the rule the action bar already follows: what a view change
         must not take away stays outside the panes.
       */}
-      <p className="monopoly-seat-identity">
-        {ownName === null ? (
+      <p
+        className="monopoly-seat-identity"
+        data-cash-trend={own === null ? undefined : cashMotionOf(capital, own.seat)?.trend}
+      >
+        {own === null || ownName === null ? (
           <span className="monopoly-seat-identity-name">Espectador</span>
         ) : (
           <>
@@ -1594,11 +1620,14 @@ export function MonopolyPanelLayout({
               {initialOf(ownName)}
             </span>
             <span className="monopoly-seat-identity-name">{ownName}</span>
+            {cashAmount(own, capital)}
           </>
         )}
       </p>
 
-      {capitalStrip(view, match, capital)}
+      {cashAnnounceRegion(capital)}
+
+      {own === null && capitalStrip(view, match, capital)}
 
       <div
         aria-label="Vistas de la partida"

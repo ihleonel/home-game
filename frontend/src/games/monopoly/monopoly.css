@@ -138,13 +138,16 @@
 }
 
 /* ==========================================================================
-   The capital strip (S1-S6 of ``monopoly-capital-bar.md``)
+   The capital (S1-S6 of ``monopoly-capital-bar.md``)
 
-   Every seat's money, in the one place a view change cannot take it away. It
-   sits beside the identity chip and above the tab strip, and it sticks for the
-   same reason the chip does: a player scrolling a long board must not have to
-   go back to the wallet to know what they can afford.
+   Two places, one rule: with a seat, the header chip carries the viewer's own
+   money and its count; without one, the strip carries every seat's. Both live
+   outside the three panes, so a view change cannot hide them, and both print the
+   amount with the same ``monopoly-cash-*`` pieces.
    ========================================================================== */
+
+/* A spectator's strip: the whole table's capital, under the chip that says who
+   is watching. */
 .monopoly-capital {
   position: sticky;
   /* Under the identity chip, which is sticky at 0.5rem and owns the top band. */
@@ -205,50 +208,58 @@
   white-space: nowrap;
 }
 
-/* Tabular figures, or a counting amount would jitter as its digits change. */
-.monopoly-capital-amount {
-  font-variant-numeric: tabular-nums;
-}
-
-.monopoly-capital-figure {
-  color: var(--monopoly-money);
-  font-weight: 800;
-}
-
 /* An eliminated seat keeps its row: the table still reads what it ended with,
    and the row says it is out instead of quietly disappearing. */
 .monopoly-capital-out {
   opacity: 0.55;
 }
 
-.monopoly-capital-out .monopoly-capital-figure {
+.monopoly-capital-out .monopoly-cash-figure {
   color: var(--monopoly-ink-soft);
 }
 
-/* S4: the direction of a change. The colour never travels alone -- the row
-   carries ``data-cash-trend`` and the badge prints the sign -- so a player who
-   cannot tell the two hues apart still reads which way the money moved. */
-.monopoly-capital-seat[data-cash-trend='up'] {
+/* The money itself, printed by the chip and by a strip row alike. */
+.monopoly-cash-amount {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  /* Tabular figures, or a counting amount would jitter as its digits change. */
+  font-variant-numeric: tabular-nums;
+}
+
+.monopoly-cash-figure {
+  color: var(--monopoly-money);
+  font-weight: 800;
+}
+
+/* S4: the direction of a change, in the chip and in a strip row. The colour
+   never travels alone -- the block carries ``data-cash-trend`` and the badge
+   prints the sign -- so a player who cannot tell the two hues apart still reads
+   which way the money moved. */
+.monopoly-panel [data-cash-trend='up'] {
   --monopoly-cash-tone: var(--monopoly-money);
 }
 
-.monopoly-capital-seat[data-cash-trend='down'] {
+.monopoly-panel [data-cash-trend='down'] {
   --monopoly-cash-tone: var(--monopoly-loss);
 }
 
-.monopoly-capital-seat[data-cash-trend] {
+.monopoly-panel [data-cash-trend] {
   border-color: var(--monopoly-cash-tone);
-  background: color-mix(in srgb, var(--monopoly-cash-tone) 12%, var(--monopoly-card));
   animation: monopoly-cash-pop 0.5s ease-out;
 }
 
-.monopoly-capital-seat[data-cash-trend] .monopoly-capital-figure {
+.monopoly-panel [data-cash-trend] .monopoly-cash-figure {
   color: var(--monopoly-cash-tone);
+}
+
+.monopoly-capital-seat[data-cash-trend] {
+  background: color-mix(in srgb, var(--monopoly-cash-tone) 12%, var(--monopoly-card));
 }
 
 /* The badge of the net change: it rises into place once and stays until the
    count is over, when the layout stops rendering it. */
-.monopoly-capital-change {
+.monopoly-cash-change {
   padding: 0 0.35rem;
   border-radius: 999px;
   background: color-mix(in srgb, var(--monopoly-cash-tone) 16%, var(--monopoly-card));
@@ -293,15 +304,16 @@
    move (the hook jumps straight to the new amount) and these two flourishes
    stop; the badge keeps its colour and its sign, so nothing is lost. */
 @media (prefers-reduced-motion: reduce) {
-  .monopoly-capital-seat[data-cash-trend],
-  .monopoly-capital-change {
+  .monopoly-panel [data-cash-trend],
+  .monopoly-cash-change {
     animation: none;
   }
 }
 
-/* The live region is for a screen reader: the badge above is what a person
-   sees, and this is what gets announced, once, with the net amount. */
-.monopoly-capital-announce {
+/* The live region is for a screen reader: the badge is what a person sees, and
+   this is what gets announced, once, with the net amount -- for the chip and for
+   the strip alike. */
+.monopoly-cash-announce {
   position: absolute;
   width: 1px;
   height: 1px;

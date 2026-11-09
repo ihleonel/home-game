@@ -1704,13 +1704,14 @@ describe('the spectator roll history', () => {
 })
 
 /**
- * The capital strip (S1-S6 of ``monopoly-capital-bar.md``).
+ * Where the capital lives (S1-S6 of ``monopoly-capital-bar.md``).
  *
- * It is the one place the panel keeps every seat's money: outside the three
- * panes, so changing view cannot hide it, and outside the stateful wrapper, so
- * these tests can hand the pure layout the values a running count would.
+ * Two places, and who is looking decides which: a seat reads its own money in
+ * the header chip it already had, and only a spectator — who has no seat to
+ * print — gets the strip with every seat. The layout stays a pure function of
+ * its props, so these tests hand it the values a running count would.
  */
-describe('the capital strip', () => {
+describe('the capital beside the seats', () => {
   const panes = ['tablero', 'cartera', 'mesa'] as const
 
   /** The text an element prints, through any function components inside it. */
@@ -1727,23 +1728,28 @@ describe('the capital strip', () => {
   }
 
   /**
-   * The strip's rows as the browser would paint them, with one view open.
+   * The elements carrying ``className`` that the browser would actually paint
+   * with one view open.
    *
-   * The walk that skips ``hidden`` subtrees is what tells "the panel renders the
-   * strip somewhere" from "the strip is on screen while the board is open".
+   * The walk that skips ``hidden`` subtrees is what tells "the panel renders
+   * this somewhere" from "this is on screen while the board is open".
    */
-  function paintedRows(rawView: MonopolyView, options: LayoutOptions = {}): ReactElement[] {
-    return visibleElements(MonopolyPanelLayout(layoutProps(rawView, options))).filter(
-      (element) => classesOf(element).includes('monopoly-capital-seat'),
+  function paintedWithClass(
+    rawView: MonopolyView,
+    className: string,
+    options: LayoutOptions = {},
+  ): ReactElement[] {
+    return visibleElements(MonopolyPanelLayout(layoutProps(rawView, options))).filter((element) =>
+      classesOf(element).includes(className),
     )
   }
 
   /**
    * A view whose published amounts are the ends of the counts below.
    *
-   * The motion and the view have to agree: the strip prints the published
-   * amount to a screen reader and the counting one to the eye, so a fixture
-   * whose ``to`` is not the amount the view carries would test nothing real.
+   * The motion and the view have to agree: the count prints the published amount
+   * to a screen reader and the counting one to the eye, so a fixture whose ``to``
+   * is not the amount the view carries would test nothing real.
    */
   function raised(own = 1700, other = 1200): MonopolyView {
     return view({
@@ -1768,100 +1774,110 @@ describe('the capital strip', () => {
     }
   }
 
-  it('keeps every seat\'s capital on screen in each of the three views', () => {
+  it('keeps the viewer\'s own capital in the header chip, in each of the three views', () => {
     for (const activeView of panes) {
-      const painted = paintedRows(view(), { activeView })
+      const chips = paintedWithClass(view(), 'monopoly-seat-identity', { activeView })
 
-      expect(painted, `no capital strip with ${activeView} open`).toHaveLength(2)
-      const markup = renderToStaticMarkup(<>{painted}</>)
-      expect(markup).toContain('Ana (tú)')
-      expect(markup).toContain('Beto')
+      expect(chips, `no header chip with ${activeView} open`).toHaveLength(1)
+      const markup = renderToStaticMarkup(chips[0])
+      expect(markup).toContain('Tu color')
+      expect(markup).toContain('Ana')
       expect(markup).toContain('$1.500')
-      expect(markup).toContain('$1.200')
       // The tone is never the only cue: the swatch prints the initial too.
-      expect(markup).toMatch(/monopoly-capital-tone[^>]*>A<\/span>/)
+      expect(markup).toMatch(/monopoly-seat-identity-swatch[^>]*>A<\/span>/)
     }
   })
 
-  it('names the seats a spectator watches and marks nobody as the viewer', () => {
-    const markup = renderToStaticMarkup(<>{paintedRows(view({ you: undefined }))}</>)
+  it('leaves the other seats out of a player\'s header', () => {
+    // The other seats' money is still on the table pane; what a player does not
+    // get is a permanent comparison in the header.
+    expect(paintedWithClass(view(), 'monopoly-capital', {})).toHaveLength(0)
+    expect(elementsWithClass(view(), 'monopoly-cash-figure')).toHaveLength(1)
+    expect(
+      renderToStaticMarkup(paintedWithClass(view(), 'monopoly-seat-identity', {})[0]),
+    ).not.toContain('Beto')
+  })
 
-    expect(markup).not.toContain('(tú)')
+  it('gives a spectator every seat, and a header with no amount of its own', () => {
+    const raw = view({ you: undefined })
+    const rows = elementsWithClass(raw, 'monopoly-capital-seat')
+    const markup = renderToStaticMarkup(<>{rows}</>)
+    const chip = renderToStaticMarkup(
+      paintedWithClass(raw, 'monopoly-seat-identity', {})[0],
+    )
+
+    expect(rows).toHaveLength(2)
     expect(markup).toContain('Ana')
     expect(markup).toContain('Beto')
+    expect(markup).toContain('$1.500')
+    expect(markup).toContain('$1.200')
+    expect(markup).not.toContain('(tú)')
+    expect(chip).toContain('Espectador')
+    expect(chip).not.toContain('$')
   })
 
-  it('keeps the row of an eliminated seat and says it is out', () => {
-    const rawView = view({
-      players: [
-        player({ seat: 'seat-0', cash: 0, eliminated: true }),
-        player({ seat: 'seat-1', cash: 1200 }),
-      ],
-    })
-    const painted = paintedRows(rawView)
-    const out = painted[0].props as { 'data-out'?: string }
-    const inside = painted[1].props as { 'data-out'?: string }
-
-    expect(painted).toHaveLength(2)
-    expect(out['data-out']).toBe('true')
-    expect(inside['data-out']).toBeUndefined()
-    expect(textContentOf(painted[0])).toContain('$0')
-  })
-
-  it('shows the counting amount to the eye and the published amount to a reader', () => {
-    // While the count runs the digits are decoration: the amount a screen
-    // reader gets is the one the server published, never an intermediate value.
+  it('counts inside the chip and hides the moving digits from a reader', () => {
     const capital = strip(
       { 'seat-0': 1600 },
       { 'seat-0': { seat: 'seat-0', from: 1500, to: 1700, delta: 200, trend: 'up' } },
       'Ana +$200',
     )
-    const figures = elementsWithClass(raised(), 'monopoly-capital-figure', { capital })
-    const first = figures[0].props as { 'aria-hidden'?: string }
-    const second = figures[1].props as { 'aria-hidden'?: string }
+    const raw = raised()
+    const chip = paintedWithClass(raw, 'monopoly-seat-identity', { capital })[0]
+    const trend = chip.props as { 'data-cash-trend'?: string }
+    const figures = elementsWithClass(raw, 'monopoly-cash-figure', { capital })
+    const badge = elementsWithClass(raw, 'monopoly-cash-change', { capital })
 
-    expect(figures.map(textContentOf)).toEqual(['$1.600', '$1.200'])
-    expect(first['aria-hidden']).toBe('true')
-    expect(second['aria-hidden']).toBeUndefined()
-    expect(elementsWithClass(raised(), 'monopoly-visually-hidden', { capital }).map(textContentOf))
+    expect(trend['data-cash-trend']).toBe('up')
+    expect(figures.map(textContentOf)).toEqual(['$1.600'])
+    expect((figures[0].props as { 'aria-hidden'?: string })['aria-hidden']).toBe('true')
+    expect(elementsWithClass(raw, 'monopoly-visually-hidden', { capital }).map(textContentOf))
       .toContain('$1.700')
+    expect(badge.map(textContentOf)).toEqual(['+$200'])
+    expect((badge[0].props as { 'aria-hidden'?: string })['aria-hidden']).toBe('true')
   })
 
-  it('prints the amount the view published when no count is running', () => {
-    expect(elementsWithClass(view(), 'monopoly-capital-figure').map(textContentOf)).toEqual([
-      '$1.500',
-      '$1.200',
-    ])
-    expect(elementsWithClass(view(), 'monopoly-capital-change')).toHaveLength(0)
-  })
-
-  it('says which way the money moved without leaning on the colour', () => {
-    const up = strip(
-      { 'seat-0': 1600 },
-      { 'seat-0': { seat: 'seat-0', from: 1500, to: 1700, delta: 200, trend: 'up' } },
-      'Ana +$200',
-    )
-    const upRow = paintedRows(raised(), { capital: up })[0].props as { 'data-cash-trend'?: string }
-    const upBadge = elementsWithClass(raised(), 'monopoly-capital-change', { capital: up })
-
-    expect(upRow['data-cash-trend']).toBe('up')
-    expect(upBadge.map(textContentOf)).toEqual(['+$200'])
-    expect((upBadge[0].props as { 'aria-hidden'?: string })['aria-hidden']).toBe('true')
-
-    const down = strip(
+  it('counts downwards in a spectator row without leaning on the colour', () => {
+    const capital = strip(
       { 'seat-1': 950 },
       { 'seat-1': { seat: 'seat-1', from: 1200, to: 950, delta: -250, trend: 'down' } },
       'Beto −$250',
     )
-    const downView = raised(1500, 950)
-    const downRow = paintedRows(downView, { capital: down })[1].props as {
-      'data-cash-trend'?: string
-    }
+    const raw = raised(1500, 950)
+    const rows = paintedWithClass(raw, 'monopoly-capital-seat', { capital, activeView: 'mesa' })
 
-    expect(downRow['data-cash-trend']).toBe('down')
+    expect(rows).toHaveLength(0)
+    const spectator = { ...raw, you: undefined }
+    const shownRows = paintedWithClass(spectator, 'monopoly-capital-seat', { capital })
+    const down = shownRows[1].props as { 'data-cash-trend'?: string }
+
+    expect(down['data-cash-trend']).toBe('down')
     expect(
-      elementsWithClass(downView, 'monopoly-capital-change', { capital: down }).map(textContentOf),
+      elementsWithClass(spectator, 'monopoly-cash-change', { capital }).map(textContentOf),
     ).toEqual(['−$250'])
+  })
+
+  it('keeps the row of an eliminated seat for a spectator and says it is out', () => {
+    const raw = view({
+      you: undefined,
+      players: [
+        player({ seat: 'seat-0', cash: 0, eliminated: true }),
+        player({ seat: 'seat-1', cash: 1200 }),
+      ],
+    })
+    const rows = elementsWithClass(raw, 'monopoly-capital-seat')
+    const out = rows[0].props as { 'data-out'?: string }
+    const inside = rows[1].props as { 'data-out'?: string }
+
+    expect(rows).toHaveLength(2)
+    expect(out['data-out']).toBe('true')
+    expect(inside['data-out']).toBeUndefined()
+    expect(textContentOf(rows[0])).toContain('$0')
+  })
+
+  it('prints the amount the view published when no count is running', () => {
+    expect(elementsWithClass(view(), 'monopoly-cash-figure').map(textContentOf)).toEqual(['$1.500'])
+    expect(elementsWithClass(view(), 'monopoly-cash-change')).toHaveLength(0)
   })
 
   it('announces the net change once, politely, and keeps the region when nothing moved', () => {
@@ -1870,7 +1886,7 @@ describe('the capital strip', () => {
       { 'seat-0': { seat: 'seat-0', from: 1500, to: 1700, delta: 200, trend: 'up' } },
       'Ana +$200',
     )
-    const [live] = elementsWithClass(raised(), 'monopoly-capital-announce', { capital })
+    const [live] = elementsWithClass(raised(), 'monopoly-cash-announce', { capital })
     const props = live.props as { role?: string; 'aria-live'?: string }
 
     expect(props.role).toBe('status')
@@ -1879,7 +1895,7 @@ describe('the capital strip', () => {
 
     // The region is in the markup before anything lands in it, or the first
     // change of the match would be announced to nobody.
-    const [quiet] = elementsWithClass(view(), 'monopoly-capital-announce')
+    const [quiet] = elementsWithClass(view(), 'monopoly-cash-announce')
     expect(textContentOf(quiet)).toBe('')
   })
 })
