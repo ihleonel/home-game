@@ -29,10 +29,12 @@ import {
   signedMoney,
 } from './display'
 import type { CashMotion } from './cashMotion'
+import { cashAnnouncement, cashDuration, planCashMotion, shownAmount } from './cashMotion'
 import { MonopolyBoard } from './MonopolyBoard'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
 import { QUARTER_TURN } from './three/camera'
+import { usePrefersReducedMotion } from './three/useReducedMotion'
 import './monopoly.css'
 import type {
   MonopolyAction,
@@ -1143,6 +1145,7 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
   const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
   const [angle, setAngle] = useState(0)
   const rollsScroll = useRollsScroll(match.view.rolls)
+  const capital = useCashMotion(match.view.players, match)
   return (
     <MonopolyPanelLayout
       match={match}
@@ -1170,8 +1173,92 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
         onRotate: (direction) => setAngle((current) => current + direction * QUARTER_TURN),
       }}
       rollsScroll={rollsScroll}
+      capital={capital}
     />
   )
+}
+
+/**
+ * What the strip shows when no count is running (S2).
+ *
+ * One shared object on purpose: it is what the state settles to, so React can
+ * tell "nothing changed" from "a count started" by identity alone.
+ */
+const SETTLED_CAPITAL: CapitalStrip = { shown: new Map(), motions: new Map(), announce: '' }
+
+/**
+ * How long the badge of a settled change stays after the last amount landed.
+ *
+ * Long enough to read a rent once it is over, short enough that the strip goes
+ * back to being a table of amounts instead of a column of signs.
+ */
+const CASH_BADGE_MS = 1600
+
+/**
+ * The counts the capital strip is running (S3-S6 of ``monopoly-capital-bar.md``).
+ *
+ * The wrapper owns the clock because the pure layout cannot: this hook compares
+ * every view with the one before it, plans one count per seat whose money moved
+ * and hands the layout the numbers a frame at a time. Nothing here decides an
+ * amount -- ``cashMotion`` does that and is where the counting rule is tested --
+ * and nothing is read from the server: the server publishes whole views, so a
+ * change is the net difference between two of them.
+ *
+ * One loop drives the whole life of a change: it counts, it holds the badge for
+ * ``CASH_BADGE_MS`` once the last amount landed, and it settles. A view that
+ * arrives mid-count cancels the loop through this effect's cleanup, and the next
+ * loop settles on its own first frame, so a badge can never stay frozen on
+ * screen after the change it describes is gone.
+ */
+function useCashMotion(
+  players: readonly MonopolyPlayer[],
+  match: MatchState<MonopolyView>,
+): CapitalStrip {
+  const reduced = usePrefersReducedMotion()
+  const [capital, setCapital] = useState<CapitalStrip>(SETTLED_CAPITAL)
+  const amounts = useRef<Map<string, number> | null>(null)
+
+  useEffect(() => {
+    const previous = amounts.current
+    amounts.current = new Map(players.map((player) => [player.seat, player.cash]))
+    // The first view of the match has nothing to count from: the money a seat
+    // holds when the screen opens is the starting table, not a change.
+    if (previous === null) return
+
+    const motions = planCashMotion(players, previous)
+    if (motions.length === 0) {
+      const quiet = requestAnimationFrame(() => setCapital(SETTLED_CAPITAL))
+      return () => cancelAnimationFrame(quiet)
+    }
+
+    const bySeat = new Map(motions.map((motion) => [motion.seat, motion]))
+    const announce = cashAnnouncement(motions, (seat) => seatName(match, seat))
+    const startAt = performance.now()
+    // Less motion asked for means no count at all: the amount is already the new
+    // one on the first frame and the badge simply stays its while.
+    const countUntil = startAt + (reduced ? 0 : Math.max(...motions.map(cashDuration)))
+    const settleAt = countUntil + CASH_BADGE_MS
+    let frame = 0
+    const tick = (now: number): void => {
+      if (now >= settleAt) {
+        setCapital(SETTLED_CAPITAL)
+        return
+      }
+      const elapsed = now - startAt
+      setCapital({
+        shown: new Map(
+          motions.map((motion) => [motion.seat, shownAmount(motion, elapsed, reduced)]),
+        ),
+        motions: bySeat,
+        announce,
+      })
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [players, match, reduced])
+
+  return capital
 }
 
 /**

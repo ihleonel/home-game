@@ -7,6 +7,7 @@ import {
   cashDuration,
   planCashMotion,
   rolledValue,
+  shownAmount,
 } from './cashMotion'
 import type { CashMotion } from './cashMotion'
 
@@ -89,6 +90,15 @@ describe('the rolling count', () => {
     ).toBeGreaterThan(1)
     expect(rolledValue(charge, CASH_BUDGET_MS)).toBe(200)
     expect(rolledValue(charge, 1_000_000)).toBe(200)
+  })
+
+  it('jumps to the new amount when less motion was asked for', () => {
+    // The preference never changes *what* is shown, only that it is not counted:
+    // a player who asked for less motion still learns the new amount at once.
+    const change = motion(1000, 1050)
+    expect(shownAmount(change, 0, true)).toBe(1050)
+    expect(shownAmount(change, 0, false)).toBe(1000)
+    expect(shownAmount(change, cashDuration(change), false)).toBe(1050)
   })
 
   it('starts exactly at the amount the seat had and ends exactly at the one it has', () => {

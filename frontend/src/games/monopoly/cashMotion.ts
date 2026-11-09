@@ -92,14 +92,29 @@ export function cashDuration(motion: CashMotion): number {
  * on its way there. ``Math.round`` and not ``Math.floor``: the first unit has to
  * appear on the first frame, or a small change would start by standing still.
  */
-export function rolledValue(motion: CashMotion, elapsedMs: number): number {
-  const units = Math.abs(motion.delta)
+export function rolledValue(motion: CashMotion, elapsedMs: number): number {  const units = Math.abs(motion.delta)
   if (units === 0) return motion.to
   if (elapsedMs <= 0) return motion.from
   const duration = cashDuration(motion)
   if (elapsedMs >= duration) return motion.to
   const moved = Math.min(Math.round((elapsedMs / duration) * units), units)
   return motion.trend === 'up' ? motion.from + moved : motion.from - moved
+}
+
+/**
+ * The amount to show for a count, given whether less motion was asked for.
+ *
+ * The preference never changes *what* is learned, only that it is not counted:
+ * a player who asked for less motion gets the new amount at once instead of a
+ * number running towards it. Every caller goes through here so the rule lives in
+ * one place, and so it can be asserted without a clock.
+ */
+export function shownAmount(
+  motion: CashMotion,
+  elapsedMs: number,
+  reduced: boolean,
+): number {
+  return reduced ? motion.to : rolledValue(motion, elapsedMs)
 }
 
 /**
