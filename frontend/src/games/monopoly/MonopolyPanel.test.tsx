@@ -1764,6 +1764,7 @@ describe('the capital strip', () => {
       shown: new Map(Object.entries(shown)),
       motions: new Map(Object.entries(motions)),
       announce,
+      sequence: 1,
     }
   }
 

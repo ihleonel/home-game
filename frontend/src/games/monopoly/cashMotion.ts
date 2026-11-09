@@ -79,20 +79,34 @@ export function planCashMotion(
 
 /**
  * How long this count lasts: one frame per unit while it fits, the budget after.
+ *
+ * ``CASH_FRAMES`` is the boundary the budget can paint at one unit per frame; a
+ * change of exactly that many units still lands on the budget itself, because
+ * ``1000 / 60`` does not divide evenly.
  */
 export function cashDuration(motion: CashMotion): number {
-  return Math.min(Math.abs(motion.delta) * CASH_FRAME_MS, CASH_BUDGET_MS)
+  const units = Math.abs(motion.delta)
+  if (units > CASH_FRAMES) return CASH_BUDGET_MS
+  return Math.min(units * CASH_FRAME_MS, CASH_BUDGET_MS)
 }
 
 /**
  * The amount to show ``elapsedMs`` into the count.
+ *
+ * The count is spread evenly over its duration, so at sixty frames per second a
+ * change of up to ``CASH_FRAMES`` units advances exactly one unit per frame and
+ * a larger one advances the same fraction of its total per frame -- several
+ * units at a time, evenly, never in a jump and never in a burst at the start.
+ * That is the acceleration: the number keeps moving at a constant *rate of
+ * change* while the amount of money it covers per frame grows.
  *
  * Every answer is an integer between ``from`` and ``to`` and the sequence never
  * turns back, so the number on screen is always an amount the seat held or holds
  * on its way there. ``Math.round`` and not ``Math.floor``: the first unit has to
  * appear on the first frame, or a small change would start by standing still.
  */
-export function rolledValue(motion: CashMotion, elapsedMs: number): number {  const units = Math.abs(motion.delta)
+export function rolledValue(motion: CashMotion, elapsedMs: number): number {
+  const units = Math.abs(motion.delta)
   if (units === 0) return motion.to
   if (elapsedMs <= 0) return motion.from
   const duration = cashDuration(motion)

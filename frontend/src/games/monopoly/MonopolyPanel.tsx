@@ -999,6 +999,11 @@ export type CapitalStrip = {
   motions: ReadonlyMap<string, CashMotion>
   /** What the polite live region says about the changes of this view. */
   announce: string
+  /**
+   * How many changes this panel has announced, so an identical sentence twice in
+   * a row still replaces the live region's node and is spoken the second time.
+   */
+  sequence: number
 }
 
 /**
@@ -1071,8 +1076,11 @@ function capitalStrip(
           )
         })}
       </ul>
+      {/* The keyed child is what makes the same sentence twice in a row a
+          mutation a live region can announce: an identical string in an
+          identical node is invisible to a screen reader. */}
       <p aria-live="polite" className="monopoly-capital-announce" role="status">
-        {capital?.announce ?? ''}
+        <span key={capital?.sequence ?? 0}>{capital?.announce ?? ''}</span>
       </p>
     </div>
   )
@@ -1184,7 +1192,12 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
  * One shared object on purpose: it is what the state settles to, so React can
  * tell "nothing changed" from "a count started" by identity alone.
  */
-const SETTLED_CAPITAL: CapitalStrip = { shown: new Map(), motions: new Map(), announce: '' }
+const SETTLED_CAPITAL: CapitalStrip = {
+  shown: new Map(),
+  motions: new Map(),
+  announce: '',
+  sequence: 0,
+}
 
 /**
  * How long the badge of a settled change stays after the last amount landed.
@@ -1193,6 +1206,24 @@ const SETTLED_CAPITAL: CapitalStrip = { shown: new Map(), motions: new Map(), an
  * back to being a table of amounts instead of a column of signs.
  */
 const CASH_BADGE_MS = 1600
+
+/**
+ * One count, from the view that started it to the frame that settles it.
+ *
+ * It lives in a ref and not in state because it is a *timeline*, not a value the
+ * screen shows: absolute timestamps that survive an effect re-run, so a view
+ * arriving halfway through a count resumes it instead of restarting it.
+ */
+type CashTimeline = {
+  motions: CashMotion[]
+  bySeat: Map<string, CashMotion>
+  announce: string
+  sequence: number
+  startAt: number
+  countUntil: number
+  settleAt: number
+  reduced: boolean
+}
 
 /**
  * The counts the capital strip is running (S3-S6 of ``monopoly-capital-bar.md``).
@@ -1204,11 +1235,13 @@ const CASH_BADGE_MS = 1600
  * and nothing is read from the server: the server publishes whole views, so a
  * change is the net difference between two of them.
  *
- * One loop drives the whole life of a change: it counts, it holds the badge for
- * ``CASH_BADGE_MS`` once the last amount landed, and it settles. A view that
- * arrives mid-count cancels the loop through this effect's cleanup, and the next
- * loop settles on its own first frame, so a badge can never stay frozen on
- * screen after the change it describes is gone.
+ * The timeline is the reason this is not a plain ``elapsed`` in state. Views
+ * arrive constantly -- a roll, a purchase, a turn ending -- and most of them move
+ * nobody's money. If every view cancelled the loop, a count would be cut to its
+ * first frame by the next unrelated event. So a view that moved no money keeps
+ * the timeline it found and the loop simply resumes it, while a view that *did*
+ * move money replaces the timeline with a new one: the newest money wins, and it
+ * counts from the amounts the two views published.
  */
 function useCashMotion(
   players: readonly MonopolyPlayer[],
@@ -1217,6 +1250,8 @@ function useCashMotion(
   const reduced = usePrefersReducedMotion()
   const [capital, setCapital] = useState<CapitalStrip>(SETTLED_CAPITAL)
   const amounts = useRef<Map<string, number> | null>(null)
+  const flight = useRef<CashTimeline | null>(null)
+  const announced = useRef(0)
 
   useEffect(() => {
     const previous = amounts.current
@@ -1226,31 +1261,43 @@ function useCashMotion(
     if (previous === null) return
 
     const motions = planCashMotion(players, previous)
-    if (motions.length === 0) {
-      const quiet = requestAnimationFrame(() => setCapital(SETTLED_CAPITAL))
-      return () => cancelAnimationFrame(quiet)
+    if (motions.length > 0) {
+      const startAt = performance.now()
+      // Less motion asked for means no count at all: the amount is the new one on
+      // the first frame and the badge simply stays its while.
+      const countUntil = startAt + (reduced ? 0 : Math.max(...motions.map(cashDuration)))
+      announced.current += 1
+      flight.current = {
+        motions,
+        bySeat: new Map(motions.map((motion) => [motion.seat, motion])),
+        announce: cashAnnouncement(motions, (seat) => seatName(match, seat)),
+        sequence: announced.current,
+        startAt,
+        countUntil,
+        settleAt: countUntil + CASH_BADGE_MS,
+        reduced,
+      }
     }
 
-    const bySeat = new Map(motions.map((motion) => [motion.seat, motion]))
-    const announce = cashAnnouncement(motions, (seat) => seatName(match, seat))
-    const startAt = performance.now()
-    // Less motion asked for means no count at all: the amount is already the new
-    // one on the first frame and the badge simply stays its while.
-    const countUntil = startAt + (reduced ? 0 : Math.max(...motions.map(cashDuration)))
-    const settleAt = countUntil + CASH_BADGE_MS
     let frame = 0
     const tick = (now: number): void => {
-      if (now >= settleAt) {
+      const timeline = flight.current
+      if (timeline === null || now >= timeline.settleAt) {
+        flight.current = null
         setCapital(SETTLED_CAPITAL)
         return
       }
-      const elapsed = now - startAt
+      const elapsed = now - timeline.startAt
       setCapital({
         shown: new Map(
-          motions.map((motion) => [motion.seat, shownAmount(motion, elapsed, reduced)]),
+          timeline.motions.map((motion) => [
+            motion.seat,
+            shownAmount(motion, elapsed, timeline.reduced),
+          ]),
         ),
-        motions: bySeat,
-        announce,
+        motions: timeline.bySeat,
+        announce: timeline.announce,
+        sequence: timeline.sequence,
       })
       frame = requestAnimationFrame(tick)
     }
