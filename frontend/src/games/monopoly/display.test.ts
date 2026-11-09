@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MatchSeatRosterEntry } from '../matchRoster'
-import { SEAT_TONES, seatIndexOf, seatTone } from './display'
+import { SEAT_TONES, seatIndexOf, seatTone, signedMoney } from './display'
 
 /** A roster entry needs every public field the server projects (S1). */
 function entry(seat: string, index: number, name: string): MatchSeatRosterEntry {
@@ -47,5 +47,27 @@ describe('the seat tones', () => {
     expect(seatIndexOf(roster, 'seat-5')).toBe(5)
     expect(seatIndexOf(roster, 'seat-0')).toBe(0)
     expect(seatIndexOf(roster, 'seat-9')).toBeNull()
+  })
+})
+
+describe('the signed amount of a change', () => {
+  it('prints the sign in front of the money the delta formatter already spells', () => {
+    // The digits are ``formatMoney``'s, so a change can never be grouped or
+    // abbreviated differently from the balance it moves.
+    expect(signedMoney(200)).toBe('+$200')
+    expect(signedMoney(1200)).toBe('+$1.200')
+    expect(signedMoney(-75)).toBe('−$75')
+    expect(signedMoney(-1200)).toBe('−$1.200')
+  })
+
+  it('uses the minus sign the panel already prints and never a hyphen', () => {
+    // ``formatMoney`` writes ``-$75`` for a negative balance; a *change* is read
+    // beside a plus, and the project already spells that sign as U+2212.
+    expect(signedMoney(-75)).toContain('\u2212')
+    expect(signedMoney(-75)).not.toContain('-')
+  })
+
+  it('has no sign for a change of nothing', () => {
+    expect(signedMoney(0)).toBe('$0')
   })
 })
