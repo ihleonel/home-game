@@ -31,6 +31,11 @@
   --monopoly-brand-soft: #fbdde2;
   --monopoly-fun-yellow: #ffd21f;
   --monopoly-money: #0f7038;
+  /* The colour of money leaving a seat. Deliberately not ``--monopoly-brand``:
+     the brand red marks what the player can act on, and a rent paid is not an
+     action. Measured against the two surfaces it lands on: 7.62:1 on
+     ``--monopoly-card`` and 6.75:1 on ``--monopoly-chrome`` (WCAG AA). */
+  --monopoly-loss: #a4161a;
   --monopoly-band-size: 0.42rem;
   /* S10: the size of the little houses and the hotel block. Kept as custom
      properties so the mobile breakpoint can shrink the marker without ever
@@ -61,6 +66,253 @@
   border: 2px solid var(--monopoly-brand);
   border-radius: 0.9rem;
   background: var(--monopoly-chrome);
+}
+
+/* The viewer's own colour, pinned so no view change takes it away.
+
+   The players list is the board's colour key, but it lives in one view of
+   three: a player who moves to the wallet, or comes back to the board, has
+   nowhere to check which tone is theirs. The owner badge on the board is too
+   small and the 3D piece too far, so the reference gets one place outside every
+   pane -- above the tab strip -- and it sticks to the top of the screen, which
+   keeps it one glance away at any scroll position. The tone never travels
+   alone: the swatch prints the seat's initial and the name is written beside
+   it, so colour is one cue of three. A seat the roster cannot name keeps the
+   neutral swatch and loses only the tone. */
+.monopoly-seat-identity {
+  position: sticky;
+  top: 0.5rem;
+  /* Above the board's cells (1) and the pinned action bar (5), below the
+     countdown overlay (10). */
+  z-index: 6;
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.3rem 0.75rem 0.3rem 0.4rem;
+  border: 2px solid var(--monopoly-card-line);
+  border-radius: 999px;
+  background: var(--monopoly-card);
+  color: var(--monopoly-ink);
+  font-size: 0.8rem;
+  box-shadow: 0 0.2rem 0.6rem rgb(36 31 46 / 12%);
+}
+
+/* The same shape the players list paints, one size up: the chip is the one
+   place the player reads their own tone from, so it is the one place where the
+   swatch is allowed to be bigger than the legend's. */
+.monopoly-seat-identity-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--monopoly-ink-soft);
+  color: var(--monopoly-brand-ink);
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.monopoly-seat-identity-name {
+  color: var(--monopoly-ink);
+  font-weight: 800;
+}
+
+/* A spectator has no seat to colour, so the chip drops the swatch on its own
+   (there is no tone to paint) and keeps the padding even. */
+.monopoly-seat-identity-name:only-child {
+  padding-left: 0.35rem;
+}
+
+/* ==========================================================================
+   The capital (S1-S6 of ``monopoly-capital-bar.md``)
+
+   Two places, one rule: with a seat, the header chip carries the viewer's own
+   money and its count; without one, the strip carries every seat's. Both live
+   outside the three panes, so a view change cannot hide them, and both print the
+   amount with the same ``monopoly-cash-*`` pieces.
+   ========================================================================== */
+
+/* A spectator's strip: the whole table's capital, under the chip that says who
+   is watching. */
+.monopoly-capital {
+  position: sticky;
+  /* Under the identity chip, which is sticky at 0.5rem and owns the top band. */
+  top: 3.4rem;
+  /* Above the board's cells (1) and below the identity chip (6). */
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-radius: 0.75rem;
+  background: var(--monopoly-chrome);
+}
+
+.monopoly-capital-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-capital-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.15rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.8rem;
+}
+
+/* The same round swatch the identity chip and the players list paint, one size
+   down: the tone is the key of the board and it has to read the same here. */
+.monopoly-capital-tone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  background: var(--monopoly-ink-soft);
+  color: var(--monopoly-brand-ink);
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.monopoly-capital-name {
+  max-width: 6.5rem;
+  overflow: hidden;
+  color: var(--monopoly-ink);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An eliminated seat keeps its row: the table still reads what it ended with,
+   and the row says it is out instead of quietly disappearing. */
+.monopoly-capital-out {
+  opacity: 0.55;
+}
+
+.monopoly-capital-out .monopoly-cash-figure {
+  color: var(--monopoly-ink-soft);
+}
+
+/* The money itself, printed by the chip and by a strip row alike. */
+.monopoly-cash-amount {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  /* Tabular figures, or a counting amount would jitter as its digits change. */
+  font-variant-numeric: tabular-nums;
+}
+
+.monopoly-cash-figure {
+  color: var(--monopoly-money);
+  font-weight: 800;
+}
+
+/* S4: the direction of a change, in the chip and in a strip row. The colour
+   never travels alone -- the block carries ``data-cash-trend`` and the badge
+   prints the sign -- so a player who cannot tell the two hues apart still reads
+   which way the money moved. */
+.monopoly-panel [data-cash-trend='up'] {
+  --monopoly-cash-tone: var(--monopoly-money);
+}
+
+.monopoly-panel [data-cash-trend='down'] {
+  --monopoly-cash-tone: var(--monopoly-loss);
+}
+
+.monopoly-panel [data-cash-trend] {
+  border-color: var(--monopoly-cash-tone);
+  animation: monopoly-cash-pop 0.5s ease-out;
+}
+
+.monopoly-panel [data-cash-trend] .monopoly-cash-figure {
+  color: var(--monopoly-cash-tone);
+}
+
+.monopoly-capital-seat[data-cash-trend] {
+  background: color-mix(in srgb, var(--monopoly-cash-tone) 12%, var(--monopoly-card));
+}
+
+/* The badge of the net change: it rises into place once and stays until the
+   count is over, when the layout stops rendering it. */
+.monopoly-cash-change {
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monopoly-cash-tone) 16%, var(--monopoly-card));
+  color: var(--monopoly-cash-tone);
+  font-size: 0.72rem;
+  font-weight: 800;
+  animation: monopoly-cash-rise 0.6s ease-out;
+}
+
+@keyframes monopoly-cash-pop {
+  0% {
+    transform: scale(1.08);
+  }
+
+  60% {
+    transform: scale(0.98);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes monopoly-cash-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+
+  45% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(-0.1rem);
+  }
+}
+
+/* S5: the count is decoration. With less motion asked for, the numbers still
+   move (the hook jumps straight to the new amount) and these two flourishes
+   stop; the badge keeps its colour and its sign, so nothing is lost. */
+@media (prefers-reduced-motion: reduce) {
+  .monopoly-panel [data-cash-trend],
+  .monopoly-cash-change {
+    animation: none;
+  }
+}
+
+/* The live region is for a screen reader: the badge is what a person sees, and
+   this is what gets announced, once, with the net amount -- for the chip and for
+   the strip alike. */
+.monopoly-cash-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+  border: 0;
 }
 
 /* S1: the view strip. It replaces the two-column grid that used to put the
@@ -1208,6 +1460,60 @@
   opacity: 0.55;
 }
 
+/* S5/S6 of ``monopoly-card-modal.md``: the card a seat just turned up waits over
+   the whole screen for its accept, because nothing else on the table is this
+   seat's to press until the card has been answered. The card wears the brand's
+   band, like the strips a player acts on, so it reads as part of the game and
+   not as a browser alert. */
+.monopoly-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(36 31 46 / 55%);
+}
+
+.monopoly-modal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: min(22rem, 100%);
+  padding: 1rem 1.15rem 1.15rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-top: var(--monopoly-band-size) solid var(--monopoly-brand);
+  border-radius: 0.75rem;
+  background: var(--monopoly-card);
+  box-shadow: 0 1rem 2.5rem rgb(36 31 46 / 35%);
+}
+
+.monopoly-modal-deck {
+  margin: 0;
+  color: var(--monopoly-brand);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.monopoly-modal-copy {
+  margin: 0;
+  color: var(--monopoly-ink);
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+/* The accept is the only way out, so it keeps the full thumb target and stops
+   the strip's ``flex: 1 1 auto`` from stretching it across the card. */
+.monopoly-modal-accept {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  min-height: 2.75rem;
+  padding-inline: 1.1rem;
+}
+
 .monopoly-players {
   display: flex;
   flex-direction: column;
@@ -1473,6 +1779,116 @@
 .monopoly-table3d {
   touch-action: none;
   cursor: grab;
+}
+
+/* ==========================================================================
+   El historial de tiradas del espectador (S3-S5 of ``monopoly-roll-history.md``).
+
+   Solo el espectador lo lee, y solo en la solapa Tablero. Por defecto la pila
+   pone el historial debajo del tablero, que es lo que necesita un dispositivo
+   pequeño; a partir de 900px pasa a ser una columna al costado y el tablero se
+   queda con el ancho que le queda. El scroll es uno solo, el de la lista: el
+   encabezado no se va con ella.
+   ========================================================================== */
+
+.monopoly-tablero-with-rolls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.monopoly-rolls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--monopoly-card-line);
+  border-radius: 0.75rem;
+  background: var(--monopoly-card);
+}
+
+/* ``contain``: llegar al final del historial no arrastra la página. */
+.monopoly-rolls-scroll {
+  max-height: 18rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.monopoly-rolls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monopoly-throw {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.4rem;
+  padding: 0.1rem 0;
+  color: var(--monopoly-ink);
+  font-size: 0.82rem;
+}
+
+.monopoly-throw-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 700;
+}
+
+/* El tono del asiento, como en el chip de identidad y en las fichas: la fila
+   nunca se apoya solo en el nombre para decir de quién es la tirada. */
+.monopoly-throw-swatch {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 0.15rem;
+  background: var(--monopoly-ink-soft);
+}
+
+.monopoly-throw-dice,
+.monopoly-throw-total {
+  font-variant-numeric: tabular-nums;
+}
+
+.monopoly-throw-total {
+  color: var(--monopoly-ink-soft);
+}
+
+.monopoly-throw-doubles {
+  padding: 0 0.3rem;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--monopoly-brand) 16%, transparent);
+  color: var(--monopoly-brand);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.monopoly-rolls-empty {
+  margin: 0;
+  color: var(--monopoly-ink-soft);
+  font-size: 0.85rem;
+}
+
+@media (min-width: 900px) {
+  .monopoly-tablero-with-rolls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(13rem, 17rem);
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .monopoly-rolls-scroll {
+    max-height: 60vh;
+  }
 }
 
 /* ==========================================================================

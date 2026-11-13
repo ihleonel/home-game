@@ -62,6 +62,21 @@ export type MonopolyLastCard = {
 }
 
 /**
+ * One throw of the dice the match recorded (S1, S2 of ``monopoly-roll-history.md``).
+ *
+ * ``seq`` is the throw's position in the match's own history, which the state
+ * keeps whole and never truncates, so the published window can slide without a
+ * value repeating: it is the key a list of throws can use. ``doubles`` is what
+ * the rules saw in the two faces, never something the client recomputes.
+ */
+export type MonopolyRoll = {
+  seq: number
+  seat: string
+  dice: number[]
+  doubles: boolean
+}
+
+/**
  * How much of the finite building stock is left in the bank's box (S8).
  *
  * The game starts with 32 houses and 12 hotels and every build and sell moves
@@ -91,11 +106,25 @@ export type MonopolyAction = {
   freeform: boolean
 }
 
-/** The decision a landed space opened and the turn is waiting on. */
-export type MonopolyPending = {
-  kind: 'purchase' | 'income_tax'
-  space: number
-}
+/**
+ * The decision a landed space opened and the turn is waiting on.
+ *
+ * A card is its own shape because it is the only decision whose content is
+ * copy rather than a board index: the seat reads the card and its effect lands
+ * only when the seat accepts it. The roll the effect resolves with stays on the
+ * server.
+ */
+export type MonopolyPending =
+  | {
+      kind: 'purchase' | 'income_tax'
+      space: number
+    }
+  | {
+      kind: 'card'
+      deck: string
+      id: string
+      title: string
+    }
 
 /**
  * The open auction of a declined property (S7).
@@ -171,6 +200,12 @@ export type MonopolyView = MatchRuntimeView & {
   players: MonopolyPlayer[]
   owners: Record<string, string>
   last_roll: number[] | null
+  /**
+   * The newest throws of the match, oldest first, with the newest last
+   * (S2 of ``monopoly-roll-history.md``). The state keeps every throw; this is
+   * the window the snapshot carries, so a long match publishes a bounded list.
+   */
+  rolls: MonopolyRoll[]
   pending: MonopolyPending | null
   decks: MonopolyDecks | null
   last_card: MonopolyLastCard | null
@@ -438,13 +473,62 @@ function readRoll(value: unknown): number[] | null {
   return faces
 }
 
-/** Read the pending decision, or ``null`` when there is none to act on. */
+/**
+ * Read one recorded throw, or ``null`` when the entry is not usable.
+ *
+ * The seat is what the reader groups by, ``seq`` is what a sliding window keys
+ * on and the two faces are the throw itself, so an entry missing any of them is
+ * dropped instead of being guessed from the other fields.
+ */
+function readRollEntry(value: unknown): MonopolyRoll | null {
+  if (!isRecord(value)) return null
+  const { seq, seat, doubles } = value
+  if (!isInteger(seq) || seq < 0) return null
+  if (typeof seat !== 'string' || seat.length === 0) return null
+  if (typeof doubles !== 'boolean') return null
+  const dice = readRoll(value.dice)
+  if (dice === null) return null
+  return { seq, seat, dice, doubles }
+}
+
+/**
+ * Read the published roll history, entry by entry (S6).
+ *
+ * Unlike the roster, one unreadable throw costs that throw and nothing else: a
+ * gap in a history the reader scrolls is visible, while a missing screen is
+ * not. A field that is not a list leaves no history at all.
+ */
+function readRolls(value: unknown): MonopolyRoll[] {
+  if (!Array.isArray(value)) return []
+  const rolls: MonopolyRoll[] = []
+  for (const entry of value) {
+    const roll = readRollEntry(entry)
+    if (roll !== null) rolls.push(roll)
+  }
+  return rolls
+}
+
+/**
+ * Read the pending decision, or ``null`` when there is none to act on.
+ *
+ * All-or-nothing, like the rest of the optional fields: a card missing its copy
+ * costs the card decision, never the screen. The server publishes the deck, the
+ * id and the title of a card and nothing about the roll it will resolve with,
+ * so a payload that carries no title has nothing the modal could print.
+ */
 function readPending(value: unknown): MonopolyPending | null {
   if (!isRecord(value)) return null
-  const { kind, space } = value
+  const { kind } = value
+  if (kind === 'card') {
+    const { deck, id, title } = value
+    if (typeof deck !== 'string' || deck.length === 0) return null
+    if (typeof id !== 'string' || id.length === 0) return null
+    if (typeof title !== 'string') return null
+    return { kind, deck, id, title }
+  }
   if (kind !== 'purchase' && kind !== 'income_tax') return null
-  if (!isBoardIndex(space)) return null
-  return { kind, space }
+  if (!isBoardIndex(value.space)) return null
+  return { kind, space: value.space }
 }
 
 /**
@@ -522,8 +606,8 @@ function readActions(value: unknown): MonopolyAction[] {
  * other parser in this folder does: a malformed optional field costs that
  * field, never the whole screen. ``turn``, ``last_roll``, ``pending``,
  * ``decks``, ``last_card``, ``bank``, ``debt`` and ``auction`` become ``null``,
- * ``buildings`` and ``mortgaged`` become ``{}``, ``offers`` becomes ``[]``,
- * ``actions`` loses only its bad entries, a seat's ``jail_cards`` becomes
+ * ``buildings`` and ``mortgaged`` become ``{}``, ``offers`` and ``rolls`` become
+ * ``[]``, ``actions`` loses only its bad entries, a seat's ``jail_cards`` becomes
  * ``0``, and an optional field of the wrong type is left out so the
  * component's own fallback covers it.
  */
@@ -553,6 +637,7 @@ export function parseMonopolyView(raw: unknown): MonopolyView | null {
     players,
     owners,
     last_roll: readRoll(raw.last_roll),
+    rolls: readRolls(raw.rolls),
     pending: readPending(raw.pending),
     decks: readDecks(raw.decks),
     last_card: readLastCard(raw.last_card),

@@ -7,7 +7,8 @@ import type { MatchState } from '../registry'
 import { BOARD } from './board'
 import { SEAT_TONES } from './display'
 import { MonopolyPanel, MonopolyPanelLayout } from './MonopolyPanel'
-import type { MonopolyPane, MonopolyTradeDraft } from './MonopolyPanel'
+import type { CapitalStrip, MonopolyPane, MonopolyTradeDraft } from './MonopolyPanel'
+import type { CashMotion } from './cashMotion'
 import type { MonopolyAction, MonopolyOffer, MonopolyPlayer, MonopolyView } from './view'
 
 const roster: MatchSeatRosterEntry[] = [
@@ -49,6 +50,7 @@ function view(overrides: Partial<MonopolyView> = {}): MonopolyView {
     players: [player({ seat: 'seat-0' }), player({ seat: 'seat-1', cash: 1200, position: 5 })],
     owners: {},
     last_roll: null,
+    rolls: [],
     pending: null,
     decks: null,
     last_card: null,
@@ -86,6 +88,7 @@ type LayoutOptions = {
   boardScene?: ReactNode
   sceneRotation?: { angle: number; onRotate: (direction: 1 | -1) => void }
   selected?: number | null
+  capital?: CapitalStrip
 }
 
 function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): LayoutProps {
@@ -101,6 +104,7 @@ function layoutProps(rawView: MonopolyView, options: LayoutOptions = {}): Layout
     onViewChange: options.onViewChange ?? (() => {}),
     boardScene: options.boardScene,
     sceneRotation: options.sceneRotation,
+    capital: options.capital,
   }
 }
 
@@ -874,6 +878,157 @@ describe('the monopoly player panel', () => {
   })
 })
 
+describe('the drawn card dialog', () => {
+  const ACCEPT = 'Aceptá la carta.'
+  const CARD = {
+    kind: 'card' as const,
+    deck: 'chance',
+    id: 'chance-13',
+    title: 'Multa por exceso de velocidad: $15.',
+  }
+  const confirm = {
+    name: 'confirm_card',
+    prompt: ACCEPT,
+    options: [] as string[],
+    freeform: false,
+  }
+
+  function cardView(overrides: Partial<MonopolyView> = {}): MonopolyView {
+    return view({
+      phase: 'awaiting_decision',
+      pending: CARD,
+      last_card: { deck: CARD.deck, id: CARD.id, title: CARD.title },
+      actions: [confirm, { name: 'propose', prompt: 'Proponé', options: [], freeform: true }],
+      ...overrides,
+    })
+  }
+
+  it('shows the card and the accept the server offered', () => {
+    const onAction = vi.fn()
+    const rawView = cardView()
+
+    const dialogs = elementsWithClass(rawView, 'monopoly-modal-card', { onAction })
+
+    expect(dialogs).toHaveLength(1)
+    const dialog = dialogs[0].props as {
+      role?: string
+      'aria-modal'?: string | boolean
+      'aria-labelledby'?: string
+      'aria-describedby'?: string
+    }
+    expect(dialog.role).toBe('dialog')
+    // React renders the boolean ARIA flag as its string form in the markup.
+    expect(dialog['aria-modal']).toBe('true')
+    expect(dialog['aria-labelledby']).toBe('monopoly-card-deck')
+    expect(dialog['aria-describedby']).toBe('monopoly-card-copy')
+
+    const body = panelMarkup(rawView, { onAction })
+    expect(body).toContain('Suerte')
+    expect(body).toContain(CARD.title)
+
+    const accept = actionButtons(rawView, { onAction }).filter(
+      (button) => textOf(button) === ACCEPT,
+    )
+    expect(accept).toHaveLength(1)
+    ;(accept[0].props as { onClick: () => void }).onClick()
+    expect(onAction).toHaveBeenCalledWith('confirm_card', null)
+  })
+
+  it('keeps the accept out of the persistent action strip', () => {
+    const rawView = cardView()
+
+    const strip = elementsWithClass(rawView, 'monopoly-actions', {})
+    const stripButtons = hostElements(strip).filter((element) => element.type === 'button')
+
+    expect(stripButtons.map(textOf)).toEqual([])
+  })
+
+  it('disables the accept while the submission is in flight', () => {
+    const rawView = cardView()
+
+    const accept = actionButtons(rawView, { busy: true })[0]
+
+    expect((accept.props as { disabled?: boolean }).disabled).toBe(true)
+  })
+
+  it('stays shut for a seat the server did not ask', () => {
+    // Another seat's view carries no confirm action, so the same card pending
+    // is not that screen's to answer.
+    const rawView = cardView({
+      you: 'seat-1',
+      actions: [{ name: 'propose', prompt: 'Proponé', options: [], freeform: true }],
+    })
+
+    expect(elementsWithClass(rawView, 'monopoly-modal-card')).toHaveLength(0)
+  })
+
+  it('stays shut with no card pending', () => {
+    const rawView = view({ actions: [confirm] })
+
+    expect(elementsWithClass(rawView, 'monopoly-modal-card')).toHaveLength(0)  })
+})
+
+describe('the viewer\'s own seat colour', () => {
+  const panes = ['tablero', 'cartera', 'mesa'] as const
+
+  /**
+   * The persistent identity chip, as the browser would paint it: a chip inside
+   * a closed pane would be found in the markup and still be invisible, which is
+   * exactly the failure this block exists to catch.
+   */
+  function paintedChips(rawView: MonopolyView, options: LayoutOptions = {}): ReactElement[] {
+    return visibleElements(MonopolyPanelLayout(layoutProps(rawView, options))).filter(
+      (element) => classesOf(element).includes('monopoly-seat-identity'),
+    )
+  }
+
+  it('keeps the viewer\'s tone, initial and name on screen whichever view is open', () => {
+    // The board, the wallet and the table each print a different set of facts,
+    // and the players list -- the only other place a seat's tone is spelled out
+    // as a legend -- lives in one view of three. Changing view is exactly when
+    // the reference is lost, so the seat's own colour gets one place no view
+    // can hide: outside every pane, beside the tabs.
+    for (const activeView of panes) {
+      const chips = paintedChips(view(), { activeView })
+
+      expect(chips, `no identity chip with ${activeView} open`).toHaveLength(1)
+      const markup = renderToStaticMarkup(chips[0])
+
+      // The chip prints the colour, the seat and nothing else: a printed label
+      // over the swatch is what made the panel read as a data sheet, the same
+      // reason the wallet dropped the word "Capital" over its number.
+      expect(markup).not.toContain('Tu color')
+      expect(markup).toContain(`background:${SEAT_TONES[0]}`)
+      expect(markup).toMatch(/monopoly-seat-identity-swatch[^>]*>A<\/span>/)
+      expect(markup).toMatch(/monopoly-seat-identity-name[^>]*>Ana<\/span>/)
+    }
+  })
+
+  it('keeps the initial and drops only the tone for a seat the roster cannot name', () => {
+    // The tone is presentation keyed on the roster index, so a seat the roster
+    // does not name keeps its place -- name and initial -- and loses only the
+    // colour, exactly as the board's owner badge does.
+    const rawView = view()
+    const unnamed = { ...matchFor(rawView), roster: [] }
+    const page = renderToStaticMarkup(
+      <MonopolyPanelLayout {...layoutProps(rawView)} match={unnamed} />,
+    )
+
+    expect(page).toContain('monopoly-seat-identity-swatch')
+    expect(page).not.toContain('monopoly-seat-identity-swatch" style=')
+    expect(page).toMatch(/monopoly-seat-identity-swatch[^>]*>J<\/span>/)
+    expect(page).toContain('Jugador')
+  })
+
+  it('claims no colour for a spectator, who has no seat to colour', () => {
+    const page = panelMarkup(view({ you: undefined }))
+
+    expect(paintedChips(view({ you: undefined }))).toHaveLength(1)
+    expect(page).toContain('monopoly-seat-identity')
+    expect(page).toContain('Espectador')
+    expect(page).not.toContain('monopoly-seat-identity-swatch')  })
+})
+
 describe('the monopoly negotiation panel', () => {
   const proposeAction: MonopolyAction = {
     name: 'propose',
@@ -1461,5 +1616,289 @@ describe('turning the rendered table', () => {
 
   it('shows no turn controls without a rendered table', () => {
     expect(elementsWithClass(view(), 'monopoly-scene-turns')).toHaveLength(0)
+  })
+})
+
+describe('the spectator roll history', () => {
+  const ROLLS = [
+    { seq: 7, seat: 'seat-1', dice: [4, 6], doubles: false },
+    { seq: 8, seat: 'seat-0', dice: [5, 5], doubles: true },
+  ]
+
+  /** A spectator payload: the server projects no seat, so there is no ``you``. */
+  function spectatorView(overrides: Partial<MonopolyView> = {}): MonopolyView {
+    const payload = view({ rolls: ROLLS, ...overrides })
+    delete payload.you
+    return payload
+  }
+
+  function visibleClasses(rawView: MonopolyView, className: string, options: LayoutOptions): boolean {
+    const tree = MonopolyPanelLayout(layoutProps(rawView, options))
+    return visibleElements(tree).some((element) => classesOf(element).includes(className))
+  }
+
+  it('reads every throw of the published window, with its seat and total', () => {
+    const page = panelMarkup(spectatorView())
+
+    expect(page).toContain('Historial de tiradas')
+    expect(page).toContain('Beto')
+    expect(page).toContain('4 y 6')
+    expect(page).toContain('(10)')
+    expect(page).toContain('Ana')
+    expect(page).toContain('5 y 5')
+    expect(page).toContain('(10)')
+  })
+
+  it('marks a double and leaves the rest unmarked', () => {
+    const rows = elementsWithClass(spectatorView(), 'monopoly-throw')
+
+    expect(rows).toHaveLength(2)
+    const marked = rows.filter((row) =>
+      hostElements(row).some((element) => classesOf(element).includes('monopoly-throw-doubles')),
+    )
+    expect(marked).toHaveLength(1)
+    // The double is the newest throw: the 5 and 5 of the second row.
+    expect(marked[0].key).toBe('8')
+    expect(panelMarkup(spectatorView()).match(/Dobles/g)).toHaveLength(1)
+  })
+
+  it('keys each row by its own seq, so a sliding window never reuses one', () => {
+    const rows = elementsWithClass(spectatorView(), 'monopoly-throw')
+
+    expect(rows.map((row) => row.key)).toEqual(['7', '8'])
+  })
+
+  it('says so before the first throw instead of drawing an empty list', () => {
+    const page = panelMarkup(spectatorView({ rolls: [] }))
+
+    expect(page).toContain('Todavía no se tiraron los dados.')
+    expect(elementsWithClass(spectatorView({ rolls: [] }), 'monopoly-throw')).toHaveLength(0)
+  })
+
+  it('wraps the table and the history together, so the layout can place them', () => {
+    const page = spectatorView()
+    const wrapper = elementsWithClass(page, 'monopoly-tablero-with-rolls', {
+      boardScene: <div className="scratch-scene" />,
+    })
+
+    expect(wrapper).toHaveLength(1)
+    const inside = hostElements(wrapper[0]).map((element) => classesOf(element))
+    expect(inside.some((classes) => classes.includes('scratch-scene'))).toBe(true)
+    expect(inside.some((classes) => classes.includes('monopoly-rolls'))).toBe(true)
+  })
+
+  it('draws no history for a player, who has a seat of their own', () => {
+    const page = panelMarkup(view({ rolls: ROLLS }))
+
+    expect(page).not.toContain('Historial de tiradas')
+    expect(elementsWithClass(view({ rolls: ROLLS }), 'monopoly-rolls')).toHaveLength(0)
+    expect(
+      elementsWithClass(view({ rolls: ROLLS }), 'monopoly-tablero-with-rolls', {
+        boardScene: <div className="scratch-scene" />,
+      }),
+    ).toHaveLength(0)
+  })
+
+  it('stays inside the board view, which is the only tab that draws it', () => {
+    expect(visibleClasses(spectatorView(), 'monopoly-rolls', { activeView: 'tablero' })).toBe(true)
+    expect(visibleClasses(spectatorView(), 'monopoly-rolls', { activeView: 'cartera' })).toBe(false)
+    expect(visibleClasses(spectatorView(), 'monopoly-rolls', { activeView: 'mesa' })).toBe(false)
+  })
+})
+
+/**
+ * Where the capital lives (S1-S6 of ``monopoly-capital-bar.md``).
+ *
+ * Two places, and who is looking decides which: a seat reads its own money in
+ * the header chip it already had, and only a spectator — who has no seat to
+ * print — gets the strip with every seat. The layout stays a pure function of
+ * its props, so these tests hand it the values a running count would.
+ */
+describe('the capital beside the seats', () => {
+  const panes = ['tablero', 'cartera', 'mesa'] as const
+
+  /** The text an element prints, through any function components inside it. */
+  function textContentOf(node: ReactNode): string {
+    if (node === null || node === undefined || typeof node === 'boolean') return ''
+    if (typeof node === 'string' || typeof node === 'number') return String(node)
+    if (Array.isArray(node)) return node.map(textContentOf).join('')
+    if (!isValidElement(node)) return ''
+    const component = node.type
+    if (typeof component === 'function') {
+      return textContentOf((component as (p: unknown) => ReactElement)(node.props))
+    }
+    return textContentOf((node.props as { children?: ReactNode }).children)
+  }
+
+  /**
+   * The elements carrying ``className`` that the browser would actually paint
+   * with one view open.
+   *
+   * The walk that skips ``hidden`` subtrees is what tells "the panel renders
+   * this somewhere" from "this is on screen while the board is open".
+   */
+  function paintedWithClass(
+    rawView: MonopolyView,
+    className: string,
+    options: LayoutOptions = {},
+  ): ReactElement[] {
+    return visibleElements(MonopolyPanelLayout(layoutProps(rawView, options))).filter((element) =>
+      classesOf(element).includes(className),
+    )
+  }
+
+  /**
+   * A view whose published amounts are the ends of the counts below.
+   *
+   * The motion and the view have to agree: the count prints the published amount
+   * to a screen reader and the counting one to the eye, so a fixture whose ``to``
+   * is not the amount the view carries would test nothing real.
+   */
+  function raised(own = 1700, other = 1200): MonopolyView {
+    return view({
+      players: [
+        player({ seat: 'seat-0', cash: own }),
+        player({ seat: 'seat-1', cash: other, position: 5 }),
+      ],
+    })
+  }
+
+  /** One running count, the way the hook hands it to the layout. */
+  function strip(
+    shown: Record<string, number>,
+    motions: Record<string, CashMotion>,
+    announce: string,
+  ): CapitalStrip {
+    return {
+      shown: new Map(Object.entries(shown)),
+      motions: new Map(Object.entries(motions)),
+      announce,
+      sequence: 1,
+    }
+  }
+
+  it('keeps the viewer\'s own capital in the header chip, in each of the three views', () => {
+    for (const activeView of panes) {
+      const chips = paintedWithClass(view(), 'monopoly-seat-identity', { activeView })
+
+      expect(chips, `no header chip with ${activeView} open`).toHaveLength(1)
+      const markup = renderToStaticMarkup(chips[0])
+      expect(markup).not.toContain('Tu color')
+      expect(markup).toContain('Ana')
+      expect(markup).toContain('$1.500')
+      // The tone is never the only cue: the swatch prints the initial too.
+      expect(markup).toMatch(/monopoly-seat-identity-swatch[^>]*>A<\/span>/)
+    }
+  })
+
+  it('leaves the other seats out of a player\'s header', () => {
+    // The other seats' money is still on the table pane; what a player does not
+    // get is a permanent comparison in the header.
+    expect(paintedWithClass(view(), 'monopoly-capital', {})).toHaveLength(0)
+    expect(elementsWithClass(view(), 'monopoly-cash-figure')).toHaveLength(1)
+    expect(
+      renderToStaticMarkup(paintedWithClass(view(), 'monopoly-seat-identity', {})[0]),
+    ).not.toContain('Beto')
+  })
+
+  it('gives a spectator every seat, and a header with no amount of its own', () => {
+    const raw = view({ you: undefined })
+    const rows = elementsWithClass(raw, 'monopoly-capital-seat')
+    const markup = renderToStaticMarkup(<>{rows}</>)
+    const chip = renderToStaticMarkup(
+      paintedWithClass(raw, 'monopoly-seat-identity', {})[0],
+    )
+
+    expect(rows).toHaveLength(2)
+    expect(markup).toContain('Ana')
+    expect(markup).toContain('Beto')
+    expect(markup).toContain('$1.500')
+    expect(markup).toContain('$1.200')
+    expect(markup).not.toContain('(tú)')
+    expect(chip).toContain('Espectador')
+    expect(chip).not.toContain('$')
+  })
+
+  it('counts inside the chip and hides the moving digits from a reader', () => {
+    const capital = strip(
+      { 'seat-0': 1600 },
+      { 'seat-0': { seat: 'seat-0', from: 1500, to: 1700, delta: 200, trend: 'up' } },
+      'Ana +$200',
+    )
+    const raw = raised()
+    const chip = paintedWithClass(raw, 'monopoly-seat-identity', { capital })[0]
+    const trend = chip.props as { 'data-cash-trend'?: string }
+    const figures = elementsWithClass(raw, 'monopoly-cash-figure', { capital })
+    const badge = elementsWithClass(raw, 'monopoly-cash-change', { capital })
+
+    expect(trend['data-cash-trend']).toBe('up')
+    expect(figures.map(textContentOf)).toEqual(['$1.600'])
+    expect((figures[0].props as { 'aria-hidden'?: string })['aria-hidden']).toBe('true')
+    expect(elementsWithClass(raw, 'monopoly-visually-hidden', { capital }).map(textContentOf))
+      .toContain('$1.700')
+    expect(badge.map(textContentOf)).toEqual(['+$200'])
+    expect((badge[0].props as { 'aria-hidden'?: string })['aria-hidden']).toBe('true')
+  })
+
+  it('counts downwards in a spectator row without leaning on the colour', () => {
+    const capital = strip(
+      { 'seat-1': 950 },
+      { 'seat-1': { seat: 'seat-1', from: 1200, to: 950, delta: -250, trend: 'down' } },
+      'Beto −$250',
+    )
+    const raw = raised(1500, 950)
+    const rows = paintedWithClass(raw, 'monopoly-capital-seat', { capital, activeView: 'mesa' })
+
+    expect(rows).toHaveLength(0)
+    const spectator = { ...raw, you: undefined }
+    const shownRows = paintedWithClass(spectator, 'monopoly-capital-seat', { capital })
+    const down = shownRows[1].props as { 'data-cash-trend'?: string }
+
+    expect(down['data-cash-trend']).toBe('down')
+    expect(
+      elementsWithClass(spectator, 'monopoly-cash-change', { capital }).map(textContentOf),
+    ).toEqual(['−$250'])
+  })
+
+  it('keeps the row of an eliminated seat for a spectator and says it is out', () => {
+    const raw = view({
+      you: undefined,
+      players: [
+        player({ seat: 'seat-0', cash: 0, eliminated: true }),
+        player({ seat: 'seat-1', cash: 1200 }),
+      ],
+    })
+    const rows = elementsWithClass(raw, 'monopoly-capital-seat')
+    const out = rows[0].props as { 'data-out'?: string }
+    const inside = rows[1].props as { 'data-out'?: string }
+
+    expect(rows).toHaveLength(2)
+    expect(out['data-out']).toBe('true')
+    expect(inside['data-out']).toBeUndefined()
+    expect(textContentOf(rows[0])).toContain('$0')
+  })
+
+  it('prints the amount the view published when no count is running', () => {
+    expect(elementsWithClass(view(), 'monopoly-cash-figure').map(textContentOf)).toEqual(['$1.500'])
+    expect(elementsWithClass(view(), 'monopoly-cash-change')).toHaveLength(0)
+  })
+
+  it('announces the net change once, politely, and keeps the region when nothing moved', () => {
+    const capital = strip(
+      { 'seat-0': 1600 },
+      { 'seat-0': { seat: 'seat-0', from: 1500, to: 1700, delta: 200, trend: 'up' } },
+      'Ana +$200',
+    )
+    const [live] = elementsWithClass(raised(), 'monopoly-cash-announce', { capital })
+    const props = live.props as { role?: string; 'aria-live'?: string }
+
+    expect(props.role).toBe('status')
+    expect(props['aria-live']).toBe('polite')
+    expect(textContentOf(live)).toBe('Ana +$200')
+
+    // The region is in the markup before anything lands in it, or the first
+    // change of the match would be announced to nobody.
+    const [quiet] = elementsWithClass(view(), 'monopoly-cash-announce')
+    expect(textContentOf(quiet)).toBe('')
   })
 })

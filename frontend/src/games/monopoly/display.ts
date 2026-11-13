@@ -112,6 +112,21 @@ export function formatMoney(value: number): string {
 }
 
 /**
+ * The amount of a *change*, with the sign in front.
+ *
+ * It exists for the same reason ``formatMoney`` does: a change is printed beside
+ * the balance it moves (the capital strip, the live announcement), so its digits
+ * have to be grouped by the same function or the two would disagree about a
+ * thousand. The minus is U+2212, the sign the panel already prints in front of a
+ * cost, never the hyphen ``formatMoney`` uses for a negative balance.
+ */
+export function signedMoney(value: number): string {
+  if (value > 0) return `+${formatMoney(value)}`
+  if (value < 0) return `\u2212${formatMoney(-value)}`
+  return formatMoney(0)
+}
+
+/**
  * The display name the roster gives a seat.
  *
  * A seat the roster does not name reads ``Jugador``, never a seat number: the

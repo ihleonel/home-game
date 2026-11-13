@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { ReactElement, ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ReactElement, ReactNode, RefObject, UIEvent } from 'react'
 import type { MatchRendererProps, MatchState } from '../registry'
 import { BOARD_SIZE, isPurchasable, spaceAt } from './board'
 import type { ColorGroup, Space } from './board'
@@ -18,13 +18,31 @@ import {
   sellBack,
 } from './deeds'
 import type { Deed } from './deeds'
-import { GROUP_LABELS, formatMoney, initialOf, seatIndexOf, seatName, seatTone } from './display'
+import {
+  GROUP_LABELS,
+  deckLabel,
+  formatMoney,
+  initialOf,
+  seatIndexOf,
+  seatName,
+  seatTone,
+  signedMoney,
+} from './display'
+import type { CashMotion } from './cashMotion'
+import { cashAnnouncement, cashDuration, planCashMotion, shownAmount } from './cashMotion'
 import { MonopolyBoard } from './MonopolyBoard'
 import { MonopolyTableCentre } from './MonopolyTableCentre'
 import { MonopolyTable3D } from './three/MonopolyTable3D'
 import { QUARTER_TURN } from './three/camera'
+import { usePrefersReducedMotion } from './three/useReducedMotion'
 import './monopoly.css'
-import type { MonopolyAction, MonopolyAuction, MonopolyPlayer, MonopolyView } from './view'
+import type {
+  MonopolyAction,
+  MonopolyAuction,
+  MonopolyPlayer,
+  MonopolyRoll,
+  MonopolyView,
+} from './view'
 
 /**
  * The three views of a match screen (S1 of ``monopoly-view-switcher.md``).
@@ -145,14 +163,15 @@ const EMPTY_TRADE_DRAFT: MonopolyTradeDraft = {
 }
 
 /**
- * The actions the negotiation block draws next to each offer (S5/S11).
+ * The actions another block of the panel draws, so the strip never draws them.
  *
- * Their options are offer ids, so an offer's terms are the only place they make
- * sense; the generic renderer leaves them to the block instead of drawing a
- * bare ``prompt: id`` button. They are never freeform, so they would otherwise
- * be drawn twice.
+ * The three answers to an offer have offer ids as options, so an offer's terms
+ * are the only place they make sense, and ``confirm_card`` belongs to the card
+ * dialog (S5 of ``monopoly-card-modal.md``): the strip is what stays on screen
+ * in every view, and a second accept next to the dialog would offer the same
+ * submission twice. They are never freeform, so they would otherwise be drawn.
  */
-const TRADE_RESPONSES = new Set(['accept', 'reject', 'withdraw'])
+const PANEL_OWNED_ACTIONS = new Set(['accept', 'reject', 'withdraw', 'confirm_card'])
 
 /**
  * The four actions that act on one property, and therefore belong on its card
@@ -511,6 +530,54 @@ function actionButtons(
         {optionLabel(action, option, buildings)}
       </button>
     ))
+}
+
+/**
+ * The card the seat on turn just turned up, waiting for its accept (S5, S6).
+ *
+ * A drawn card used to apply its effect the instant the token landed, so the
+ * table read the result before the card. The seat that drew it now reads the
+ * card first and the effect lands when it accepts; every other seat keeps
+ * reading the drawn card in the centre strip, which is why this dialog is
+ * gated on the accept the **server** offered this screen and not on the card
+ * alone. The button label is the server's prompt, verbatim, like every other
+ * action the panel draws.
+ */
+function cardDialog(
+  view: MonopolyView,
+  busy: boolean,
+  onAction: (name: string, value: string | null) => void,
+): ReactElement | null {
+  const pending = view.pending
+  if (pending === null || pending.kind !== 'card') return null
+  const accept = view.actions.find((action) => action.name === 'confirm_card')
+  if (accept === undefined) return null
+  return (
+    <div className="monopoly-modal">
+      <div
+        aria-describedby="monopoly-card-copy"
+        aria-labelledby="monopoly-card-deck"
+        aria-modal="true"
+        className="monopoly-modal-card"
+        role="dialog"
+      >
+        <p className="monopoly-modal-deck" id="monopoly-card-deck">
+          {deckLabel(pending.deck)}
+        </p>
+        <p className="monopoly-modal-copy" id="monopoly-card-copy">
+          {pending.title}
+        </p>
+        <button
+          className="monopoly-action monopoly-modal-accept"
+          disabled={busy}
+          onClick={() => onAction(accept.name, null)}
+          type="button"
+        >
+          {accept.prompt}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function ownSeatBlock(
@@ -915,6 +982,133 @@ function offersBlock(
   )
 }
 
+/**
+ * What the capital strip prints while counts are running (S1-S6 of
+ * ``monopoly-capital-bar.md``).
+ *
+ * The wrapper owns the clock, so the pure layout receives the numbers already
+ * decided: the amount to show per seat, the count behind each change, and the
+ * sentence a screen reader is told. Without it the strip prints the amounts the
+ * view published, which is what every markup test renders and what a player sees
+ * before the first change of the match.
+ */
+export type CapitalStrip = {
+  /** The amount to show, keyed by seat id, for the seats mid-count. */
+  shown: ReadonlyMap<string, number>
+  /** The change running per seat, keyed by seat id; a seat absent is settled. */
+  motions: ReadonlyMap<string, CashMotion>
+  /** What the polite live region says about the changes of this view. */
+  announce: string
+  /**
+   * How many changes this panel has announced, so an identical sentence twice in
+   * a row still replaces the live region's node and is spoken the second time.
+   */
+  sequence: number
+}
+
+/** The count running behind one seat's money, or ``null`` when it is settled. */
+function cashMotionOf(capital: CapitalStrip | undefined, seat: string): CashMotion | null {
+  return capital?.motions.get(seat) ?? null
+}
+
+/**
+ * One seat's money, wherever it is printed (S2, S6).
+ *
+ * The chip and the strip share this and nothing else prints an amount, so the
+ * two places cannot disagree about grouping, sign or accessibility. While a
+ * count runs the digits that move are decoration: the amount a reader gets is
+ * the one the server published, and a live region never reads the units in
+ * between.
+ */
+function cashAmount(player: MonopolyPlayer, capital: CapitalStrip | undefined): ReactElement {
+  const motion = cashMotionOf(capital, player.seat)
+  const shown = capital?.shown.get(player.seat) ?? player.cash
+  return (
+    <span className="monopoly-cash-amount">
+      {motion === null ? (
+        <span className="monopoly-cash-figure">{formatMoney(player.cash)}</span>
+      ) : (
+        <>
+          <span aria-hidden="true" className="monopoly-cash-figure">
+            {formatMoney(shown)}
+          </span>
+          <span className="monopoly-visually-hidden">{formatMoney(player.cash)}</span>
+        </>
+      )}
+      {motion !== null && (
+        <span aria-hidden="true" className="monopoly-cash-change">
+          {signedMoney(motion.delta)}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * What a screen reader is told about the changes of one view (S6).
+ *
+ * It lives outside both places because it is not a place: a player reads the
+ * chip and a spectator reads the strip, and both are told the same net amount.
+ * The keyed child is what makes the same sentence twice in a row a mutation a
+ * live region can announce: an identical string in an identical node is
+ * invisible to a screen reader.
+ */
+function cashAnnounceRegion(capital: CapitalStrip | undefined): ReactElement {
+  return (
+    <p aria-live="polite" className="monopoly-cash-announce" role="status">
+      <span key={capital?.sequence ?? 0}>{capital?.announce ?? ''}</span>
+    </p>
+  )
+}
+
+/**
+ * Every seat's capital, for the one viewer with no seat of its own (S1).
+ *
+ * A player reads their money in the header chip, which already carried their
+ * colour and their name; repeating it here, next to the money of everyone else,
+ * was saying the same thing twice and keeping a comparison nobody asked for on
+ * screen. A spectator has no seat to print, so the whole table's capital is
+ * theirs: same tone, initial, name and count as the rest of the panel.
+ */
+function capitalStrip(
+  view: MonopolyView,
+  match: MatchState<MonopolyView>,
+  capital: CapitalStrip | undefined,
+): ReactElement {
+  return (
+    <div className="monopoly-capital" role="group" aria-label="Capital de los jugadores">
+      <ul className="monopoly-capital-list">
+        {view.players.map((player) => {
+          const name = seatName(match, player.seat)
+          const tone = seatTone(seatIndexOf(match.roster, player.seat))
+          return (
+            <li
+              className={
+                player.eliminated
+                  ? 'monopoly-capital-seat monopoly-capital-out'
+                  : 'monopoly-capital-seat'
+              }
+              data-cash-trend={cashMotionOf(capital, player.seat)?.trend}
+              data-out={player.eliminated ? 'true' : undefined}
+              key={player.seat}
+            >
+              <span
+                aria-hidden="true"
+                className="monopoly-capital-tone"
+                style={tone === null ? undefined : { background: tone }}
+              >
+                {initialOf(name)}
+              </span>
+              <span className="monopoly-capital-name">{name}</span>
+              {cashAmount(player, capital)}
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 type MonopolyPanelLayoutProps = {
   match: MatchState<MonopolyView>
   busy: boolean
@@ -941,6 +1135,24 @@ type MonopolyPanelLayoutProps = {
    * stopped; the two keyboard controls still ask for a whole quarter each.
    */
   sceneRotation?: { angle: number; onRotate: (direction: 1 | -1) => void }
+  /**
+   * How the spectator's roll history is scrolled (S5).
+   *
+   * The wrapper owns the ref, so this pure component never reads a hook and the
+   * markup tests can keep calling it directly. Without it the history still
+   * draws its throws; it only loses the follow-the-newest behaviour.
+   */
+  rollsScroll?: RollsScroll
+  /**
+   * What the capital strip is counting, when a count is running (S3, S5, S6 of
+   * ``monopoly-capital-bar.md``).
+   *
+   * The wrapper owns the clock and hands the layout the numbers it already
+   * decided, for the same reason ``rollsScroll`` is a prop: the layout stays a
+   * pure function of its props, and this is the component the markup tests call.
+   * Without it the strip prints the amounts the view published.
+   */
+  capital?: CapitalStrip
 }
 
 /**
@@ -963,6 +1175,8 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
   const [trade, setTrade] = useState<MonopolyTradeDraft>(EMPTY_TRADE_DRAFT)
   const [pane, setPane] = useState<MonopolyPane>(OPENING_PANE)
   const [angle, setAngle] = useState(0)
+  const rollsScroll = useRollsScroll(match.view.rolls)
+  const capital = useCashMotion(match.view.players, match)
   return (
     <MonopolyPanelLayout
       match={match}
@@ -989,7 +1203,236 @@ export function MonopolyPanel({ match, busy, onAction }: MatchRendererProps<Mono
         angle,
         onRotate: (direction) => setAngle((current) => current + direction * QUARTER_TURN),
       }}
+      rollsScroll={rollsScroll}
+      capital={capital}
     />
+  )
+}
+
+/**
+ * What the strip shows when no count is running (S2).
+ *
+ * One shared object on purpose: it is what the state settles to, so React can
+ * tell "nothing changed" from "a count started" by identity alone.
+ */
+const SETTLED_CAPITAL: CapitalStrip = {
+  shown: new Map(),
+  motions: new Map(),
+  announce: '',
+  sequence: 0,
+}
+
+/**
+ * How long the badge of a settled change stays after the last amount landed.
+ *
+ * Long enough to read a rent once it is over, short enough that the strip goes
+ * back to being a table of amounts instead of a column of signs.
+ */
+const CASH_BADGE_MS = 1600
+
+/**
+ * One count, from the view that started it to the frame that settles it.
+ *
+ * It lives in a ref and not in state because it is a *timeline*, not a value the
+ * screen shows: absolute timestamps that survive an effect re-run, so a view
+ * arriving halfway through a count resumes it instead of restarting it.
+ */
+type CashTimeline = {
+  motions: CashMotion[]
+  bySeat: Map<string, CashMotion>
+  announce: string
+  sequence: number
+  startAt: number
+  countUntil: number
+  settleAt: number
+  reduced: boolean
+}
+
+/**
+ * The counts the capital strip is running (S3-S6 of ``monopoly-capital-bar.md``).
+ *
+ * The wrapper owns the clock because the pure layout cannot: this hook compares
+ * every view with the one before it, plans one count per seat whose money moved
+ * and hands the layout the numbers a frame at a time. Nothing here decides an
+ * amount -- ``cashMotion`` does that and is where the counting rule is tested --
+ * and nothing is read from the server: the server publishes whole views, so a
+ * change is the net difference between two of them.
+ *
+ * The timeline is the reason this is not a plain ``elapsed`` in state. Views
+ * arrive constantly -- a roll, a purchase, a turn ending -- and most of them move
+ * nobody's money. If every view cancelled the loop, a count would be cut to its
+ * first frame by the next unrelated event. So a view that moved no money keeps
+ * the timeline it found and the loop simply resumes it, while a view that *did*
+ * move money replaces the timeline with a new one: the newest money wins, and it
+ * counts from the amounts the two views published.
+ */
+function useCashMotion(
+  players: readonly MonopolyPlayer[],
+  match: MatchState<MonopolyView>,
+): CapitalStrip {
+  const reduced = usePrefersReducedMotion()
+  const [capital, setCapital] = useState<CapitalStrip>(SETTLED_CAPITAL)
+  const amounts = useRef<Map<string, number> | null>(null)
+  const flight = useRef<CashTimeline | null>(null)
+  const announced = useRef(0)
+
+  useEffect(() => {
+    const previous = amounts.current
+    amounts.current = new Map(players.map((player) => [player.seat, player.cash]))
+    // The first view of the match has nothing to count from: the money a seat
+    // holds when the screen opens is the starting table, not a change.
+    if (previous === null) return
+
+    const motions = planCashMotion(players, previous)
+    if (motions.length > 0) {
+      const startAt = performance.now()
+      // Less motion asked for means no count at all: the amount is the new one on
+      // the first frame and the badge simply stays its while.
+      const countUntil = startAt + (reduced ? 0 : Math.max(...motions.map(cashDuration)))
+      announced.current += 1
+      flight.current = {
+        motions,
+        bySeat: new Map(motions.map((motion) => [motion.seat, motion])),
+        announce: cashAnnouncement(motions, (seat) => seatName(match, seat)),
+        sequence: announced.current,
+        startAt,
+        countUntil,
+        settleAt: countUntil + CASH_BADGE_MS,
+        reduced,
+      }
+    }
+
+    let frame = 0
+    const tick = (now: number): void => {
+      const timeline = flight.current
+      if (timeline === null || now >= timeline.settleAt) {
+        flight.current = null
+        setCapital(SETTLED_CAPITAL)
+        return
+      }
+      const elapsed = now - timeline.startAt
+      setCapital({
+        shown: new Map(
+          timeline.motions.map((motion) => [
+            motion.seat,
+            shownAmount(motion, elapsed, timeline.reduced),
+          ]),
+        ),
+        motions: timeline.bySeat,
+        announce: timeline.announce,
+        sequence: timeline.sequence,
+      })
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [players, match, reduced])
+
+  return capital
+}
+
+/**
+ * Where the spectator's roll history is scrolled to (S5 of
+ * ``monopoly-roll-history.md``).
+ *
+ * The ref and the handler are built by the stateful wrapper, because the pure
+ * layout this file exports is what the markup tests call directly and a
+ * component that reads a hook cannot be called that way.
+ */
+type RollsScroll = {
+  scrollRef: RefObject<HTMLDivElement | null>
+  onScroll: (event: UIEvent<HTMLDivElement>) => void
+}
+
+/**
+ * Keep the roll history at its newest throw, while the reader is already there.
+ *
+ * Reading an older throw means scrolling up, and a log that pulled the view back
+ * down would take that reading away: the newest throw moves the scroll only when
+ * the reader was at the bottom before it arrived.
+ */
+function useRollsScroll(rolls: MonopolyRoll[]): RollsScroll {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const atBottom = useRef(true)
+  const newest = rolls.length === 0 ? null : rolls[rolls.length - 1].seq
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (node === null || !atBottom.current) return
+    node.scrollTop = node.scrollHeight
+  }, [newest])
+
+  return {
+    scrollRef,
+    onScroll: (event) => {
+      const node = event.currentTarget
+      // A pixel of slack, so a zoomed-in reader still counts as at the bottom.
+      atBottom.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 1
+    },
+  }
+}
+
+/**
+ * The throws the match has published, oldest first (S3-S5 of
+ * ``monopoly-roll-history.md``).
+ *
+ * Only a spectator reads it. A player has the board, the wallet and the table,
+ * and the seat on turn is the one acting, so a log of everyone's throws would be
+ * a fourth thing to read while the turn waits for them.
+ *
+ * The list is chronological with the newest throw at the bottom, and each row is
+ * keyed by the throw's own ``seq``: the window the server publishes slides, so a
+ * key taken from the position would end up naming a different throw.
+ */
+function RollHistory({
+  match,
+  view,
+  scroll,
+}: {
+  match: MatchState<MonopolyView>
+  view: MonopolyView
+  scroll?: RollsScroll
+}) {
+  return (
+    <aside aria-labelledby="monopoly-rolls-title" className="monopoly-rolls">
+      <h3 className="monopoly-block-title" id="monopoly-rolls-title">
+        Historial de tiradas
+      </h3>
+      <div
+        className="monopoly-rolls-scroll"
+        onScroll={scroll?.onScroll}
+        ref={scroll?.scrollRef ?? null}
+      >
+        {view.rolls.length === 0 ? (
+          <p className="monopoly-rolls-empty">Todavía no se tiraron los dados.</p>
+        ) : (
+          <ol aria-label="Tiradas de la partida" className="monopoly-rolls-list">
+            {view.rolls.map((roll) => {
+              const tone = seatTone(seatIndexOf(match.roster, roll.seat))
+              return (
+                <li className="monopoly-throw" key={roll.seq}>
+                  <span className="monopoly-throw-seat">
+                    <span
+                      aria-hidden="true"
+                      className="monopoly-throw-swatch"
+                      style={tone === null ? undefined : { background: tone }}
+                    />
+                    {seatName(match, roll.seat)}
+                  </span>
+                  <span className="monopoly-throw-dice">
+                    {`${roll.dice[0]} y ${roll.dice[1]}`}
+                  </span>
+                  <span className="monopoly-throw-total">
+                    {`(${roll.dice[0] + roll.dice[1]})`}
+                  </span>
+                  {roll.doubles && <span className="monopoly-throw-doubles">Dobles</span>}
+                </li>
+              )
+            })}
+          </ol>
+        )}
+      </div>
+    </aside>
   )
 }
 
@@ -1005,12 +1448,31 @@ export function MonopolyPanelLayout({
   onViewChange,
   boardScene,
   sceneRotation,
+  rollsScroll,
+  capital,
 }: MonopolyPanelLayoutProps) {
   const { view } = match
   const own = view.you ? view.players.find((player) => player.seat === view.you) ?? null : null
+  /**
+   * Whether this screen holds no seat (S3 of ``monopoly-roll-history.md``).
+   *
+   * It is the same signal the identity chip above the tabs reads: the server
+   * projects ``you`` only for the seat it built the view for, so its absence
+   * is what being a spectator means. The seat index is not the signal -- a
+   * spectator still watches from somewhere.
+   */
+  const spectating = view.you === undefined
   const ownGroups = own === null ? [] : ownPropertyGroups(own)
+  // The viewer's own tone, read from the same roster index the board's owned
+  // spaces and the players list paint. ``null`` is not a fallback colour: a
+  // seat the roster cannot name keeps the name and the initial and loses only
+  // the tone, exactly as the owner badge on the board does.
+  const ownName = typeof view.you === 'string' ? seatName(match, view.you) : null
+  const ownTone = typeof view.you === 'string' ? seatTone(seatIndexOf(match.roster, view.you)) : null
   const canPropose = view.actions.some((action) => action.name === 'propose')
-  const genericActions = view.actions.filter((action) => !TRADE_RESPONSES.has(action.name))
+  const genericActions = view.actions.filter(
+    (action) => !PANEL_OWNED_ACTIONS.has(action.name),
+  )
   const openOffers = (view.offers ?? []).length
   const debt = view.phase === 'raising_cash' ? view.debt : null
   /**
@@ -1052,6 +1514,73 @@ export function MonopolyPanelLayout({
     </div>
   )
 
+  /**
+   * The board view's content, whichever way it is drawn.
+   *
+   * The rendered table when the panel has one, and the flat board otherwise,
+   * which is what a screen reader reads and what a test without a renderer
+   * sees (S6 of ``monopoly-3d-table.md``). It is one value so the spectator's
+   * history can sit beside it without drawing the board twice.
+   */
+  const tablero =
+    boardScene === undefined ? (
+      <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
+    ) : (
+      <div className="monopoly-scene">
+        {boardScene}
+        {/*
+          X8: the middle of the rendered board prints the game's name and the
+          deck counts on its own surface, so the card that used to float over
+          the middle is gone -- a card sits in the middle of the frame, and
+          the table can now rest at any angle (X7). What still needs HTML
+          keeps a thin strip at the bottom edge, out of the board's way.
+        */}
+        <div className="monopoly-scene-strip">
+          <MonopolyTableCentre match={match} placement="strip" selected={selected} />
+        </div>
+        {sceneRotation !== undefined && (
+          /*
+            X2: the board is turned by dragging it. These two stay in the DOM
+            as the keyboard path -- a drag has none -- and the stylesheet keeps
+            them clipped until one of them takes focus.
+          */
+          <div className="monopoly-scene-turns" role="group" aria-label="Giro del tablero">
+            <button
+              aria-label="Girar el tablero a la izquierda"
+              className="monopoly-viewport-button"
+              onClick={() => sceneRotation.onRotate(-1)}
+              type="button"
+            >
+              ↺
+            </button>
+            <button
+              aria-label="Girar el tablero a la derecha"
+              className="monopoly-viewport-button"
+              onClick={() => sceneRotation.onRotate(1)}
+              type="button"
+            >
+              ↻
+            </button>
+          </div>
+        )}
+        {/*
+          S6: the accessible board. A canvas is invisible to a screen reader
+          and unreachable by the keyboard, so the forty buttons are still
+          here -- clipped out of sight, never ``display: none``, because that
+          would take away both the tab order and the announcement.
+        */}
+        <div className="monopoly-table-mirror">
+          <MonopolyBoard
+            centre="print"
+            match={match}
+            onFocus={onSelect}
+            onSelect={onSelect}
+            selected={selected}
+          />
+        </div>
+      </div>
+    )
+
   return (
     <section className="monopoly-panel" aria-label="Mesa de Monopoly">
       {view.finished && !view.ended_by_abandon && view.winner && (
@@ -1059,6 +1588,45 @@ export function MonopolyPanelLayout({
           {winnerLine(view, match)}
         </p>
       )}
+
+      {/*
+        The viewer's own colour, in one place no view can hide.
+
+        The board frames the spaces a seat owns and the players list spells out
+        every tone, but both live inside a view: a player who moves to the
+        wallet, or comes back to the board, has nowhere to check whose colour is
+        whose. This chip sits outside every pane and above the tab strip, and it
+        sticks to the top of the screen, so switching view -- or scrolling the
+        board -- never takes the reference away. The tone is never alone: the
+        swatch prints the seat's initial and the name is written beside it.
+
+        It follows the rule the action bar already follows: what a view change
+        must not take away stays outside the panes.
+      */}
+      <p
+        className="monopoly-seat-identity"
+        data-cash-trend={own === null ? undefined : cashMotionOf(capital, own.seat)?.trend}
+      >
+        {own === null || ownName === null ? (
+          <span className="monopoly-seat-identity-name">Espectador</span>
+        ) : (
+          <>
+            <span
+              aria-hidden="true"
+              className="monopoly-seat-identity-swatch"
+              style={ownTone === null ? undefined : { background: ownTone }}
+            >
+              {initialOf(ownName)}
+            </span>
+            <span className="monopoly-seat-identity-name">{ownName}</span>
+            {cashAmount(own, capital)}
+          </>
+        )}
+      </p>
+
+      {cashAnnounceRegion(capital)}
+
+      {own === null && capitalStrip(view, match, capital)}
 
       <div
         aria-label="Vistas de la partida"
@@ -1131,62 +1699,13 @@ export function MonopolyPanelLayout({
 
       {pane(
         'tablero',
-        boardScene === undefined ? (
-          <MonopolyBoard match={match} selected={selected} onSelect={onSelect} />
-        ) : (
-          <div className="monopoly-scene">
-            {boardScene}
-            {/*
-              X8: the middle of the rendered board prints the game's name and the
-              deck counts on its own surface, so the card that used to float over
-              the middle is gone -- a card sits in the middle of the frame, and
-              the table can now rest at any angle (X7). What still needs HTML
-              keeps a thin strip at the bottom edge, out of the board's way.
-            */}
-            <div className="monopoly-scene-strip">
-              <MonopolyTableCentre match={match} placement="strip" selected={selected} />
-            </div>
-            {sceneRotation !== undefined && (
-              /*
-                X2: the board is turned by dragging it. These two stay in the DOM
-                as the keyboard path -- a drag has none -- and the stylesheet keeps
-                them clipped until one of them takes focus.
-              */
-              <div className="monopoly-scene-turns" role="group" aria-label="Giro del tablero">
-                <button
-                  aria-label="Girar el tablero a la izquierda"
-                  className="monopoly-viewport-button"
-                  onClick={() => sceneRotation.onRotate(-1)}
-                  type="button"
-                >
-                  ↺
-                </button>
-                <button
-                  aria-label="Girar el tablero a la derecha"
-                  className="monopoly-viewport-button"
-                  onClick={() => sceneRotation.onRotate(1)}
-                  type="button"
-                >
-                  ↻
-                </button>
-              </div>
-            )}
-            {/*
-              S6: the accessible board. A canvas is invisible to a screen reader
-              and unreachable by the keyboard, so the forty buttons are still
-              here -- clipped out of sight, never ``display: none``, because that
-              would take away both the tab order and the announcement.
-            */}
-            <div className="monopoly-table-mirror">
-              <MonopolyBoard
-                centre="print"
-                match={match}
-                onFocus={onSelect}
-                onSelect={onSelect}
-                selected={selected}
-              />
-            </div>
+        spectating ? (
+          <div className="monopoly-tablero-with-rolls">
+            {tablero}
+            <RollHistory match={match} scroll={rollsScroll} view={view} />
           </div>
+        ) : (
+          tablero
         ),
       )}
 
@@ -1281,6 +1800,8 @@ export function MonopolyPanelLayout({
           {view.auction !== null && auctionBlock(view.auction, match)}
         </>,
       )}
+
+      {cardDialog(view, busy, onAction)}
     </section>
   )
 }

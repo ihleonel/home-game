@@ -18,6 +18,12 @@ from ..contracts import (
 )
 from . import cards, rules
 
+# How many of the match's throws the snapshot carries (S2 of
+# ``monopoly-roll-history.md``). The state keeps every roll for the
+# end-of-match statistics; the view publishes only the newest window, so the
+# snapshot stays bounded however long the match runs.
+PUBLISHED_ROLLS = 30
+
 
 class MonopolyDefinition:
     """The classic property trading game for two to eight seats."""
@@ -132,9 +138,8 @@ class MonopolyDefinition:
             'last_roll': (
                 None if state['last_roll'] is None else list(state['last_roll'])
             ),
-            'pending': (
-                None if state['pending'] is None else dict(state['pending'])
-            ),
+            'rolls': self._rolls_view(state),
+            'pending': self._pending_view(state),
             'actions': [] if seat is None else self._actions(state, seat),
         }
         if seat is not None:
@@ -161,6 +166,25 @@ class MonopolyDefinition:
             for spec in rules.legal_actions(state, seat)
         ]
 
+    def _rolls_view(self, state: Mapping) -> list[dict]:
+        """The newest throws, oldest first (S2 of ``monopoly-roll-history.md``).
+
+        The state keeps every throw in play order and never truncates it; this
+        window is what the spectator reads. The order is chronological, so the
+        newest throw is the last entry, and ``seq`` travels with each one so a
+        window that slides never reuses a key in the reader.
+        """
+        rolls = state.get('rolls') or []
+        return [
+            {
+                'seq': entry['seq'],
+                'seat': entry['seat'],
+                'dice': list(entry['dice']),
+                'doubles': entry['doubles'],
+            }
+            for entry in rolls[-PUBLISHED_ROLLS:]
+        ]
+
     def _player_view(self, state: Mapping, seat: str) -> dict:
         player = state['players'][seat]
         return {
@@ -183,6 +207,27 @@ class MonopolyDefinition:
             return None
         drawn_card = cards.card_for(drawn['id'])
         return {'deck': drawn_card.deck, 'id': drawn_card.id, 'title': drawn_card.title}
+
+    def _pending_view(self, state: Mapping) -> dict | None:
+        """The open decision, or ``null``.
+
+        A card decision publishes the card the seat is reading and nothing
+        else: the faces of the roll it will resolve with and whether that roll
+        was a double are internal, exactly like the open debt's continuation.
+        The purchase and income-tax decisions keep the shape they always had.
+        """
+        pending = state['pending']
+        if pending is None:
+            return None
+        if pending.get('kind') == 'card':
+            drawn = cards.card_for(pending['id'])
+            return {
+                'kind': 'card',
+                'deck': drawn.deck,
+                'id': drawn.id,
+                'title': drawn.title,
+            }
+        return {key: pending[key] for key in ('kind', 'space') if key in pending}
 
     def _debt_view(self, state: Mapping) -> dict | None:
         """The open debt, or ``null`` (S11).

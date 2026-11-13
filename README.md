@@ -45,7 +45,11 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   unimproved rent, a railroad scales with how many the owner holds and a utility pays four or
   ten times the roll), both taxes, bankruptcy and elimination. Every seat throws for the
   opening turn and the highest total opens (ties re-throw), so its definition requires a real
-  `RandomSource` exactly as `ta-te-ti`'s does.
+  `RandomSource` exactly as `ta-te-ti`'s does. Every throw the rules make -- the turn's own roll, a
+  roll made from jail, the third double and the fresh throw a utility card forces -- is appended to
+  the match state in play order and never truncated, while the projected view publishes only the
+  newest 30: the snapshot stays bounded however long the match runs, and the whole history waits in
+  the state for the end-of-match statistics that are not built yet.
   Bankruptcy follows the printed rule's creditor split: a debt to another player hands that
   player the debtor's cash and properties, while a debt to the bank takes the cash out of the
   game and returns the properties to the bank unowned -- and that last part is one of the recorded
@@ -53,8 +57,11 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   the raise-cash window instead of ending the seat on the spot, so a debt reaches bankruptcy when
   the seat declares it, never automatically.
   The Chance and Community Chest decks are dealt: landing on either space turns up the top card
-  of its own deck, resolves it and recycles it to the bottom, and the classic United States set
-  of 32 cards is transcribed with a test that pins it card by card. Everything a card prints is
+  of its own deck, recycles it to the bottom and announces it, and the effect lands only when the
+  seat that drew it accepts the card in a dialog. A double that draws a card still gets its extra
+  turn after the accept, and a card that lands the token on the other deck turns a second card up
+  for its own accept. The classic United States set of 32 cards is transcribed with a test that
+  pins it card by card. Everything a card prints is
   implemented: advancing to a named space and paying the GO salary when the lap wraps, the
   nearest railroad with its doubled rent, the nearest utility with its fresh throw and ten times
   the throw, going back three spaces, going to jail, the Get Out of Jail Free card a seat holds
@@ -181,10 +188,21 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   restriction and the jail cards it holds only while the seat has one of them to report, because a
   fact reading "no restriction" says nothing -- then its properties grouped by colour with the level
   of each built one, told by the colour band on the cards and by the block they share, with the group
-  name kept for a screen reader alone so colour is never the only channel, and `Mesa` everything the table shares -- the roster of every seat, how many cards are left
-  in each deck and how many houses and hotels are left in the bank's box. The switch is a
+  name kept for a screen reader alone so colour is never the only channel, and `Mesa` everything the table shares -- the roster of every seat with the swatch of the tone the board paints, and how many houses and hotels are left in the bank's box. The switch is a
   client-side choice: local state that no action carries anywhere, and the same three views for a
-  spectator, who still gets no button. The offered actions and the open debt deliberately stay
+  spectator, who still gets no button. On the board view a spectator also reads the match's throws
+  in one chronological list, oldest first with the newest at the bottom: each row names the seat
+  with the tone the board paints, the two faces, the total and whether the throw was a double, keyed
+  by the throw's own sequence number because the published window slides and a key taken from the
+  position would end up naming a different throw. The list takes its own column beside the board
+  from 900px up and sits under the board on a smaller screen, with one bounded scroll that follows
+  the newest throw only while the reader is already at the bottom, so scrolling up to read an older
+  throw is not undone; a player never gets the list, since the seat on turn is the one acting and a
+  log of everyone's throws would be a fourth thing to read while the turn waits. Above the strip sits the seat's own colour in a chip that
+  belongs to no view: the swatch, the initial and the name, pinned to the top edge of the screen, so
+  switching view or scrolling the board never takes the reference away -- the roster that spells out
+  which tone is whose lives in one view of three, and the owner badge on a cell is too small to be
+  the answer. The offered actions and the open debt deliberately stay
   **outside** the views, between the strip and the open one, so they are on screen whichever view
   the player is in and a view change can never hide an obligation the seat still has to answer; the
   `Mesa` tab carries the count of the offers waiting in it and the `Cartera` tab the count of the
@@ -235,7 +253,9 @@ The catalog is served from the game registry, so a game exists in HomeGame exact
   attribute, never the `display` it has to resolve to -- the token wrapping, the colour bands and the
   little houses and hotel block, and the mortgaged stripe and its struck price over them, are
   verified in the markup they hang on, not in a browser; the same goes for the phone's bottom action
-  bar, whose `position: sticky`, `order` and compact padding no test resolves. The palette's
+  bar, whose `position: sticky`, `order` and compact padding no test resolves, and for the drawn
+  card's dialog, whose fixed overlay, dimming and centring no test resolves either -- the tests reach
+  its role, its labels and the accept it submits. The palette's
   contrast is the one part of that CSS which is measured instead of looked at: every text/background
   pair it introduces is checked against WCAG AA (36 pairs with the phone bar's debt line on the
   sunny chrome, worst 5.39:1, and that last pair about 14:1), because a bright palette is exactly
